@@ -1,0 +1,62 @@
+Paper Platform (发卷平台)
+Copyright (C) 2026 OnlyblackTea
+
+This product is licensed to you under the Apache License, Version 2.0
+(the "License"); see the LICENSE file in the root of this repository.
+
+================================================================================
+Third-party components
+================================================================================
+
+Paper Platform is designed to AGGREGATE — and to avoid linking against, statically
+combining with, or forming a derivative work of — the separately-licensed
+components below. Each component retains its own license and copyright. Where a
+component is vendored into this repository (as a git submodule), its LICENSE file
+is preserved unmodified inside its own subtree and MUST NOT be removed on
+redistribution.
+
+--------------------------------------------------------------------------------
+1. prar-agent  —  engine layer (AI manager / mentor / reviewer)
+--------------------------------------------------------------------------------
+   License   : GNU General Public License v3.0 or later (GPL-3.0-or-later)
+   Copyright : Copyright (C) 2026 OnlyblackTea
+   Source    : https://github.com/OnlyblackTea/prar-agent
+   Vendored  : ./prar-agent  (git submodule, pinned to public tag v0.1.0)
+   Its license text is preserved at ./prar-agent/LICENSE.
+
+   GPL BOUNDARY (load-bearing — do NOT collapse this):
+   Paper Platform is ARCHITECTED to interact with prar-agent ONLY through its
+   stable, out-of-process HTTP/WebSocket API. Every such call is funnelled
+   through the single adapter module `orchestrator/prar_bridge.py`. NO Paper
+   Platform module imports prar-agent's internal Python symbols (its `core/*`,
+   `llm/*`, `memory/*`, `tools/*`). This out-of-process boundary is DESIGNED to
+   keep the two as separate programs communicating at arm's length and to REDUCE
+   the risk that Paper Platform is treated as a GPL derivative work of the
+   engine — which would leave Paper Platform free to be distributed under
+   Apache-2.0. Conversely, importing engine internals would almost certainly
+   make Paper Platform a derivative work and force it to GPL-3.0, so the
+   boundary is enforced by `contracts/test_boundary.py`.
+   NOTE: whether the two are in fact "mere aggregation" rather than a single
+   combined program is a LEGAL determination that depends on the actual
+   distribution structure and cannot be concluded from "communicates over HTTP"
+   alone. This note is an engineering risk judgment, NOT legal advice — confirm
+   with qualified counsel before redistributing.
+
+--------------------------------------------------------------------------------
+2. seckill-lab  —  content layer (the first community-contributed track)
+--------------------------------------------------------------------------------
+   License   : MIT
+   Copyright : Copyright (c) 2026 OnlyblackTea
+   Source    : https://github.com/OnlyblackTea/seckill-lab
+   Consumed  : as an EXTERNAL content track (not vendored here). Content repos
+               stay independent so contributors fork the track without taking on
+               the engine. seckill-lab is onboarded through the standard track
+               contribution workflow (track.yaml / ticket.yaml schemas under
+               ./content/schema plus the `paper validate-track` admission gate),
+               exactly like any future community track. Its license text lives at
+               seckill-lab/LICENSE in its own repository and is preserved there.
+
+================================================================================
+The Apache-2.0 NOTICE above is provided for informational purposes and does not
+modify, and is not a substitute for, the licenses of the aggregated components.
+================================================================================

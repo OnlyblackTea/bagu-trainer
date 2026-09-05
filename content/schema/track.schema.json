@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OnlyblackTea/paper-platform/content/schema/track.schema.json",
+  "title": "Paper Platform track manifest (track.yaml)",
+  "description": "Design v0.3 §4.2. A track is a supply-chain package that runs executable code on the learner's machine, so track.yaml is split into inert `manifest` (declarative metadata the platform only reads) and executable `runtime` (the attack surface). `trust_level` is first-class: self | verified | community (§4.6, §13).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["track"],
+  "properties": {
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "trust_level", "manifest", "runtime"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable track identifier, e.g. database-bagu."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable track name."
+        },
+        "language": {
+          "type": "string",
+          "description": "BCP-47 content language, e.g. zh-CN."
+        },
+        "trust_level": {
+          "type": "string",
+          "enum": ["self", "verified", "community"],
+          "description": "Supply-chain trust tier (§13). self = self-hosted/authored, trusted by default. verified = maintainer-endorsed + digest-pinned + passed CI admission. community = third-party, NOT fully trusted by default; primary defense is disclosure + review + digest-pinning + reputation, sandbox is defense-in-depth only."
+        },
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "INERT declarative metadata. The platform reads this to render the board and health-check the environment; it NEVER executes anything here.",
+          "required": ["skeleton_repo", "stages"],
+          "properties": {
+            "requires": {
+              "type": "object",
+              "description": "Learner-device prerequisites (declared only; the platform health-checks against them, it does not auto-install).",
+              "additionalProperties": {
+                "type": ["string", "number"]
+              }
+            },
+            "skeleton_repo": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Skeleton forked when the exam is issued."
+            },
+            "bagu_map": {
+              "type": "string",
+              "description": "八股 map (post-pass explanation anchor)."
+            },
+            "stages": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "description": "Progressive stages; each ticket expresses its own dependencies via progression.prerequisites."
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "EXECUTABLE entry points (the supply-chain attack surface — these really run on the learner's machine). Per §4.6 every executable entry must be covered by digest_pin.",
+          "required": ["digest_pin"],
+          "properties": {
+            "compose": {
+              "type": "string",
+              "description": "docker-compose path (e.g. mysql:8.0@13306 + redis:7@16379, off default ports)."
+            },
+            "build": {
+              "type": "string",
+              "description": "Skeleton build script."
+            },
+            "tests": {
+              "type": "string",
+              "description": "Canonical tests, injected at runtime (§7.3)."
+            },
+            "sim": {
+              "type": "string",
+              "description": "Concurrency simulator (Stage3+)."
+            },
+            "digest_pin": {
+              "type": "object",
+              "description": "Pinned digests for executable dependencies, preventing supply-chain drift. Keys name the dependency (mysql/redis/...), values are sha256:... digests.",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^sha256:"
+              }
+            }
+          }
+        },
+        "contribute": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Contribution/provenance metadata for the catalog.",
+          "properties": {
+            "license": {
+              "type": "string",
+              "description": "Content-repo license (MIT in the three-layer topology, §6.7)."
+            },
+            "maintainers": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "review": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "ci": {
+                  "type": "string",
+                  "description": "Admission gate command, e.g. `paper validate-track` (§4.6, CI-enforced)."
+                },
+                "signed_by": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Maintainer endorsements; required to promote a track to `verified`."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OnlyblackTea/paper-platform/content/schema/ticket.schema.json",
+  "title": "Paper Platform ticket (stages/stage-NN/ticket.yaml)",
+  "description": "Design v0.3 §4.3. Namespaced by concern: identity/brief/scope/grader/hints/submission/parametric/mentor_policy/progression. Version anchors (schema_version, ticket_version, grader.correctness.test_version) are frozen into the TicketInstance at issue time (§9.1). Unlock is a DAG via progression.prerequisites (v0.3 reverses the old forward-pointing unlock_next).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identity", "brief", "scope", "grader", "mentor_policy"],
+  "properties": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Identity + version anchors, pinned into TicketInstance (§9.1) to answer 'which version is this PR/report based on'.",
+      "required": ["id", "schema_version", "ticket_version", "stage", "title"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Stable ticket id, e.g. db-stage-01." },
+        "schema_version": { "type": "integer", "minimum": 1, "description": "ticket.yaml structure version (for schema evolution)." },
+        "ticket_version": { "type": "integer", "minimum": 1, "description": "Content version of THIS ticket; changing the brief/grader bumps it and stales old Instances (§9.2)." },
+        "stage": { "type": "integer", "minimum": 0 },
+        "title": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Problem statement the AI manager turns into an issued exam.",
+      "required": ["problem"],
+      "properties": {
+        "problem": { "type": "string", "minLength": 1, "description": "The line/production problem (ticket background)." },
+        "concepts": { "type": "array", "items": { "type": "string" }, "description": "考点 concepts under assessment." }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Bounded change surface — drives review and out-of-scope detection (§7.3).",
+      "required": ["files_to_change"],
+      "properties": {
+        "files_to_change": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Files the learner may modify. D1: the AI mentor NEVER writes these."
+        }
+      }
+    },
+    "grader": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Objective red/green criteria, run locally on the learner's machine. Their result is treated as UNTRUSTED evidence (§7.4).",
+      "required": ["correctness"],
+      "properties": {
+        "correctness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["test_group", "test_version", "canonical_test"],
+          "properties": {
+            "test_group": { "type": "string", "minLength": 1 },
+            "test_version": { "type": "integer", "minimum": 1, "description": "Canonical-test version; pinned with ticket_version into the Instance." },
+            "canonical_test": { "type": "string", "minLength": 1, "description": "Test path, injected at runtime (§7.3)." },
+            "expect": { "type": "string", "description": "Human-readable expected red→green behavior." }
+          }
+        },
+        "performance": {
+          "description": "EXPLAIN-based performance assertion, or null when not applicable.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "assert"],
+              "properties": {
+                "type": { "type": "string", "description": "Assertion kind, e.g. explain." },
+                "assert": { "type": "string", "minLength": 1, "description": "Predicate over the EXPLAIN output." }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "concurrency": {
+          "description": "Concurrency/zero-oversell sim assertion (Stage3+), or null.",
+          "oneOf": [
+            { "type": "object", "additionalProperties": true },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "hints": {
+      "type": "array",
+      "description": "Ladder hints; collapsed by default, expanding one is recorded into the learner profile.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "submission": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "PR-as-defense requirements (§11).",
+      "properties": {
+        "template": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "require": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Required defense artifacts (e.g. changed SQL, index column order + rationale, before/after EXPLAIN)."
+            }
+          }
+        },
+        "bagu_map_ref": { "type": "string", "description": "Anchor into bagu-map.md; validated to exist (§4.6)." }
+      }
+    },
+    "parametric": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional parametric exam variant (§12.3). Only declared-range variables may be personalized; grader criteria are invariant (§10.1).",
+      "properties": {
+        "table_rows": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "price_range": { "type": "string", "description": "e.g. random, or an explicit range expression." },
+        "fixture_seed": { "type": "string", "description": "e.g. per-learner; frozen into TicketInstance.fixture_seed — reused on retry, redrawn only on re-issue." }
+      }
+    },
+    "mentor_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-ticket mentor permissions (§6.4); the hard constraint of D1 role reversal.",
+      "required": ["mode", "may_write"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["pure_mentor", "mentor_then_reveal"] },
+        "may_write": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files the mentor may write. MUST NOT intersect scope.files_to_change (D1)."
+        }
+      }
+    },
+    "progression": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Unlock dependencies. v0.3 reverses unlock_next: a ticket declares WHO IT DEPENDS ON, forming a DAG; unlock check = 'all prerequisites passed' (§9.2). A single prerequisite degenerates to linear.",
+      "properties": {
+        "prerequisites": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Ticket ids that must be passed before this ticket becomes available."
+        }
+      }
+    }
+  }
+}

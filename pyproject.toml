@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paper-platform"
+version = "0.1.0"
+description = "发卷平台 (Paper Platform) — open-source, self-hosted 八股 practical-exam platform built on the prar-agent engine. AI manages/mentors/reviews; humans write code; grading runs on the learner's own machine."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "OnlyblackTea" }]
+keywords = ["education", "interview-prep", "agent", "self-hosted", "exam"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Intended Audience :: Education",
+]
+
+# Core runtime: only what the engine adapter + content schemas need.
+# NOTE: this repo NEVER imports prar-agent's Python modules (GPL boundary, §6.7).
+# The engine is reached over HTTP/WS only, hence httpx + websockets, not its deps.
+dependencies = [
+  "httpx>=0.27",
+  "websockets>=12",
+  "pydantic>=2.7",
+  "pyyaml>=6",
+  "jsonschema>=4.21",
+]
+
+[project.optional-dependencies]
+# Platform control plane (§2.1) — FastAPI service.
+service = ["fastapi>=0.111", "uvicorn>=0.30", "sqlalchemy>=2.0", "asyncpg>=0.29"]
+# Learner-device client (§7.2). CLI form is provisional pending design Q2.
+cli = ["typer>=0.12"]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "respx>=0.21",
+  "ruff>=0.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/OnlyblackTea/paper-platform"
+Repository = "https://github.com/OnlyblackTea/paper-platform"
+Issues = "https://github.com/OnlyblackTea/paper-platform/issues"
+
+[tool.setuptools]
+packages = ["orchestrator", "platform_service", "paper_cli", "contracts"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["contracts"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

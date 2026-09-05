@@ -1,0 +1,3 @@
+[submodule "prar-agent"]
+	path = prar-agent
+	url = https://github.com/OnlyblackTea/prar-agent.git

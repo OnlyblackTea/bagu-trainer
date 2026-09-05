@@ -1,0 +1,49 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# ---- Tooling caches ----
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ---- Local exam / grading artifacts (D2/D3: never commit a learner's run) ----
+# Runtime-injected canonical tests live in throwaway dirs and must not leak
+# into a committable working tree (design §7.3).
+.grading/
+*.grading-report.json
+scratch/
+.exams/
+!.gitkeep
+
+# ---- Secrets / local config (deployer brings their own LLM key, D3) ----
+.env
+.env.*
+*.local
+!.env.example
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Submodule working state ----
+# prar-agent/ is a pinned submodule; ignore stray local edits inside it from
+# this repo's status view (engine changes belong in the prar-agent repo).
+/prar-agent/**/*.pyc
