@@ -1,6 +1,6 @@
-# Paper Platform — developer tasks.
-# The engine (prar-agent) is a git submodule pinned to a public tag; nothing here
-# builds or imports it. We only orchestrate it over HTTP/WS (see NOTICE / design §6.6-§6.7).
+# 发卷平台 —— 开发者任务。
+# 引擎（prar-agent）是 pin 到公开 tag 的 git 子模块；这里不构建、也不导入它。
+# 我们只通过 HTTP/WS 编排它（见 NOTICE / 设计文档 §6.6-§6.7）。
 
 SUBMODULE      := prar-agent
 PINNED_TAG     := v0.1.0
@@ -12,46 +12,46 @@ RUFF           := python -m ruff
 .PHONY: help bootstrap clone-hint submodule-status test test-boundary test-contract \
         lint fmt bump-submodule clean
 
-help: ## Show available targets.
+help: ## 显示所有可用 target。
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-clone-hint: ## Remind contributors how to clone with the submodule.
-	@echo "Clone in one shot:  git clone --recursive https://github.com/OnlyblackTea/paper-platform.git"
-	@echo "Or after a plain clone run:  make bootstrap"
+clone-hint: ## 提醒贡献者如何连子模块一起 clone。
+	@echo "一次性 clone（含子模块）：git clone --recursive https://github.com/OnlyblackTea/paper-platform.git"
+	@echo "或者普通 clone 之后运行：make bootstrap"
 
-bootstrap: ## Initialize + fetch the pinned prar-agent submodule (run after a plain clone).
+bootstrap: ## 初始化并拉取 pin 的 prar-agent 子模块（普通 clone 之后运行）。
 	git submodule update --init --recursive
-	@echo "Submodule state:"
+	@echo "子模块状态："
 	@git submodule status $(SUBMODULE)
 
-submodule-status: ## Show the pinned submodule commit/tag.
+submodule-status: ## 显示子模块 pin 的 commit/tag。
 	@git submodule status $(SUBMODULE)
 
-test: ## Run all contract + boundary tests (gates every submodule bump).
+test: ## 运行全部契约 + 边界测试（每次子模块 bump 的关卡）。
 	$(PYTEST)
 
-test-boundary: ## Run ONLY the GPL-boundary guard (no engine internals imported).
+test-boundary: ## 只运行 GPL 边界守卫（确保未导入引擎内部）。
 	$(PYTEST) contracts/test_boundary.py
 
-test-contract: ## Run ONLY the prar-agent HTTP/WS contract tests.
+test-contract: ## 只运行 prar-agent 的 HTTP/WS 契约测试。
 	$(PYTEST) contracts/test_prar_contract.py
 
-lint: ## Ruff lint.
+lint: ## Ruff 检查。
 	$(RUFF) check orchestrator platform_service paper_cli contracts
 
-fmt: ## Ruff format + import sort.
+fmt: ## Ruff 格式化 + import 排序。
 	$(RUFF) format orchestrator platform_service paper_cli contracts
 	$(RUFF) check --fix orchestrator platform_service paper_cli contracts
 
-bump-submodule: ## Bump prar-agent to PINNED_TAG, run contract tests, leave the pointer staged.
-	@echo ">> Fetching tags and checking out $(SUBMODULE) @ $(PINNED_TAG)"
+bump-submodule: ## 把 prar-agent bump 到 PINNED_TAG，跑契约测试，并把指针留在暂存区。
+	@echo ">> 拉取 tag 并检出 $(SUBMODULE) @ $(PINNED_TAG)"
 	cd $(SUBMODULE) && git fetch --tags --quiet && git checkout --quiet $(PINNED_TAG)
-	@echo ">> Running contract tests against the new pin (must be green to commit the bump)"
+	@echo ">> 针对新 pin 运行契约测试（必须全绿才能提交这次 bump）"
 	$(MAKE) test
 	git add $(SUBMODULE)
-	@echo ">> Pointer staged. Review 'git submodule status' then commit if green."
+	@echo ">> 指针已暂存。检查 'git submodule status'，全绿即可提交。"
 
-clean: ## Remove caches and local grading artifacts.
+clean: ## 清理缓存与本地阅卷产物。
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .coverage htmlcov .grading
 	find . -type d -name __pycache__ -not -path './$(SUBMODULE)/*' -prune -exec rm -rf {} +

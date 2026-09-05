@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "paper-platform"
 version = "0.1.0"
-description = "发卷平台 (Paper Platform) — open-source, self-hosted 八股 practical-exam platform built on the prar-agent engine. AI manages/mentors/reviews; humans write code; grading runs on the learner's own machine."
+description = "发卷平台（Paper Platform）—— 基于 prar-agent 引擎、开源可自托管的八股实战考核平台。AI 负责管理 / 带教 / 评审，人类亲手写代码，阅卷在学习者自己的机器上运行。"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }

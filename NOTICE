@@ -1,62 +1,51 @@
-Paper Platform (发卷平台)
+Paper Platform（发卷平台）
 Copyright (C) 2026 OnlyblackTea
 
-This product is licensed to you under the Apache License, Version 2.0
-(the "License"); see the LICENSE file in the root of this repository.
+本产品在 Apache License, Version 2.0（下称「本许可证」）下授权给你使用；
+许可证全文见本仓库根目录下的 LICENSE 文件。
 
 ================================================================================
-Third-party components
+第三方组件
 ================================================================================
 
-Paper Platform is designed to AGGREGATE — and to avoid linking against, statically
-combining with, or forming a derivative work of — the separately-licensed
-components below. Each component retains its own license and copyright. Where a
-component is vendored into this repository (as a git submodule), its LICENSE file
-is preserved unmodified inside its own subtree and MUST NOT be removed on
-redistribution.
+发卷平台的设计目标是「聚合（AGGREGATE）」下述独立授权的组件 —— 并避免与之链接、静态
+组合、或形成其衍生作品。每个组件各自保留其许可证与版权。当某组件以 git 子模块的形式
+被内置（vendor）进本仓库时，其 LICENSE 文件会在它自己的子树内原样保留，再分发时
+**不得** 删除。
 
 --------------------------------------------------------------------------------
-1. prar-agent  —  engine layer (AI manager / mentor / reviewer)
+1. prar-agent —— 引擎层（AI 管理者 / 导师 / 评审者）
 --------------------------------------------------------------------------------
-   License   : GNU General Public License v3.0 or later (GPL-3.0-or-later)
-   Copyright : Copyright (C) 2026 OnlyblackTea
-   Source    : https://github.com/OnlyblackTea/prar-agent
-   Vendored  : ./prar-agent  (git submodule, pinned to public tag v0.1.0)
-   Its license text is preserved at ./prar-agent/LICENSE.
+   许可    ：GNU General Public License v3.0 or later（GPL-3.0-or-later）
+   版权    ：Copyright (C) 2026 OnlyblackTea
+   来源    ：https://github.com/OnlyblackTea/prar-agent
+   内置方式：./prar-agent（git 子模块，pin 到公开 tag v0.1.0）
+   其许可证全文保存在 ./prar-agent/LICENSE。
 
-   GPL BOUNDARY (load-bearing — do NOT collapse this):
-   Paper Platform is ARCHITECTED to interact with prar-agent ONLY through its
-   stable, out-of-process HTTP/WebSocket API. Every such call is funnelled
-   through the single adapter module `orchestrator/prar_bridge.py`. NO Paper
-   Platform module imports prar-agent's internal Python symbols (its `core/*`,
-   `llm/*`, `memory/*`, `tools/*`). This out-of-process boundary is DESIGNED to
-   keep the two as separate programs communicating at arm's length and to REDUCE
-   the risk that Paper Platform is treated as a GPL derivative work of the
-   engine — which would leave Paper Platform free to be distributed under
-   Apache-2.0. Conversely, importing engine internals would almost certainly
-   make Paper Platform a derivative work and force it to GPL-3.0, so the
-   boundary is enforced by `contracts/test_boundary.py`.
-   NOTE: whether the two are in fact "mere aggregation" rather than a single
-   combined program is a LEGAL determination that depends on the actual
-   distribution structure and cannot be concluded from "communicates over HTTP"
-   alone. This note is an engineering risk judgment, NOT legal advice — confirm
-   with qualified counsel before redistributing.
+   GPL 边界（承重 —— 切勿打破）：
+   发卷平台在架构上 **只** 通过 prar-agent 稳定的、进程外的 HTTP/WebSocket API 与之交互。
+   每一次这样的调用都收口到唯一的适配器模块 `orchestrator/prar_bridge.py`。发卷平台
+   **没有任何** 模块导入 prar-agent 的内部 Python 符号（其 `core/*`、`llm/*`、`memory/*`、
+   `tools/*`）。这条进程外边界 **旨在** 让两者维持为「保持距离、相互通信的独立程序」，
+   并 **降低** 发卷平台被认定为引擎之 GPL 衍生作品的风险 —— 从而让发卷平台可以继续以
+   Apache-2.0 分发。反之，导入引擎内部实现几乎必然使发卷平台成为衍生作品、被迫改用
+   GPL-3.0，因此该边界由 `contracts/test_boundary.py` 强制守卫。
+   注意：两者究竟是否构成「单纯聚合（mere aggregation）」而非单一的组合程序，是一个
+   **法律判定**，取决于实际的分发结构，不能仅凭「通过 HTTP 通信」就下结论。本段是
+   工程层面的风险判断，**并非法律意见** —— 再分发之前请咨询有资质的律师确认。
 
 --------------------------------------------------------------------------------
-2. seckill-lab  —  content layer (the first community-contributed track)
+2. seckill-lab —— 内容层（首个社区贡献的轨道）
 --------------------------------------------------------------------------------
-   License   : MIT
-   Copyright : Copyright (c) 2026 OnlyblackTea
-   Source    : https://github.com/OnlyblackTea/seckill-lab
-   Consumed  : as an EXTERNAL content track (not vendored here). Content repos
-               stay independent so contributors fork the track without taking on
-               the engine. seckill-lab is onboarded through the standard track
-               contribution workflow (track.yaml / ticket.yaml schemas under
-               ./content/schema plus the `paper validate-track` admission gate),
-               exactly like any future community track. Its license text lives at
-               seckill-lab/LICENSE in its own repository and is preserved there.
+   许可    ：MIT
+   版权    ：Copyright (c) 2026 OnlyblackTea
+   来源    ：https://github.com/OnlyblackTea/seckill-lab
+   消费方式：作为 **外部** 内容轨道使用（并未内置进本仓）。内容仓保持独立，好让贡献者
+            可以 fork 轨道而无需连带背上引擎。seckill-lab 通过标准的轨道贡献流程接入
+            （./content/schema 下的 track.yaml / ticket.yaml schema，外加 `paper
+            validate-track` 准入门禁），与任何未来的社区轨道完全一致。其许可证全文位于
+            它自己仓库内的 seckill-lab/LICENSE，并在那里原样保留。
 
 ================================================================================
-The Apache-2.0 NOTICE above is provided for informational purposes and does not
-modify, and is not a substitute for, the licenses of the aggregated components.
+上述 Apache-2.0 NOTICE 仅用于提供信息，它不会修改、也不能替代被聚合各组件的许可证。
 ================================================================================
