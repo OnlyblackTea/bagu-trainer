@@ -1,4 +1,4 @@
-"""The ONLY module in Paper Platform that knows prar-agent's wire API.
+"""The ONLY module in bagu-trainer that knows prar-agent's wire API.
 
 Every platform-side call to the engine funnels through here, over the engine's
 out-of-process HTTP/WebSocket API. No symbol from prar-agent's Python internals
@@ -8,14 +8,17 @@ NOTICE) and is guarded by ``contracts/test_boundary.py``.
 
 Two disciplines are encoded structurally, not by convention:
 
-* **Stable vs planned.** Methods bound to endpoints that exist in the pinned tag
-  (``v0.1.0``) are real. Capabilities that depend on a prar-agent-side contract
-  freeze that has NOT happened yet — mentor-mode session, ACTING-without-Executor,
-  AI-PR-review entry — raise :class:`ContractPendingError`. They are never
-  invented ahead of the engine.
+* **Bind only the frozen surface.** Every method maps to an endpoint that exists in
+  the pinned tag (``v0.2.0``), read from the engine's ``docs/CONTRACTS.md``. The
+  three capabilities that were once PENDING — mentor-mode session, ACTING without an
+  Executor, AI-PR-review — froze in v0.2.0 and are now bound for real. Anything not
+  yet frozen would still raise :class:`ContractPendingError` rather than be invented
+  ahead of the engine; as of v0.2.0 nothing remains pending.
 * **D1 (role reversal).** The AI never runs the Executor over the graded business
   code. The engine's ``ws_act`` "execute" path drives the Executor LLM, so it is
   deliberately NOT bridged; :meth:`PrarBridge.run_act_executor` refuses loudly.
+  Mentor sessions open with ``actor="human"`` (:meth:`PrarBridge.open_mentor_session`),
+  under which the engine structurally cannot start the Executor (CONTRACTS §4.3).
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ import websockets
 # Pinned engine tag this contract surface was read from. Bumping it is an
 # explicit submodule bump gated by contracts/test_prar_contract.py — never a
 # silent sync (design §6.6).
-ENGINE_PINNED_TAG = "v0.1.0"
+ENGINE_PINNED_TAG = "v0.2.0"
 
 
 class PrarBridgeError(Exception):
@@ -85,7 +88,7 @@ def _extract_detail(resp: httpx.Response) -> Any:
 
 
 class PrarBridge:
-    """Async client for the prar-agent HTTP/WS contract surface (tag v0.1.0)."""
+    """Async client for the prar-agent HTTP/WS contract surface (tag v0.2.0)."""
 
     def __init__(
         self,
@@ -314,9 +317,10 @@ class PrarBridge:
         """Stream plan generation for a session.
 
         Server event sequence: ``plan.start`` -> ``plan.node`` x N -> ``plan.done``.
-        An ``error`` frame raises :class:`EngineWSError`. ``available_tools`` is the
-        one real v0.1.0 lever for restricting the tool surface at plan time; the
-        full mentor-mode whitelist is still PENDING (see below).
+        An ``error`` frame raises :class:`EngineWSError`. ``available_tools`` narrows
+        the tool surface at plan time; the runtime write-scope whitelist is frozen in
+        v0.2.0 on the session's ``workspace.tool_policy`` (see :meth:`open_mentor_session`
+        and :meth:`get_workspace`).
         """
         url = self._ws_endpoint(f"/api/ws/sessions/{session_id}/plan")
         payload: dict[str, Any] = {
@@ -344,43 +348,132 @@ class PrarBridge:
     async def run_act_executor(self, *args: Any, **kwargs: Any) -> None:
         """Refused. The engine's ``ws_act`` "execute" runs the Executor LLM over the
         plan's steps — i.e. the AI writing/running the graded business code, which
-        D1 forbids. Paper Platform never bridges it. In mentor mode the human is the
-        actor; the platform stays in the plan/review phases (generate, comment,
-        merge) and never advances to an Executor run on ``files_to_change``.
+        D1 forbids. bagu-trainer never bridges it. Mentor sessions open with
+        ``actor="human"`` (:meth:`open_mentor_session`); the human is the actor and
+        submits via :meth:`create_submission`, so the platform moves through ACTING
+        without ever triggering an Executor run on ``files_to_change``.
         """
         raise D1ForbiddenError(
             "D1: the AI must never run the Executor over the graded business code; "
             "the ws_act 'execute' path is intentionally not bridged."
         )
 
-    # ---- PENDING: contracts not yet frozen in prar-agent v0.1.0 ----------
+    # ---- mentor-mode contracts (frozen in prar-agent v0.2.0) -------------
+    #
+    # CONTRACTS.md §3 (workspace + tool policy), §4 (human actor), §5 (diff review).
+    # All three froze on the engine's api/ layer, so the GPL boundary is untouched —
+    # no engine internal symbol is needed to consume them (design §6.6.1).
 
-    async def open_mentor_session(self, *args: Any, **kwargs: Any) -> None:
-        """PENDING. A session mode with write/execute tools disabled for
-        ``files_to_change``. Requires a prar-agent-side contract freeze; not in
-        v0.1.0. Approximate today by staying in the plan/review phases and passing a
-        restricted ``available_tools`` to :meth:`stream_plan_generation`.
+    async def open_mentor_session(
+        self,
+        *,
+        init_request: str,
+        adapter_id: str,
+        workspace: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a mentor-mode session: ``actor="human"`` + an explicit ``workspace``.
+
+        ``actor="human"`` is the structural D1 lock — the engine cannot reach the
+        Executor tool loop for a human-actor session (CONTRACTS §4.3), so the AI never
+        writes or runs the graded code. ``workspace`` carries the runtime lock
+        (``kind`` / ``root`` / optional ``tool_policy``); for ``kind="external"`` the
+        engine applies a safe default (write only under ``scratch/``). Both fields are
+        immutable after creation. Call :meth:`get_workspace` right after to assert the
+        effective policy actually took (CONTRACTS §3.4).
         """
-        raise ContractPendingError(
-            "mentor-mode session (write/execute disabled for files_to_change) is "
-            f"PENDING a prar-agent contract freeze; not in {ENGINE_PINNED_TAG}."
+        return await self._request(
+            "POST",
+            "/api/sessions",
+            json_body={
+                "init_request": init_request,
+                "adapter_id": adapter_id,
+                "actor": "human",
+                "workspace": workspace,
+            },
         )
 
-    async def advance_to_acting_without_executor(self, *args: Any, **kwargs: Any) -> None:
-        """PENDING. ACTING phase that does NOT invoke the Executor LLM (human acts).
-        Not in v0.1.0; ``advance-to-acting`` there implies a subsequent Executor run.
+    async def get_workspace(self, session_id: str) -> dict[str, Any]:
+        """Return the workspace the engine will *actually* enforce (CONTRACTS §3.4).
+
+        The self-attestation endpoint: ``effective_policy``, ``rerun_available`` and
+        ``shell_confinement`` are derived by a pure function over the resolved policy,
+        never by the LLM. Assert ``shell_confinement`` by enum *membership*
+        (``not_enabled`` / ``none`` / future ``container_mount``), not equality — the
+        set grows additively. Use ``rerun_available`` to hide the rerun affordance
+        instead of probing for a 409.
         """
-        raise ContractPendingError(
-            "ACTING-without-Executor session mode is PENDING a prar-agent contract "
-            f"freeze; not in {ENGINE_PINNED_TAG}."
+        return await self._request("GET", f"/api/sessions/{session_id}/workspace")
+
+    async def create_submission(
+        self,
+        session_id: str,
+        *,
+        diff: str,
+        summary: str | None = None,
+        defense: str | None = None,
+        grading_report: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register the human's submission; drives ``acting -> action_review``.
+
+        The human-actor counterpart to an Executor run (CONTRACTS §4.2): the learner
+        writes the code, the platform grades it on the learner's own compute (D3), and
+        the outcome is logged here as an immutable audit row. Rework appends a new
+        submission rather than mutating one — advance back to acting with
+        :meth:`advance_to_acting_without_executor`, then submit again. The
+        ``grading_report`` is opaque to the engine (stored, never interpreted).
+        """
+        body: dict[str, Any] = {"diff": diff}
+        if summary is not None:
+            body["summary"] = summary
+        if defense is not None:
+            body["defense"] = defense
+        if grading_report is not None:
+            body["grading_report"] = grading_report
+        return await self._request(
+            "POST", f"/api/sessions/{session_id}/submissions", json_body=body
         )
 
-    async def submit_for_ai_review(self, *args: Any, **kwargs: Any) -> None:
-        """PENDING. AI-PR-review entry (the reviewer role over a submitted diff).
-        Not in v0.1.0. Until it lands, AI Review is advisory and produced outside the
-        engine's frozen surface; AcceptanceDecision stays the deterministic gate.
+    async def advance_to_acting_without_executor(self, session_id: str) -> dict[str, Any]:
+        """Advance a *human-actor* session to ACTING; no Executor is started.
+
+        Binds the same real endpoint as :meth:`advance_to_acting`. "Without-Executor"
+        is not a separate call — it is structural: for a session created with
+        ``actor="human"`` the engine cannot reach the Executor tool loop (CONTRACTS
+        §4.3, three checks that run before phase / adapter / dispatcher). The human
+        acts and submits via :meth:`create_submission`; WS ``/act`` is never connected.
         """
-        raise ContractPendingError(
-            "AI-PR-review entry is PENDING a prar-agent contract freeze; not in "
-            f"{ENGINE_PINNED_TAG}."
+        return await self.advance_to_acting(session_id)
+
+    async def submit_for_ai_review(
+        self,
+        session_id: str,
+        *,
+        dimensions: Sequence[str],
+        submission_id: str | None = None,
+        diff: str | None = None,
+        defense_text: str | None = None,
+        grading_report: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Request the advisory line-level AI review of a PR diff (CONTRACTS §5).
+
+        ``submission_id`` XOR ``diff`` must be given (the engine 422s otherwise) and
+        ``dimensions`` is required. The result is *purely advisory*: the response has
+        no ``phase`` field and this endpoint cannot move the state machine, so the
+        platform's deterministic AcceptanceDecision stays the real gate. Anchors are
+        ``(path, line, side)`` — treat ``line`` as approximate (render hunk context,
+        not "this exact line") and read ``truncated_files`` as the only incompleteness
+        signal; preflight the diff volume yourself, since a first-file overflow yields
+        an empty-but-normal-looking review (CONTRACTS §5.6, §5.8a).
+        """
+        body: dict[str, Any] = {"dimensions": list(dimensions)}
+        if submission_id is not None:
+            body["submission_id"] = submission_id
+        if diff is not None:
+            body["diff"] = diff
+        if defense_text is not None:
+            body["defense_text"] = defense_text
+        if grading_report is not None:
+            body["grading_report"] = grading_report
+        return await self._request(
+            "POST", f"/api/sessions/{session_id}/reviews", json_body=body
         )

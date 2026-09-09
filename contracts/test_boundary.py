@@ -3,7 +3,7 @@
 Statically scans every platform module and fails if any of them imports
 prar-agent's internal Python symbols, or if any module other than the single
 adapter knows the engine's wire paths. That arm's-length boundary is what is
-designed to keep Paper Platform a separate program from the GPL engine; collapsing
+designed to keep bagu-trainer a separate program from the GPL engine; collapsing
 it (importing engine internals in-process) risks making this repo a derivative
 work. This test reads source only, so it runs without the engine — or even
 httpx/websockets — installed.

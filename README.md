@@ -1,13 +1,15 @@
-# 发卷平台 · Paper Platform
+# 发卷平台 · bagu-trainer
 
-> 开源、可自托管的 **八股实战考核平台**。
+> 开源、可自托管的 **八股实战演练所** —— 供部署者（也是唯一用户）自习、刷题。
+> 它是 [`seckill-lab`](https://github.com/OnlyblackTea/seckill-lab) 的延伸，接受社区贡献（提交新轨道 / 扩展八股面）。
+> **不含班级 / 排名 / 得分**，不是多租户 SaaS。
 > AI 是 **管理者 / 导师 / 评审者**；**由人类学习者亲手写代码**。
 > 阅卷在 **学习者自己的机器上** 运行标准测试（canonical tests）。流程仿 GitHub：
 > `fork → 开发 → PR → 通过 → 解锁下一关`。
 
 引擎 = [`prar-agent`](https://github.com/OnlyblackTea/prar-agent)（git 子模块）。
 首个内容轨道 = [`seckill-lab`](https://github.com/OnlyblackTea/seckill-lab)（数据库八股）。
-权威设计文档：[`paper-platform-design.md`](../paper-platform-design.md)（v0.3）。
+权威设计文档：[`docs/paper-platform-design.md`](docs/paper-platform-design.md)（v0.4）。
 
 ---
 
@@ -15,10 +17,10 @@
 
 ```bash
 # 一次性把引擎子模块一起 clone 下来 —— 记住这一行：
-git clone --recursive https://github.com/OnlyblackTea/paper-platform.git
+git clone --recursive https://github.com/OnlyblackTea/bagu-trainer.git
 
 # 已经用普通方式 clone 了（没带 --recursive）？再把子模块拉进来：
-cd paper-platform
+cd bagu-trainer
 make bootstrap          # 等价于 git submodule update --init --recursive
 ```
 
@@ -73,7 +75,7 @@ GPL copyleft 波及本仓的风险。一旦打破它（在进程内导入引擎�
 ## 仓库结构
 
 ```
-paper-platform/
+bagu-trainer/
 ├── LICENSE                 Apache-2.0（本仓）
 ├── NOTICE                  署名 + GPL 边界声明
 ├── Makefile                bootstrap / test / lint / 子模块 bump
@@ -82,12 +84,12 @@ paper-platform/
 ├── orchestrator/           平台侧的引擎编排
 │   ├── prar_bridge.py      ★ 唯一知道 prar-agent API 的文件
 │   └── session_pool.py     按 (学习者, 工单) 复用会话（§6.1）
-├── platform_service/       FastAPI 控制面：目录/报名/生命周期/解锁/评分细则/gitea（§2.1）
+├── platform_service/       FastAPI 控制面：目录/报名/生命周期/解锁/评审/gitea（§2.1）
 ├── paper_cli/              学习者设备客户端：报名/up/开发/导师/阅卷/提交/模拟（§7.2）
 ├── content/
 │   └── schema/             track.schema.json + ticket.schema.json（§4.2/§4.3）—— 贡献契约
 ├── contracts/              边界守卫测试 + prar-agent API 契约测试（每次子模块 bump 都要过）
-└── docs/
+└── docs/                   paper-platform-design.md（权威设计稿，v0.4）
 ```
 
 ---
@@ -99,8 +101,8 @@ paper-platform/
 凡依赖 **prar-agent 侧契约冻结** 的条目（导师模式工具白名单、无 Executor 的 ACTING 会话模式、
 AI PR 评审入口）在适配器中标记为 `PENDING`，**绝不** 抢在引擎之前臆造。
 
-分阶段路线图见设计文档 §14，未决问题见附录 C（paper-cli 形态 Q2、报告签名 Q3、
-第二条轨道 Q4、轨道/平台仓拆分 Q5）。
+分阶段路线图见设计文档 §14，未决问题见附录 C（paper-cli 形态 Q2、第二条轨道 Q4、
+轨道/平台仓拆分 Q5）。
 
 ---
 

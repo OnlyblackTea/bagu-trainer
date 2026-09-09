@@ -1,6 +1,6 @@
 """Platform-side engine orchestration.
 
-This package is the *only* place Paper Platform reaches prar-agent, and it does so
+This package is the *only* place bagu-trainer reaches prar-agent, and it does so
 exclusively over the engine's out-of-process HTTP/WS API via :mod:`prar_bridge`.
 It never imports engine internals — the GPL boundary (design §6.6, NOTICE) that
 ``contracts/test_boundary.py`` enforces.

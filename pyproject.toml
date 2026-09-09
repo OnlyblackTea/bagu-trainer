@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "paper-platform"
+name = "bagu-trainer"
 version = "0.1.0"
-description = "发卷平台（Paper Platform）—— 基于 prar-agent 引擎、开源可自托管的八股实战考核平台。AI 负责管理 / 带教 / 评审，人类亲手写代码，阅卷在学习者自己的机器上运行。"
+description = "发卷平台（bagu-trainer）—— 基于 prar-agent 引擎、开源可自托管的八股实战考核平台。AI 负责管理 / 带教 / 评审，人类亲手写代码，阅卷在学习者自己的机器上运行。"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -42,16 +42,17 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/OnlyblackTea/paper-platform"
-Repository = "https://github.com/OnlyblackTea/paper-platform"
-Issues = "https://github.com/OnlyblackTea/paper-platform/issues"
+Homepage = "https://github.com/OnlyblackTea/bagu-trainer"
+Repository = "https://github.com/OnlyblackTea/bagu-trainer"
+Issues = "https://github.com/OnlyblackTea/bagu-trainer/issues"
 
 [tool.setuptools]
 packages = ["orchestrator", "platform_service", "paper_cli", "contracts"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["contracts"]
+testpaths = ["contracts", "tests"]
+pythonpath = ["."]
 addopts = "-ra"
 
 [tool.ruff]

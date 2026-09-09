@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/OnlyblackTea/paper-platform/content/schema/track.schema.json",
-  "title": "Paper Platform track manifest (track.yaml)",
+  "$id": "https://github.com/OnlyblackTea/bagu-trainer/content/schema/track.schema.json",
+  "title": "bagu-trainer track manifest (track.yaml)",
   "description": "Design v0.3 §4.2. A track is a supply-chain package that runs executable code on the learner's machine, so track.yaml is split into inert `manifest` (declarative metadata the platform only reads) and executable `runtime` (the attack surface). `trust_level` is first-class: self | verified | community (§4.6, §13).",
   "type": "object",
   "additionalProperties": false,

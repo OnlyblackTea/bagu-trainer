@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/OnlyblackTea/paper-platform/content/schema/ticket.schema.json",
-  "title": "Paper Platform ticket (stages/stage-NN/ticket.yaml)",
-  "description": "Design v0.3 §4.3. Namespaced by concern: identity/brief/scope/grader/hints/submission/parametric/mentor_policy/progression. Version anchors (schema_version, ticket_version, grader.correctness.test_version) are frozen into the TicketInstance at issue time (§9.1). Unlock is a DAG via progression.prerequisites (v0.3 reverses the old forward-pointing unlock_next).",
+  "$id": "https://github.com/OnlyblackTea/bagu-trainer/content/schema/ticket.schema.json",
+  "title": "bagu-trainer ticket (stages/stage-NN/ticket.yaml)",
+  "description": "Design v0.4 §4.3. Namespaced by concern: identity/brief/scope/grader/hints/submission/mentor_policy/progression. Version anchors (schema_version, ticket_version, grader.correctness.test_version) are frozen into the TicketInstance at issue time (§9.1). Unlock is a DAG via progression.prerequisites (v0.3 reverses the old forward-pointing unlock_next).",
   "type": "object",
   "additionalProperties": false,
   "required": ["identity", "brief", "scope", "grader", "mentor_policy"],
@@ -115,16 +115,6 @@
           }
         },
         "bagu_map_ref": { "type": "string", "description": "Anchor into bagu-map.md; validated to exist (§4.6)." }
-      }
-    },
-    "parametric": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Optional parametric exam variant (§12.3). Only declared-range variables may be personalized; grader criteria are invariant (§10.1).",
-      "properties": {
-        "table_rows": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
-        "price_range": { "type": "string", "description": "e.g. random, or an explicit range expression." },
-        "fixture_seed": { "type": "string", "description": "e.g. per-learner; frozen into TicketInstance.fixture_seed — reused on retry, redrawn only on re-issue." }
       }
     },
     "mentor_policy": {
