@@ -16,7 +16,12 @@ from .prar_bridge import (
     PrarBridge,
     PrarBridgeError,
 )
-from .session_pool import AssessmentKey, PooledSession, SessionPool
+from .session_pool import (
+    AssessmentKey,
+    PooledSession,
+    SessionPool,
+    WorkspaceAttestationError,
+)
 
 __all__ = [
     "ENGINE_PINNED_TAG",
@@ -30,4 +35,5 @@ __all__ = [
     "PrarBridge",
     "PrarBridgeError",
     "SessionPool",
+    "WorkspaceAttestationError",
 ]

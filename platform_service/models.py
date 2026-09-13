@@ -269,22 +269,50 @@ class GradingReport(_Strict):
 
 class ReviewComment(_Strict):
     """One anchored, qualitative note (§11.2). NO weight/score — the rubric's
-    scoring was removed in v0.4; dimensions survive as a checklist only."""
+    scoring was removed in v0.4; dimensions survive as a checklist only.
+
+    The anchor is the frozen triple ``(path, line, side)`` (CONTRACTS §5.3) plus the
+    engine-corrected ``quote`` (the anchor line's real text, §5.4). ``anchor`` is a
+    platform-built display string, never parsed back from the engine's convenience
+    string. All anchor fields are ``None`` for an unanchored comment. They are retained
+    verbatim because §5 exposes no GET /reviews — the stored Review is the only copy.
+    """
 
     dimension: str
     anchor: str | None = None
     text: str
+    path: str | None = None
+    line: int | None = None
+    side: Literal["left", "right"] | None = None
+    quote: str | None = None
+
+
+class DimensionFinding(_Strict):
+    """Per-dimension commentary from the AI Review (CONTRACTS §5.2 ``dimension_findings``).
+
+    A qualitative checklist verdict per rubric dimension (§11.2) — NO score."""
+
+    dimension: str
+    commentary: str
 
 
 class Review(_Strict):
     """AI Review — advisory, non-deterministic (§11.2). Its ``recommendation``
-    feeds the gate but carries NO numeric score."""
+    feeds the gate but carries NO numeric score.
+
+    ``truncated_files`` (CONTRACTS §5.6) is the sole signal that the review was
+    incomplete (a file was dropped whole for exceeding the char limit);
+    ``dimension_findings`` retains the per-dimension commentary. Both are persisted
+    because §5 exposes no GET /reviews — this Review is the only copy the platform has.
+    """
 
     id: str
     submission_id: str
     recommendation: Recommendation
     comments: list[ReviewComment] = Field(default_factory=list)
     summary: str
+    dimension_findings: list[DimensionFinding] = Field(default_factory=list)
+    truncated_files: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_utcnow)
 
 

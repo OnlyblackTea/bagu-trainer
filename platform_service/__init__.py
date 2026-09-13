@@ -28,8 +28,26 @@ Implemented — pure, offline, unit-tested domain logic:
 * ``service``        — ``PlatformService``: the facade threading the above into the
                        end-to-end enroll -> start -> submit -> review -> decide loop.
 
-Pending — needs the engine, HTTP or a real DB (out of scope for this slice):
-MentorSession and AI-Review *generation* plus ``paper grade`` grading *execution* (all
-via ``prar_bridge``), FastAPI routers (``[service]`` extra), a SQLAlchemy/PostgreSQL
-``Store``, gitea fork/PR plumbing, the ``paper_cli`` wrappers, and LearnerProfile (§10).
+Implemented — engine-integration layer (the v0.2.0 payoff). Each drives ``prar_bridge``
+through an *injected* engine Protocol, so it imports neither orchestrator nor the engine
+and is unit-tested offline against a fake (GPL boundary intact):
+
+* ``review_diff``    — diff prep for the AI Review (契约三): ``git diff`` with the default
+                       ``a/`` ``b/`` prefix plus the 120k whole-file volume preflight that
+                       catches the first-file-overflow trap before any token is burned.
+* ``ai_review``      — AI-Review *generation* (§6.5/§11.2): register the submission, call
+                       ``POST /reviews`` by ``submission_id`` (XOR), and faithfully persist
+                       the response — the anchor triple, ``dimension_findings`` and
+                       ``truncated_files`` — since §5 exposes no GET /reviews.
+* ``mentor``         — ``MentorSession``: the 发卷 -> 接卷 -> 开发 arc (§6.2/§6.3) over a
+                       human-actor session, entering ACTING *without* an Executor and never
+                       connecting ``ws_act`` (D1 is structural — the Protocol names no
+                       executor method). ``orchestrator.session_pool`` opens + self-attests
+                       those mentor sessions (``actor="human"`` + external workspace).
+
+Pending — needs HTTP, a real DB, external infra or an open decision (out of scope here):
+``paper grade`` grading *execution* (BLOCKED on appendix C Q2 — the ``paper_cli`` form is
+undecided), FastAPI routers (``[service]`` extra), a SQLAlchemy/PostgreSQL ``Store``, gitea
+fork/PR plumbing (incl. TODO 4 — write ``scratch/`` into the student repo's ``.gitignore``
+at fork/instantiation), and LearnerProfile (§10).
 """

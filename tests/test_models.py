@@ -228,3 +228,40 @@ def test_ticket_spec_rejects_parametric(sample_ticket) -> None:
     assert "parametric" not in TicketSpec.model_fields
     with pytest.raises(ValidationError):
         TicketSpec.model_validate({**sample_ticket, "parametric": {"fixture_seed": "x"}})
+
+
+def test_review_retains_engine_anchor_detail_and_incompleteness_signal() -> None:
+    """CONTRACTS §5 has no GET /reviews, so the stored Review is the ONLY copy: it must
+    retain the anchor triple + engine-corrected quote (契约三) and ``truncated_files``
+    (the sole incompleteness signal). New fields are optional, so an unanchored comment
+    still constructs from ``(dimension, text)`` alone."""
+    review = Review(
+        id="rev-1",
+        submission_id="sub-1",
+        recommendation=Recommendation.REQUEST_CHANGES,
+        summary="越界改了测试，建议打回。",
+        comments=[
+            ReviewComment(
+                dimension="security",
+                text="这里把用户输入拼进了 SQL",
+                anchor="Foo.java#L10",
+                path="Foo.java",
+                line=10,
+                side="right",
+                quote='String sql = "select * from t where id=" + id;',
+            ),
+            ReviewComment(dimension="test_coverage", text="缺并发超卖用例"),
+        ],
+        dimension_findings=[{"dimension": "correctness", "commentary": "红绿正确"}],
+        truncated_files=["Huge.java"],
+    )
+    assert review.comments[0].path == "Foo.java"
+    assert review.comments[0].line == 10
+    assert review.comments[0].side == "right"
+    assert review.comments[0].quote == 'String sql = "select * from t where id=" + id;'
+    assert review.comments[1].anchor is None
+    assert review.comments[1].path is None
+    assert review.dimension_findings[0].dimension == "correctness"
+    assert review.dimension_findings[0].commentary == "红绿正确"
+    assert review.truncated_files == ["Huge.java"]
+    assert Review.model_validate_json(review.model_dump_json()) == review
