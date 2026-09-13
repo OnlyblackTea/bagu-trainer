@@ -148,3 +148,37 @@ def test_spoiler_is_soft_and_does_not_block(build_track, ticket_factory) -> None
     check = _check(report, "no_spoiler")
     assert not check.passed and not check.hard
     assert report.ok  # soft: warns, still admits pending human review
+
+
+# --- ticket discovery / manifest coverage -------------------------------------
+
+
+def test_manifest_coverage_passes_when_ticket_dir_is_declared(build_track) -> None:
+    report = validate_track(build_track())
+    assert _check(report, "manifest_coverage").passed
+    assert report.ok
+
+
+def test_ticket_dir_absent_from_manifest_is_hard_fail(build_track, track_factory) -> None:
+    """An undeclared ticket dir is invisible on the board but still gets an instance."""
+    track = track_factory(stages=["stage-00-onboarding"])
+    report = validate_track(build_track(track=track))
+    check = _check(report, "manifest_coverage")
+    assert not check.passed and check.hard
+    assert "stage-01-product-query-index" in check.message
+    assert not report.ok
+
+
+def test_manifest_may_declare_a_stage_that_ships_no_ticket(build_track, track_factory) -> None:
+    """``stage-00-onboarding`` is an environment stage: on the board, no assessed ticket."""
+    track = track_factory(stages=["stage-00-onboarding", "stage-01-product-query-index"])
+    report = validate_track(build_track(track=track))
+    assert _check(report, "manifest_coverage").passed
+    assert report.ok
+
+
+def test_schema_check_counts_discovered_tickets(build_track) -> None:
+    """Discovery is directory-driven, so the count reflects real tickets, not manifest size."""
+    check = _check(validate_track(build_track()), "schema")
+    assert check.passed and "1 ticket" in check.message
+

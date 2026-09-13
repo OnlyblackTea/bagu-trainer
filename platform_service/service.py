@@ -37,6 +37,24 @@ from .store import Store
 from .unlock import build_prereq_graph, initial_state, unlock_dependents
 
 
+def _assert_identity_keys(tickets: dict[str, TicketSpec]) -> None:
+    """Refuse a ticket map whose keys are not each ticket's ``identity.id``.
+
+    See :class:`PlatformService` for why: a stem-style key (a stage *directory* name)
+    would decouple the unlock gate from the tickets it gates without any visible error.
+    """
+    diverged = sorted(
+        f"{key!r} -> {ticket.identity.id!r}"
+        for key, ticket in tickets.items()
+        if key != ticket.identity.id
+    )
+    if diverged:
+        raise ValueError(
+            "ticket map keys must be ticket.identity.id "
+            f"(the prerequisite DAG keys on it); diverged: {diverged}"
+        )
+
+
 class PlatformService:
     """Single-entry orchestration over one track's tickets for one store.
 
@@ -44,6 +62,12 @@ class PlatformService:
     at construction. Every mutation persists through the :class:`Store` seam, so a
     DB-backed store can replace :class:`~platform_service.store.InMemoryStore` without
     touching this class.
+
+    Invariant: every key must equal its ``ticket.identity.id``. :meth:`enroll` keys
+    instances on the mapping key while :func:`~platform_service.unlock.build_prereq_graph`
+    keys the DAG on ``identity.id`` — if those diverge, dependents silently mint
+    ``available`` instead of ``locked`` and the prerequisite gate disappears. Enforced
+    here rather than trusted, because the divergence is invisible at the call site.
     """
 
     def __init__(
@@ -58,6 +82,7 @@ class PlatformService:
         self._track = track
         self._tickets = tickets
         self._engine_version = engine_version
+        _assert_identity_keys(tickets)
         self._prereq_graph = build_prereq_graph(tickets.values())
         self._ids = itertools.count(1)
 

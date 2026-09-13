@@ -6,6 +6,13 @@ read YAML → validate against the frozen JSON Schema (Draft 2020-12) → projec
 carrying *every* schema error, not just the first — a contributor should see the
 whole defect list at once.
 
+Ticket *discovery* lives here too (:func:`discover_ticket_paths` / :func:`load_tickets`)
+so that one rule — glob ``stages/*/ticket.yaml`` and key on ``ticket.identity.id`` —
+serves both the admission gate and the service composition root. ``track.manifest.stages``
+is a *board* list: it may declare a stage that ships no ticket (``stage-00-onboarding``
+is an onboarding/environment stage, not an assessed one), so it must never be the thing
+that decides which tickets exist.
+
 Pure filesystem + schema logic: no engine, no HTTP, no DB (GPL boundary intact).
 """
 
@@ -88,3 +95,52 @@ def load_track(path: str | Path) -> TrackManifest:
     data = _read_yaml(Path(path))
     validate_instance(data, load_schema("track"))
     return TrackManifest.model_validate(data["track"])
+
+
+def discover_ticket_paths(track_dir: str | Path) -> list[Path]:
+    """Every ``stages/*/ticket.yaml`` under ``track_dir``, in stable sorted order.
+
+    Directory-driven on purpose: the stage directory is the author's filing choice, so
+    the set of real tickets must not be inferred from ``manifest.stages``.
+    """
+    return sorted((Path(track_dir) / "stages").glob("*/ticket.yaml"))
+
+
+def load_tickets(track_dir: str | Path) -> dict[str, TicketSpec]:
+    """Load every discovered ticket, keyed by ``identity.id`` — the canonical identity.
+
+    ``identity.id`` is what :func:`platform_service.unlock.build_prereq_graph` keys the
+    prerequisite DAG on and what every :class:`~platform_service.models.TicketInstance`
+    carries, so handing back any other key would silently detach instances from the DAG
+    (dependents would mint ``available`` instead of ``locked``). Raises
+    :class:`ContentValidationError` on a duplicate identity or an empty track.
+    """
+    root = Path(track_dir)
+    tickets: dict[str, TicketSpec] = {}
+    origin: dict[str, Path] = {}
+    for path in discover_ticket_paths(root):
+        ticket = load_ticket(path)
+        ticket_id = ticket.identity.id
+        if ticket_id in tickets:
+            raise ContentValidationError(
+                f"duplicate ticket identity {ticket_id!r}: "
+                f"{origin[ticket_id]} and {path} both declare it"
+            )
+        tickets[ticket_id] = ticket
+        origin[ticket_id] = path
+    if not tickets:
+        raise ContentValidationError(
+            f"no tickets found under {root / 'stages'} (expected stages/*/ticket.yaml)"
+        )
+    return tickets
+
+
+def load_ticket_dirs(track_dir: str | Path) -> dict[str, TicketSpec]:
+    """Map each stage **directory** name to its ticket, for board rendering.
+
+    The board is written in stage directory names (``manifest.stages``) while tickets
+    are canonically identified by ``identity.id`` — and the two are allowed to differ.
+    Rendering the board therefore needs this index; nothing else may use it, because
+    ``identity.id`` is the only identity the DAG and instances may be keyed on.
+    """
+    return {path.parent.name: load_ticket(path) for path in discover_ticket_paths(track_dir)}

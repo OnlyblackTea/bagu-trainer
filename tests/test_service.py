@@ -179,3 +179,42 @@ def test_submit_requires_in_progress(env: Any) -> None:
 
     with pytest.raises(IllegalTransitionError):
         env.service.submit(inst.id, grading_report=report)
+
+
+# --- identity invariant -------------------------------------------------------
+
+
+def test_rejects_dict_key_diverging_from_identity_id(
+    track_factory: Any, ticket_factory: Any
+) -> None:
+    """The DAG keys on ``identity.id`` while ``enroll`` keys on the dict key.
+
+    If those disagree, every dependent mints ``available`` instead of ``locked`` and
+    ``unlock_dependents`` becomes a no-op — the prerequisite gate silently disappears.
+    A descriptive stage directory (``stage-01-product-query-index``) must never be able
+    to trigger that, so the divergence is rejected at construction.
+    """
+    track = TrackManifest.model_validate(track_factory()["track"])
+    spec = TicketSpec.model_validate(
+        ticket_factory(ticket_id="db-stage-01", prerequisites=[])
+    )
+    with pytest.raises(ValueError) as exc:
+        PlatformService(
+            InMemoryStore(),
+            track,
+            {"stage-01-product-query-index": spec},
+            engine_version="v0.1.0",
+        )
+    assert "stage-01-product-query-index" in str(exc.value)
+    assert "db-stage-01" in str(exc.value)
+
+
+def test_accepts_dict_key_equal_to_identity_id(track_factory: Any, ticket_factory: Any) -> None:
+    track = TrackManifest.model_validate(track_factory()["track"])
+    spec = TicketSpec.model_validate(
+        ticket_factory(ticket_id="db-stage-01", prerequisites=[])
+    )
+    service = PlatformService(
+        InMemoryStore(), track, {"db-stage-01": spec}, engine_version="v0.1.0"
+    )
+    assert service is not None

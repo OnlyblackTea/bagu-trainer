@@ -2,10 +2,11 @@
 
 Runs the STATIC half of admission on a track directory: schema validity, skeleton
 file presence, bagu-map anchors, runtime digest-pinning, trust-level endorsement, the
-D1 role-reversal invariant, and a coarse spoiler filter. The check that needs real
-compute — running the canonical tests for *discriminance* (red on skeleton / green on
-reference) — is delegated to an injected :class:`DiscriminanceRunner`; absent one it is
-recorded as **skipped** rather than failed, so this module stays pure and offline.
+D1 role-reversal invariant, manifest coverage of every ticket directory, and a coarse
+spoiler filter. The check that needs real compute — running the canonical tests for
+*discriminance* (red on skeleton / green on reference) — is delegated to an injected
+:class:`DiscriminanceRunner`; absent one it is recorded as **skipped** rather than
+failed, so this module stays pure and offline.
 
 The ``paper validate-track`` CLI wrapper lives in ``paper_cli`` (out of scope here).
 No engine, no HTTP, no DB (GPL boundary intact).
@@ -17,7 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from .content_loader import ContentValidationError, load_ticket, load_track
+from .content_loader import (
+    ContentValidationError,
+    discover_ticket_paths,
+    load_tickets,
+    load_track,
+)
 from .models import TicketSpec, TrackManifest, TrustLevel
 
 # Executable entry points declared under track.runtime (§4.2); each must be pinned.
@@ -71,8 +77,7 @@ def validate_track(
 
     try:
         track = load_track(root / "track.yaml")
-        ticket_paths = sorted(root.glob("stages/*/ticket.yaml"))
-        tickets = [load_ticket(path) for path in ticket_paths]
+        tickets = list(load_tickets(root).values())
     except ContentValidationError as exc:
         checks.append(AdmissionCheck("schema", False, str(exc), True))
         return AdmissionReport(checks)
@@ -80,6 +85,7 @@ def validate_track(
         AdmissionCheck("schema", True, f"track + {len(tickets)} ticket(s) schema-valid", True)
     )
 
+    checks.append(_check_manifest_coverage(root, track))
     checks.append(_check_files_to_change(root, track, tickets))
     checks.append(_check_bagu_map_anchors(root, track, tickets))
     checks.append(_check_runtime_pinned(track))
@@ -92,6 +98,29 @@ def validate_track(
 
 def _resolve(root: Path, ref: str) -> Path:
     return root / (ref[2:] if ref.startswith("./") else ref)
+
+
+def _check_manifest_coverage(root: Path, track: TrackManifest) -> AdmissionCheck:
+    """Every discovered ticket directory must be declared in ``manifest.stages``.
+
+    Deliberately one-directional: the manifest is a *board* list and may name a stage
+    that ships no ticket (``stage-00-onboarding`` is an onboarding/environment stage,
+    not an assessed one). The reverse — a ticket directory nobody declared — is a hard
+    failure, because that ticket would be missing from the board while still being
+    minted an instance, and its stage branch would never be gated.
+    """
+    declared = set(track.manifest.stages)
+    undeclared = sorted(
+        path.parent.name
+        for path in discover_ticket_paths(root)
+        if path.parent.name not in declared
+    )
+    message = (
+        "every ticket directory is declared in manifest.stages"
+        if not undeclared
+        else f"ticket dirs missing from manifest.stages: {undeclared}"
+    )
+    return AdmissionCheck("manifest_coverage", not undeclared, message, True)
 
 
 def _check_files_to_change(
