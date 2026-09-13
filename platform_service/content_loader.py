@@ -144,3 +144,14 @@ def load_ticket_dirs(track_dir: str | Path) -> dict[str, TicketSpec]:
     ``identity.id`` is the only identity the DAG and instances may be keyed on.
     """
     return {path.parent.name: load_ticket(path) for path in discover_ticket_paths(track_dir)}
+
+
+def load_stage_refs(track_dir: str | Path) -> dict[str, str]:
+    """Map ``ticket.identity.id`` → its **stage name** (the stage's branch in the repo).
+
+    §C.5 gives every stage its own branch, named after the stage — *not* after the
+    ticket id. The Forge needs this mapping to resolve which branch a ticket is diffed
+    against; assuming ``identity.id`` were the branch name only works while the two
+    happen to coincide (see Plan 1 Task 0), and silently selects the wrong ref otherwise.
+    """
+    return {ticket.identity.id: stage for stage, ticket in load_ticket_dirs(track_dir).items()}

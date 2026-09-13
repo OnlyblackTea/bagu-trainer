@@ -19,7 +19,7 @@ from platform_api.demo_repo import (
     build_demo_track_repo,
 )
 from platform_service.admission import validate_track
-from platform_service.content_loader import load_tickets, load_track
+from platform_service.content_loader import load_stage_refs, load_tickets, load_track
 from platform_service.models import InstanceState, TicketInstance
 from platform_service.review_diff import generate_diff
 from platform_service.service import PlatformService
@@ -88,20 +88,35 @@ def test_demo_repo_passes_admission(tmp_path: Path) -> None:
     assert report.ok, [c.message for c in report.checks if not c.passed]
 
 
-# --- git 分支 -----------------------------------------------------------------
+# --- git 分支（§C.5：一个阶段一个分支，分支名 = 阶段名） -------------------------
 
 
-def test_stage_branches_exist(tmp_path: Path) -> None:
+def test_stage_branches_are_named_by_stage_not_ticket_id(tmp_path: Path) -> None:
+    """分支按**阶段**命名；ticket id 不是分支名（三者同名只是巧合，会掩盖取错 ref）。"""
     repo = build_demo_track_repo(tmp_path / "demo")
     branches = _branches(repo)
-    for ticket_id in ("db-stage-00", "db-stage-01", "db-stage-02"):
-        assert ticket_id in branches and f"{ticket_id}-sol" in branches
+    for stage in ("stage-00-onboarding", "stage-01-product-query-index"):
+        assert stage in branches, f"缺阶段分支 {stage}"
+        assert f"{stage}-sol" in branches, f"缺阶段解法 ref {stage}-sol"
+    assert "db-stage-00" not in branches
+    assert "db-stage-00-sol" not in branches
+
+
+def test_board_only_stage_has_no_branch(tmp_path: Path) -> None:
+    """只上榜、不出卷的 stage 不该有分支——否则把未发布的阶段代码也发出去了。"""
+    repo = build_demo_track_repo(tmp_path / "demo")
+    branches = _branches(repo)
+    for stage in BOARD_ONLY_STAGES:
+        assert stage not in branches and f"{stage}-sol" not in branches
 
 
 def test_provision_diff_nonempty(tmp_path: Path) -> None:
     repo = build_demo_track_repo(tmp_path / "demo")
-    forge = StubForgeClient(source_repo=repo, base_dir=tmp_path / "ws")
+    forge = StubForgeClient(
+        source_repo=repo, base_dir=tmp_path / "ws", stage_refs=load_stage_refs(repo)
+    )
     ws = forge.provision(_instance("db-stage-00"))
+    assert ws.base_ref == "origin/stage-00-onboarding"
     assert generate_diff(ws.path, base=ws.base_ref, head=ws.head_ref).strip()
 
 

@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import itertools
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
-from .forge import Workspace
+from .forge import Workspace, WorkspaceRefMissingError
 from .models import (
     GradingReport,
     ReportCorrectness,
@@ -140,15 +140,75 @@ class StubReviewEngine:
 
 class StubForgeClient:
     """占位 Forge：provision = 本地 ``git clone`` 源仓库到 ``base_dir/<instance.id>``；
-    create_pr = 占位 URL。diff 两端用 ``origin/<ticket_id>`` 与 ``origin/<ticket_id>-sol``
-    （内容预置分支，模拟学员把骨架改成解法；平台不写代码）。clone 幂等。"""
+    create_pr = 占位 URL。
 
-    def __init__(self, *, source_repo: Path, base_dir: Path) -> None:
+    **ref 由 Track 声明，不由占位逻辑发明。** diff 两端是 ``origin/<stage>``（该阶段的分支，
+    骨架）与 ``origin/<stage>-sol``（内容预置的解法 ref，冒充"学员已改对"——A′ 没有人真的
+    写代码）。``stage`` 来自构造时注入的 ``stage_refs``（``identity.id`` → 阶段名，见
+    :func:`platform_service.content_loader.load_stage_refs`）：§C.5 的分支是按**阶段**命名的，
+    不是按 ticket id，两者只是碰巧在 demo 里同过名。
+
+    provision 幂等，并在 clone 后**校验这两个 ref 真的存在**——不满足就抛
+    :class:`~platform_service.forge.WorkspaceRefMissingError`，把内容侧的配置错误在
+    provision 阶段点明，而不是留给稍后的 ``git diff`` 抛一个对学员毫无解释力的非零退出。
+    """
+
+    #: 占位用的解法 ref 后缀（真实模型里这个位置应是学员自己的 dev ref）。
+    SOLUTION_REF_SUFFIX = "-sol"
+
+    def __init__(
+        self, *, source_repo: Path, base_dir: Path, stage_refs: Mapping[str, str]
+    ) -> None:
         self._source = source_repo
         self._base_dir = base_dir
+        self._stage_refs = dict(stage_refs)
 
     def workspace_path(self, instance: TicketInstance) -> Path:
         return self._base_dir / instance.id
+
+    def _refs(self, instance: TicketInstance, repo: Path) -> tuple[str, str]:
+        stage = self._stage_refs.get(instance.ticket_id)
+        if stage is None:
+            raise WorkspaceRefMissingError(
+                repo=repo,
+                ref=None,
+                available=sorted(set(self._stage_refs.values())),
+                reason=(
+                    f"track declares no stage branch for ticket {instance.ticket_id!r}"
+                ),
+            )
+        return f"origin/{stage}", f"origin/{stage}{self.SOLUTION_REF_SUFFIX}"
+
+    @staticmethod
+    def _available_refs(repo: Path) -> list[str]:
+        out = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        return sorted(out.stdout.split())
+
+    def _must_have_ref(self, repo: Path, ref: str) -> None:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if probe.returncode != 0:
+            raise WorkspaceRefMissingError(
+                repo=repo,
+                ref=ref,
+                available=self._available_refs(repo),
+                reason=(
+                    "track-repo lacks the stage branch this ticket is diffed against; "
+                    "§C.5 requires one branch per stage"
+                ),
+            )
 
     def provision(self, instance: TicketInstance) -> Workspace:
         dest = self.workspace_path(instance)
@@ -161,12 +221,10 @@ class StubForgeClient:
                 text=True,
                 encoding="utf-8",
             )
-        return Workspace(
-            path=dest,
-            branch="dev",
-            base_ref=f"origin/{instance.ticket_id}",
-            head_ref=f"origin/{instance.ticket_id}-sol",
-        )
+        base_ref, head_ref = self._refs(instance, dest)
+        self._must_have_ref(dest, base_ref)
+        self._must_have_ref(dest, head_ref)
+        return Workspace(path=dest, branch="dev", base_ref=base_ref, head_ref=head_ref)
 
     def create_pr(self, instance: TicketInstance, *, base: str, head: str) -> str:
         return f"https://gitea.local/{instance.learner}/simulated/pulls/{instance.id}"

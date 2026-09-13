@@ -21,6 +21,7 @@ import pytest
 from platform_service.content_loader import (
     ContentValidationError,
     discover_ticket_paths,
+    load_stage_refs,
     load_tickets,
 )
 
@@ -197,3 +198,52 @@ def test_load_tickets_propagates_schema_violations(
     )
     with pytest.raises(ContentValidationError):
         load_tickets(root)
+
+
+# --- stage refs（§C.5：分支按阶段命名，不按 ticket id） --------------------------
+
+
+def test_load_stage_refs_maps_identity_to_stage_name(
+    tmp_path: Path,
+    track_tree_builder: Callable[..., Path],
+    track_factory: Callable[..., dict[str, Any]],
+    ticket_factory: Callable[..., Ticket],
+) -> None:
+    """Forge 靠这张表取分支；若拿 identity.id 当分支名，在描述式目录名的 Track 上会取错 ref。"""
+    root = tmp_path / "track"
+    _lay_out(
+        root,
+        write_tree=track_tree_builder,
+        make_track=track_factory,
+        make_ticket=ticket_factory,
+        stages=[
+            ("stage-00-onboarding", _ticket(ticket_factory, "db-stage-00", [])),
+            (
+                "stage-01-product-query-index",
+                _ticket(ticket_factory, "db-stage-01", ["db-stage-00"]),
+            ),
+        ],
+    )
+    assert load_stage_refs(root) == {
+        "db-stage-00": "stage-00-onboarding",
+        "db-stage-01": "stage-01-product-query-index",
+    }
+
+
+def test_load_stage_refs_omits_board_only_stages(
+    tmp_path: Path,
+    track_tree_builder: Callable[..., Path],
+    track_factory: Callable[..., dict[str, Any]],
+    ticket_factory: Callable[..., Ticket],
+) -> None:
+    """只上榜、不出卷的 stage 不该产生 ref（否则会去要一个不存在的分支）。"""
+    root = tmp_path / "track"
+    _lay_out(
+        root,
+        write_tree=track_tree_builder,
+        make_track=track_factory,
+        make_ticket=ticket_factory,
+        stages=[("stage-01-product-query-index", _ticket(ticket_factory, "db-stage-01", []))],
+        manifest_stages=["stage-00-onboarding", "stage-01-product-query-index"],
+    )
+    assert load_stage_refs(root) == {"db-stage-01": "stage-01-product-query-index"}

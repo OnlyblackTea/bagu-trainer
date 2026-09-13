@@ -2070,14 +2070,16 @@ git commit -m "test: A′ 后端端到端闭环（pass→unlock / fail→retry�
 
 ## 执行结果（Plan 1 已执行完成）
 
-**状态：** Task 0-12 全部落地。**全量 `209 passed`，`ruff check .` 全绿。**
+**状态：** Task 0-12 全部落地。**全量 `215 passed`，`ruff check .` 全绿。**
 
 | 项 | 数值 |
 |---|---|
-| 执行前基线 | 138 passed（Task 0 的沙箱注记里记的 151 是"Task 0 之后、Plan 1 之前"） |
-| 执行后全量 | **209 passed** |
+| 执行前基线 | 138 passed |
+| Plan 1 执行后 | 209 passed |
+| 分支模型跟进（见下节）后 | **215 passed** |
 | 其中 Task 0（契约对齐）新增 | 13 例（`test_ticket_discovery.py` 7 + `test_admission.py` 4 + `test_service.py` 2） |
 | 其中 Plan 1 新增 | 58 例（桩 9 + demo_repo 7 + schemas 5 + deps 3 + app 6 + track 9 + workspace 5 + progress 8 + e2e 3，另含少量既有文件内追加） |
+| 分支模型跟进新增 | 6 例（`load_stage_refs` 2 + 阶段分支/board-only 无分支 2 + ref 缺失 2） |
 | 静态检查 | `ruff check .` → `All checks passed!` |
 
 **与原稿的偏差（全部已在正文标注 ⚠️）：**
@@ -2089,43 +2091,77 @@ git commit -m "test: A′ 后端端到端闭环（pass→unlock / fail→retry�
 5. **Task 9**：`get_track` 增加 `kind`（`assessed` / `board_only`）与 `app.state.stage_tickets` 目录名索引；新增"用目录名取卷必须 404"的回归测试。
 6. **文件结构**：补上原稿遗漏的 `platform_api/stubs_wiring.py`；测试清单补上 `test_api_schemas.py` / `test_api_deps.py` / `test_api_app.py`。
 7. **环境注记**：本机需 `fastapi 0.141.1` + `uvicorn 0.52.4` + `starlette 1.6.0`（已装）；`TestClient` 会报两条 `StarletteDeprecationWarning`（httpx / anyio 别名），不影响用例。
+8. **分支模型跟进（原稿之后新增的一轮）**：占位 Forge 不再拿 `ticket_id` 当分支名，改为按**阶段**解析并校验 ref；新增 `workspace_ref_missing` 短码。见文末决策节。
+
+**提交切分（已落地，工作树干净）：**
+
+| commit | 内容 |
+|---|---|
+| `5ac14f4` | `feat: 引擎集成层（评审生成 / diff 预处理 / 导师会话 + 工作区取证）`——这是**执行前就存在的未提交工作**（上一提交只落了纯控制面），先单独入库以免与后续混在一起 |
+| `1e2d977` | `docs: 补入 A′ 切片设计 spec 与实现计划` |
+| `36a0e8b` | `fix: 统一 ticket 发现与身份契约`（Task 0） |
+| `b53fa0b` | `feat: A′ 引擎无关后端切片` |
+| 见文末 | `fix: 分支模型按阶段解析`（决策跟进） |
 
 **未做的事（有意）：**
-- 未提交任何 commit——仓库工作树在本次执行前就**不干净**（`platform_service/ai_review.py`、`review_diff.py`、`mentor.py` 与 3 个测试文件是 **untracked**，另有 5 个已跟踪文件被修改）。本计划的每个 Task 都带 `git commit` 步骤，但在这种基线上逐任务提交会把既有未提交工作卷进来，故留待你决定如何切分提交。
 - 未删任何 prar-agent 文件（那是 spec Section B，独立授权）。
 - 未做前端 `frontend/`（Plan 2）。
 - 未起真 uvicorn 做 Task 12 Step 4 的冒烟（TestClient 的 e2e 已覆盖同一路径；需要的话可另跑）。
+- 未 push（全部为本地提交）。
+- 未修 `seckill-lab`（Track 侧补 per-stage 分支）——见文末决策节的"仍待 Track 侧完成"。
 
 ---
 
-## ⚠️ 遗留缺口：真 Track 的 git 分支布局与占位 Forge 的约定不一致（下一个切片的输入）
+## ✅ 已决策：保留 §C.5 的分支模型（Track 侧对齐），并让占位 Forge 不再猜 ref
 
-**实测（把 A′ app 直接指向真 Track `F:\workspace\seckill-lab`）：**
+**决策（用户授权自行判断）：保留我们的设计——§C.5「一个阶段一个分支」，`seckill-lab`
+的单一 `solutions` 分支属于 Track 侧不符合规范，由 Track 侧修，不让平台去适配它。**
+
+**决定性理由不是命名偏好，而是 D2 防剧透的不变量。** §8/§C.5 明确：*未解锁阶段是独立 ref，
+clone/fork 只检出已解锁阶段*。把多个阶段的解法塞进同一个 `solutions` ref，等于一次 clone
+交出全部答案——这直接破坏 D2。泛化 `ForgeClient` 去接受任意布局（原选项 B）会把一个
+Track 编排问题塞进平台契约，并让"哪些 ref 该发给学员"从结构性保证退化成约定。
+`seckill-lab` 又是由现成项目按我们的设计改造而来（其分支布局是继承来的，不是按 §C.5 设计的），
+因此它是**待修的样板**，不是规范的来源。
+
+**顺带修掉一个同类缺陷：占位 Forge 之前把 `ticket_id` 当分支名。** §C.5 的分支是按
+**阶段**命名的（= `manifest.stages` 条目 = `stages/<name>/` 目录名），ticket 的 `identity.id`
+是另一个命名空间——这和 Task 0 修的是同一类混淆，只是 demo 里三者恰好同名，把它盖住了。
+
+**已落地：**
+
+- `platform_service/forge.py` —— 明确写下 ref 契约（`base_ref` = 所属 **stage** 分支；
+  `head_ref` = 学员 dev ref），并新增 `WorkspaceRefMissingError`（带缺失 ref + 现有 ref 清单）。
+- `platform_service/content_loader.py` —— 新增 `load_stage_refs`（`identity.id` → 阶段名）：
+  ref 布局**来自内容**，不来自占位逻辑的猜测。
+- `platform_service/stubs.py` —— `StubForgeClient` 构造时接收 `stage_refs`，按阶段解析
+  `origin/<stage>` ↔ `origin/<stage>-sol`，并在 clone 后**校验 ref 真的存在**，
+  缺失即抛 `WorkspaceRefMissingError`（不再等到 `git diff` 抛非零退出）。
+- `platform_api/app.py` —— 新短码 `workspace_ref_missing`（500，附 `ref` / `available`），
+  与真故障的 `git_command_failed` 分开：前者是**内容不符合 §C.5**，后者是真故障。
+- `platform_api/demo_repo.py` —— demo 分支改为按**阶段**命名，并断言 `db-stage-00` 这类
+  ticket-id 分支**不存在**；board-only stage 不得有分支（否则把未发布阶段的代码也发出去）。
+- 测试新增/改写：`test_stub_forge.py`（阶段解析 + 两种 ref 缺失）、`test_demo_repo.py`
+  （分支按阶段命名、board-only 无分支）、`test_api_workspace.py`（新短码）、
+  `test_ticket_discovery.py`（`load_stage_refs` 映射与 board-only 不产生 ref）。
+
+**实测（A′ app 直接指向真 Track `F:\workspace\seckill-lab`）：**
 
 ```
-board: [('stage-00-onboarding','board_only',None), ('stage-01-product-query-index','assessed','db-stage-01')]
-ticket: 200   enroll: 201   instance: db-stage-01 available   start: 200
-provision: 200 {'base_ref': 'origin/db-stage-01', 'head_ref': 'origin/db-stage-01-sol'}
-diff: 500 {"detail":"git_command_failed"}
+declared stage refs: {'db-stage-01': 'stage-01-product-query-index'}
+provision: 500 {'detail': 'workspace_ref_missing',
+                'ref': 'origin/stage-01-product-query-index',
+                'available': ['main', 'origin', 'origin/main', 'origin/solutions']}
 ```
 
-**结论：真 Track 上"内容 + 身份 + DAG"这条线已经通了**（发卷/看板/取卷/enroll/start 全对，
-`stage-00-onboarding` 正确落在 `board_only`）。**但 git 工作区这条线还不通：**
+失败信息现在**自解释**：平台要的是阶段分支 `origin/stage-01-product-query-index`，
+而仓库里只有 `main` 与 `solutions`——一眼就能看出 Track 缺 per-stage 分支。
+（此前它要的是 `origin/db-stage-01`，那本身就是错的 ref。）
 
-- `StubForgeClient` 按 spec §C.5 的约定推算 diff 两端为
-  `origin/<ticket_id>` ↔ `origin/<ticket_id>-sol`；
-- 而 `seckill-lab` 实际只有 **`main` + `solutions`** 两个分支，**不存在任何 per-ticket 分支**
-  （`git for-each-ref refs/heads` → `main`, `solutions`）；
-- 于是 `diff` 因 ref 不存在而 git 非零退出 → 现在至少映射成短码 `git_command_failed`
-  （不再是裸 500；见 `test_git_failure_maps_to_short_code_without_leaking_a_traceback`），
-  但 **provision/diff/submit/review/decide 在真 Track 上都还跑不通**。
+**仍待 Track 侧完成（不在本计划范围）：** 给 `seckill-lab` 补出各阶段的骨架分支与**每阶段
+独立的**解法 ref（取代单一 `solutions` 分支），并把 `manifest.stages` 与
+`stages/<name>/`、分支名三者对齐。完成后 provision/diff/submit/review/decide 在真 Track
+上即可整条跑通——内容/身份/DAG 这条线已经验证过了。
 
-**这是一个需要你决策的设计分叉，我没有单方面选定：**
-
-| 方向 | 含义 | 代价 |
-|---|---|---|
-| A. Track 侧对齐 §C.5 | 让每个 Track 按"每阶段一个分支"布局（`stage-NN` 骨架 + 解法 ref），`seckill-lab` 补出这些分支 | 要改 Track 样板的分支模型；但 `StubForgeClient` 与 spec §C.5 一字不改 |
-| B. A′ 侧泛化 | 让 `ForgeClient` 从 Track 声明里读 ref 布局（如 manifest 增加 `base_ref`/`head_ref` 或分支命名规则），不硬编码 `<ticket_id>`/`<ticket_id>-sol` | 要动 spec §C.5 与 `Workspace`/`ForgeClient` 契约；但不动已发布的内容仓 |
-| C. 暂不处理 | A′ 只对 demo fixture 负责（原计划本意），真 Track 的 git 线留到真实 Gitea 切片一起做 | 真 Track 目前只能用到"发卷 + 状态机"这一半 |
-
-> 建议在写 Plan 2（前端）之前定这个——前端的"工作区/进度"屏与"diff 预览"屏直接依赖它。
+> Plan 2（前端）"工作区/进度"与"diff 预览"两屏依赖这条契约，现在它已经冻结：
+> `base_ref` = 阶段分支、`head_ref` = 学员 dev ref、缺 ref 报 `workspace_ref_missing`。

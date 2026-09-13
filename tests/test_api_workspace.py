@@ -20,7 +20,8 @@ def test_provision_returns_workspace(client: Any) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["branch"] == "dev" and body["simulated"] is True
-    assert body["base_ref"] == "origin/db-stage-00"
+    # §C.5：base 是该 ticket 所属**阶段**的分支，不是 ticket id。
+    assert body["base_ref"] == "origin/stage-00-onboarding"
 
 
 def test_diff_is_real_local_git(client: Any) -> None:
@@ -47,11 +48,14 @@ def test_diff_unknown_instance_404(client: Any) -> None:
     assert client.get("/instances/nope/diff").status_code == 404
 
 
-def test_git_failure_maps_to_short_code_without_leaking_a_traceback(tmp_path: Path) -> None:
+def test_missing_stage_branch_maps_to_short_code_without_leaking_a_traceback(
+    tmp_path: Path,
+) -> None:
     """§C.8：错误一律 ``{"detail": "<短码>"}``，不泄露堆栈。
 
-    git 失败（这里是 Track 的分支布局与占位 Forge 的 ``<ticket_id>``/``<ticket_id>-sol``
-    约定不一致，即"该 ref 不存在"）不得以未映射的 500 裸奔出去。
+    这里模拟内容侧的配置错误：Track 声明的阶段分支在 track-repo 里不存在（真 Track 样板
+    把答案都塞在单一 ``solutions`` 分支上就是这个症状，不符合 §C.5）。应当在 provision
+    就返回 ``workspace_ref_missing`` 并带上缺失的 ref，而不是等到 diff 抛非零退出。
     """
     import subprocess
 
@@ -62,7 +66,7 @@ def test_git_failure_maps_to_short_code_without_leaking_a_traceback(tmp_path: Pa
 
     repo = build_demo_track_repo(tmp_path / "demo")
     subprocess.run(
-        ["git", "branch", "-D", "db-stage-00-sol"],
+        ["git", "branch", "-D", "stage-00-onboarding-sol"],
         cwd=repo,
         check=True,
         capture_output=True,
@@ -76,8 +80,9 @@ def test_git_failure_maps_to_short_code_without_leaking_a_traceback(tmp_path: Pa
         if i["ticket_id"] == "db-stage-00"
     )
     c.post(f"/instances/{iid}/start")
-    c.post(f"/instances/{iid}/provision")
 
-    r = c.get(f"/instances/{iid}/diff")
+    r = c.post(f"/instances/{iid}/provision")
     assert r.status_code == 500
-    assert r.json()["detail"] == "git_command_failed"
+    assert r.json()["detail"] == "workspace_ref_missing"
+    assert r.json()["ref"] == "origin/stage-00-onboarding-sol"
+    assert "origin/stage-00-onboarding" in r.json()["available"]

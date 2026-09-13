@@ -1,14 +1,17 @@
 """A′ demo track-repo 构建器（诚实占位内容）。
 
 建一个本地 git 仓库，既是发卷内容源（track.yaml + stages/<dir>/ticket.yaml），又是
-StubForgeClient 的 clone 源：每张 ticket 一个骨架分支 ``<ticket_id>`` 与一个解法分支
-``<ticket_id>-sol``，diff 两端模拟"学员把骨架改成解法"。真实 Gitea/内容仓库落地后本模块
-整体删除。
+StubForgeClient 的 clone 源：**每个阶段一个骨架分支**（分支名 = stage 名 = 目录名）**与一个
+解法分支** ``<stage>-sol``，diff 两端模拟"学员把骨架改成解法"。分支按阶段而非 ticket id
+命名，是 §C.5 git 进度模型的要求（见 ``platform_service/forge.py``）。真实 Gitea/内容仓库
+落地后本模块整体删除。
 
 **刻意镜像真 Track（seckill-lab）的形状**（见 Plan 1 的 Task 0）：
 
 * stage 目录名是描述式的（``stage-01-product-query-index``），而 ``identity.id`` 是
   ``db-stage-01``——目录名永远不是身份，身份是 ``identity.id``；
+* 于是**分支名也按阶段走**（``stage-01-product-query-index``），不是 ``db-stage-01``：
+  三者同名只是巧合，同名过一次就把"分支取错 ref"这个缺陷盖住了；
 * ``manifest.stages`` 是**看板清单**，可以包含"只上榜、不出卷"的 stage
   （``stage-03-deadlock-optional``），照真 Track 的 ``stage-00-onboarding``；
 * ``skeleton_repo`` 是 ``"."``，与真 Track 一样"本仓根就是骨架仓"。
@@ -174,14 +177,15 @@ def build_demo_track_repo(dest: Path) -> Path:
     _git(dest, "add", "-A")
     _git(dest, "commit", "-qm", "track content + skeleton")
 
-    for _, ticket_id, *_ in _TICKETS:
-        _git(dest, "checkout", "-q", "-b", ticket_id, "main")
-        _git(dest, "checkout", "-q", "-b", f"{ticket_id}-sol", ticket_id)
+    # §C.5：分支按**阶段**命名（= stage 目录名 = manifest.stages 条目），不是 ticket id。
+    for dirname, ticket_id, *_ in _TICKETS:
+        _git(dest, "checkout", "-q", "-b", dirname, "main")
+        _git(dest, "checkout", "-q", "-b", f"{dirname}-sol", dirname)
         (dest / "src" / ticket_id / "Solution.java").write_text(
             f"// {ticket_id} solution: 模拟学员解法\npublic class Solution {{}}\n",
             encoding="utf-8",
         )
         _git(dest, "add", "-A")
-        _git(dest, "commit", "-qm", f"{ticket_id} solution")
+        _git(dest, "commit", "-qm", f"{dirname} solution")
     _git(dest, "checkout", "-q", "main")
     return dest
