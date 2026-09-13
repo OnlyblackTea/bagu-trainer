@@ -259,3 +259,25 @@ def grading_report_factory() -> Any:
 @pytest.fixture
 def sample_grading_report() -> dict[str, Any]:
     return make_grading_report()
+
+
+# --- A′ 组合根（Plan 1）--------------------------------------------------------
+# lazy import：保持 collection 期不依赖 fastapi/platform_api。
+
+
+@pytest.fixture
+def demo_app(tmp_path: Path) -> Any:
+    """建 demo track-repo 并组装 FastAPI app（每个测试独立 tmp）。"""
+    from platform_api.app import create_app
+    from platform_api.demo_repo import build_demo_track_repo
+
+    repo = build_demo_track_repo(tmp_path / "demo")
+    return create_app(content_dir=repo, forge_base=tmp_path / "ws")
+
+
+@pytest.fixture
+def client(demo_app: Any) -> Any:
+    from fastapi.testclient import TestClient
+
+    return TestClient(demo_app)
+

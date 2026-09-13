@@ -47,7 +47,7 @@ Repository = "https://github.com/OnlyblackTea/bagu-trainer"
 Issues = "https://github.com/OnlyblackTea/bagu-trainer/issues"
 
 [tool.setuptools]
-packages = ["orchestrator", "platform_service", "paper_cli", "contracts"]
+packages = ["orchestrator", "platform_service", "contracts", "platform_api", "platform_api.routes"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
