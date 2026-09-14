@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Playwright 产物（截图/录像/报告）不入库
+playwright-report/
+test-results/
+blob-report/

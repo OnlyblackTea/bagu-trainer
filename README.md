@@ -13,6 +13,41 @@
 
 ---
 
+## 本地跑起来（A′ 引擎无关切片）
+
+A′ 已把「发卷 → 工作区 → 提交 → 本地阅卷 → AI 评审 → 确定性决策（解锁 / 返工）」做成
+**纯 REST 后端 + 学习者 SPA**，全程**不依赖 prar-agent**。开两个终端：
+
+```bash
+# 1) 后端（默认用内置 demo Track；也可 --content-dir ../seckill-lab 指向真 Track）
+.venv/Scripts/python.exe -m platform_api.serve            # http://127.0.0.1:8000
+
+# 2) 前端（Vite 开发服务器把 REST 前缀代理到后端）
+cd frontend && npm install && npm run dev                 # http://127.0.0.1:5173
+```
+
+> 注意是 `python -m platform_api.serve`，**不是** `uvicorn platform_api.app:app`——
+> `create_app` 是工厂，需要 `content_dir`，模块级没有 `app`。
+
+验证（全绿才算完成）：
+
+```bash
+.venv/Scripts/python.exe -m pytest -q        # 220 passed
+.venv/Scripts/python.exe -m ruff check .
+
+cd frontend
+npm run build                                 # tsc --noEmit + vite build
+npm test                                      # vitest + RTL，40 passed
+npx playwright test                           # 真浏览器 e2e，3 passed
+```
+
+> **本 README 的其余部分尚未随 A′ 修订。** 下面「三层结构 / GPL 边界 / 引擎层 / 状态」写的
+> 是引擎驱动时代的架构；退休 prar-agent 的文档修订清单见
+> [`docs/superpowers/specs/2026-09-10-learner-webui-and-prar-agent-retirement-design.md`](docs/superpowers/specs/2026-09-10-learner-webui-and-prar-agent-retirement-design.md)
+> 的 Section A（**独立授权**执行，未做）。
+
+---
+
 ## 快速开始（贡献者）
 
 ```bash
@@ -88,8 +123,10 @@ bagu-trainer/
 ├── paper_cli/              学习者设备客户端：报名/up/开发/导师/阅卷/提交/模拟（§7.2）
 ├── content/
 │   └── schema/             track.schema.json + ticket.schema.json（§4.2/§4.3）—— 贡献契约
+├── platform_api/           ★ A′ 组合根：FastAPI 纯 REST（app/deps/schemas/routes/serve）
+├── frontend/               ★ A′ 学习者 SPA（React + Vite + TS，Apache-2.0，从零写）
 ├── contracts/              边界守卫测试 + prar-agent API 契约测试（每次子模块 bump 都要过）
-└── docs/                   paper-platform-design.md（权威设计稿，v0.4）
+└── docs/                   paper-platform-design.md（权威设计稿，v0.4）+ superpowers/（spec 与计划）
 ```
 
 ---
