@@ -71,6 +71,14 @@
 
 **修订验收**：全文 grep `prar-agent` / `prar_agent` / `submodule` / `GPL` / `契约冻结` 仅出现在"退休决策记录"段落（带过去时与 spec 指针）；无残留的现在时引擎依赖描述。
 
+**执行结果（2026-09-10，已完成）**：
+
+- 设计稿已由 **v0.4 修订为 v0.5**，逐章处置与本表一致。§6 整章退休为一段"决策记录"（6.1 曾经的选择 / 6.2 为什么放弃 / 6.3 代价诚实记账 / 6.4 边界纪律的去向），并按本表补了 §0 **D4**、§1.3 平台自有 `InstanceState`、§8.1「一阶段一 ref」契约。
+- `README.md` 同步重写：去引擎叙事、换新结构图与状态表、补真 Track 跑法的坑（`workspace_ref_missing` 属预期）、并把"引擎时代残留文件尚未删除"写明。
+- **验收审计**：全文 grep `prar|submodule|GPL|契约冻结|paper-cli|六阶段|engine_version|checkpoint|LTM|pgvector` 命中 37 处，逐一核对后**全部**落在三类允许位置：① 变更记录里标注为"当时决策"的 v0.2–v0.4 条目；② §1.1 / §1.2 / §3 / §6 / §10 / §11.4 / 附录 A / 附录 C 的**过去时 + §6 指针**段落；③ `engine_version` **字段名**本身（已标注为遗留命名债务，§3.1）。无残留的现在时引擎依赖描述。顺带修掉两处失效指针：§1.1 的 `§6.6 / §6.4`、§4.3 五个硬问题里的"引擎更新后旧 session 用哪个 engine"。
+- **`NOTICE` / `Makefile` / `paper_cli/__init__.py` 刻意未改**：它们描述的是**仓内当前真实状态**（子模块仍在、`contracts/test_boundary.py` 仍在守），抢在 Section B 之前改会造成不实陈述——三者已补进 Section B.3 清单与 B.4 验收。
+- 回归：`pytest -q` **220 passed**、`ruff check .` 全绿（本次为纯文档改动，代码未动）。
+
 ---
 
 ## Section B — prar-agent 退休执行清单【独立授权，勿现在执行】
@@ -111,11 +119,15 @@ rd /s /q .git\modules\prar-agent
 | `platform_service/ai_review.py` | **代码不改**；仅 docstring 去掉 `CONTRACTS §5` / `orchestrator.prar_bridge.PrarBridge` 字样，改述为"后端经 `ReviewEngine` 缝注入（桩 / 未来轻量 harness）"。`ReviewEngine` Protocol 的 `session_id` 形参为引擎味命名，A′ 阶段保留为可接受债务，待真实 harness 落地再议改名 |
 | `platform_service/review_diff.py` | **代码不改**；docstring 去掉 `CONTRACTS §5.5/§5.6/§5.8a` / "契约三 铁律" 字样。`ENGINE_DIFF_CHAR_LIMIT` 常量名带 "ENGINE"，退休后可改名为 `REVIEW_DIFF_CHAR_LIMIT`（纯改名，可选） |
 | 存活代码 docstring | 全局把 "design v0.4 §x" 引用更新为 "v0.5 §x"（若章节号变动） |
+| `NOTICE` | 删掉「1. prar-agent —— 引擎层」整段（含"GPL 边界（承重 —— 切勿打破）"宣告）。⚠ **时序**：只有 B.1 的删除**真正执行之后**，该段才成为不实陈述——执行前它描述的是仓内**真实**状态（子模块仍在、`contracts/test_boundary.py` 仍在守），所以**不要抢在 B.1 之前改它**。（Section A 修订设计稿时已按此原则跳过 NOTICE。） |
+| `Makefile` | 删 `SUBMODULE` / `PINNED_TAG` / `bootstrap` / `clone-hint` / `submodule-status` / `bump-submodule` / `test-boundary` / `test-contract` 及所有子模块措辞；`lint` / `fmt` 的路径列表去掉 `orchestrator`、`contracts`，补上 `platform_api`（`frontend/` 走 npm，不进 ruff） |
+| `paper_cli/__init__.py` | docstring 去掉 `orchestrator.prar_bridge` / "GPL boundary" / `paper mentor` 措辞，改述为"形态已改为 REST 控制面 + 学习者 SPA（设计 §7.2）；CLI 是可选未来项" |
 
 ### B.4 退休验收
 
 - `git submodule status` 无输出；`.gitmodules` 无 prar-agent 段。
 - `grep -rn "prar" .`（排除本 spec 与 `docs/` 决策记录段）无命中。
+- `grep -rn "prar\|GPL\|submodule" NOTICE Makefile paper_cli/` 无命中；`README.md` 只允许开头那段 v0.5 变更说明（决策记录）。
 - `.venv\Scripts\python.exe -m pytest` 全绿（已删 `tests/test_session_pool.py`、`tests/test_mentor.py`、`contracts/`）。
 - `.venv\Scripts\python.exe -m ruff check .` 全绿。
 - `python -c "import platform_api, platform_service"` 成功；`import orchestrator` 失败（已删）。
