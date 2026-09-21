@@ -12,6 +12,13 @@
 * ``docker`` —— :class:`~platform_api.grading_docker.DockerGradingRunner`：在**本机**真跑
   Track 的 canonical 测试。需要 JDK17 + Maven，以及 Track 声明的 compose 基础设施（§7.1）——
   也就是 D3 说的"学员自己的机器"。
+
+**真阅卷前的环境重置**（``BAGU_GRADING_RESET`` 环境变量或 ``serve --grading-reset``）：
+
+* ``auto``（默认）—— 每次阅卷前按 ``runtime.compose`` 做 ``down -v`` + ``up -d --wait``。
+  必须如此：验收测试的 ``@Sql`` 跑的是**长活**数据库，一旦有人在同一个库里跑过参考解的迁移
+  （比如瞄了一眼答案），索引就留在那儿了，此后骨架一个字节不写也能绿——那是零成本的绕过。
+* ``never`` —— 关掉重置。**等于把上面那条绕过又放回来**，只在你确实要保留库内状态时用。
 """
 
 from __future__ import annotations
@@ -37,6 +44,11 @@ GradingBackend = Literal["stub", "docker"]
 
 #: 选阅卷后端的开关。默认 ``stub``：装好 JDK17+Maven 之前，平台照样能整条跑通。
 GRADING_BACKEND_ENV = "BAGU_GRADING"
+#: 真阅卷前是否重置 Track 基础设施：``auto``（默认，重置）/ ``never``（不重置，会放大"假绿"）。
+GRADING_RESET_ENV = "BAGU_GRADING_RESET"
+
+_TRUTHY = frozenset({"auto", "1", "true", "yes"})
+_FALSY = frozenset({"never", "0", "false", "no"})
 
 
 def resolve_grading_backend(explicit: GradingBackend | None = None) -> GradingBackend:
@@ -49,6 +61,18 @@ def resolve_grading_backend(explicit: GradingBackend | None = None) -> GradingBa
             f"{GRADING_BACKEND_ENV} must be 'stub' or 'docker', got {raw!r}"
         )
     return raw  # type: ignore[return-value]
+
+
+def resolve_grading_reset(explicit: bool | None = None) -> bool:
+    """显式参数 > 环境变量 > 重置（``auto``）。取值非法时立刻炸。"""
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get(GRADING_RESET_ENV, "auto").strip().lower()
+    if raw in _TRUTHY:
+        return True
+    if raw in _FALSY:
+        return False
+    raise ValueError(f"{GRADING_RESET_ENV} must be 'auto' or 'never', got {raw!r}")
 
 
 def build_service(
@@ -69,7 +93,10 @@ def build_service(
 
 
 def grading_runner(
-    scenario: GradingScenario, *, backend: GradingBackend | None = None
+    scenario: GradingScenario,
+    *,
+    backend: GradingBackend | None = None,
+    reset_infra: bool | None = None,
 ) -> GradingRunner:
     """按 ``backend``（缺省读环境变量）产出一个 GradingRunner。
 
@@ -77,7 +104,7 @@ def grading_runner(
     这也正是"桩的 pass/fail 是装出来的、真的不是"的体现。
     """
     if resolve_grading_backend(backend) == "docker":
-        return DockerGradingRunner()
+        return DockerGradingRunner(reset_infra=resolve_grading_reset(reset_infra))
     return StubGradingRunner(scenario=scenario)
 
 

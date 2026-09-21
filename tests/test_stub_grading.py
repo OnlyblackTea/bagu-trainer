@@ -6,8 +6,34 @@ from pathlib import Path
 from typing import Any
 
 from platform_service.grading import GradingRunner
-from platform_service.models import InstanceState, TicketInstance, TicketSpec
+from platform_service.models import (
+    InstanceState,
+    TicketInstance,
+    TicketSpec,
+    TrackManifest,
+)
 from platform_service.stubs import StubGradingRunner
+
+
+def _track() -> TrackManifest:
+    """桩忽略 track，但缝要求它——这样将来换真后端时，调用方零改动。"""
+    return TrackManifest.model_validate(
+        {
+            "id": "database-bagu",
+            "name": "数据库八股实战",
+            "trust_level": "self",
+            "manifest": {
+                "requires": {"java": "17", "build": "maven"},
+                "skeleton_repo": "./skeleton",
+                "stages": ["stage-01-product-query-index"],
+            },
+            "runtime": {
+                "tests": "./tests/",
+                "digest_pin": {"tests": "sha256:x"},
+                "protected_paths": ["./src/test/"],
+            },
+        }
+    )
 
 
 def _instance(ticket: TicketSpec) -> TicketInstance:
@@ -25,7 +51,7 @@ def _instance(ticket: TicketSpec) -> TicketInstance:
 def test_pass_scenario_reports_green(ticket_factory: Any) -> None:
     ticket = TicketSpec.model_validate(ticket_factory())
     report = StubGradingRunner(scenario="pass").grade(
-        instance=_instance(ticket), ticket=ticket, workspace=Path(".")
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=Path(".")
     )
     assert report.correctness.passed is True
     assert report.correctness.test_group == ticket.grader.correctness.test_group
@@ -36,7 +62,7 @@ def test_pass_scenario_reports_green(ticket_factory: Any) -> None:
 def test_fail_scenario_reports_red(ticket_factory: Any) -> None:
     ticket = TicketSpec.model_validate(ticket_factory())
     report = StubGradingRunner(scenario="fail").grade(
-        instance=_instance(ticket), ticket=ticket, workspace=Path(".")
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=Path(".")
     )
     assert report.correctness.passed is False
 

@@ -17,8 +17,14 @@
   :class:`GradingUnavailableError`（平台配置问题，路由应报 5xx）。测试失败 / 报错 / 超时 →
   正常返回报告（``passed=False``），并在 ``correctness.tests`` 里留下**是哪一条、为什么**。
 * ``runner_trust`` 恒为 ``self``：报告是**不可信自报告**（§7.4），平台不假装它是可信计算。
-* 已知债务：``grade()`` 的形参里没有 Track，所以无法按 ``runtime.build`` 派发，当前硬编码
-  maven。要支持别的构建工具得改 Protocol 或把命令写进 ticket（设计 §3.1 已记）。
+* 已知债务：无（v0.5 起 ``grade()`` 收 ``track``，可按 ``runtime.build`` 派发，也能重置
+  ``runtime.compose``）。
+* **先重置基础设施，再跑测试**：验收测试用 ``@Sql`` 跑迁移脚本，而"跑过一次参考解的迁移"会把
+  索引留在容器里——此后骨架只把工作区文件改回去、数据库不动，测试**照样绿**，是一个零成本的
+  绕过（§7.3 的注入没实现时尤其致命）。所以默认每次阅卷前按 Track 的 ``runtime.compose`` 做
+  ``down -v`` + ``up -d --wait``；用 ``BAGU_GRADING_RESET=never`` 可关掉——**关掉等于把上面那条
+  绕过又放回来**，只在你确实想保留库内状态时用。
+* 构建工具按 ``manifest.requires.build`` 派发：当前只实现 maven，别的**显式报错**而不是猜。
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from platform_service.models import (
     ReportProvenance,
     TicketInstance,
     TicketSpec,
+    TrackManifest,
 )
 
 __all__ = ["DockerGradingRunner", "GradingUnavailableError"]
@@ -45,7 +52,13 @@ __all__ = ["DockerGradingRunner", "GradingUnavailableError"]
 _RUNNER_ID = "docker-grading/a-prime"
 
 _DEFAULT_TIMEOUT_S = 900.0
+_DEFAULT_INFRA_TIMEOUT_S = 300.0
 _MAX_DETAIL = 400
+
+
+def _rel(ref: str) -> str:
+    """把 Track 里写的相对路径（``./docker/x.yml``）变成干净的相对路径。"""
+    return ref.strip().replace("\\", "/").removeprefix("./")
 
 
 class GradingUnavailableError(RuntimeError):
@@ -176,11 +189,21 @@ class DockerGradingRunner:
     是学员的活"），本类只负责**跑测试并如实记录**。
     """
 
-    def __init__(self, *, mvn: str = "mvn", timeout_s: float = _DEFAULT_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        *,
+        mvn: str = "mvn",
+        timeout_s: float = _DEFAULT_TIMEOUT_S,
+        infra_timeout_s: float = _DEFAULT_INFRA_TIMEOUT_S,
+        reset_infra: bool = True,
+    ) -> None:
         self._mvn = mvn
         self._timeout_s = timeout_s
+        self._infra_timeout_s = infra_timeout_s
+        #: 默认重置：不重置就无法保证"骨架红"是真的红（见模块 docstring）。
+        self._reset_infra = reset_infra
 
-    # -- 可覆盖的执行钩子（测试从这一层注入假 maven，不必真装 JDK）----------------
+    # -- 可覆盖的执行钩子（测试从这一层注入假 maven / 假 compose，不必真装 JDK）--------
 
     def _run(self, command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -193,10 +216,87 @@ class DockerGradingRunner:
             timeout=self._timeout_s,
         )
 
+    # -- 基础设施（§15 风险 6 的关闭手段）-----------------------------------------
+
+    def _prepare_infra(self, track: TrackManifest, workspace: Path) -> dict[str, Any]:
+        """把 Track 声明的容器基础设施重置到干净状态，并返回审计信息。
+
+        为什么必须做：验收测试的 ``@Sql`` 会跑迁移脚本，而数据库是**长活**的。一旦有人在同一个
+        库里跑过参考解的迁移（比如瞄了一眼答案），索引就留在那儿了；此后骨架只要把工作区文件
+        改回去、一个字节的代码都不写，测试仍然绿。这不是"卫生问题"，是一个零成本的绕过。
+        """
+        compose_ref = track.runtime.compose
+        if not compose_ref:
+            return {
+                "compose": None,
+                "reset": False,
+                "reason": "track declares no runtime.compose",
+            }
+        compose = workspace / _rel(compose_ref)
+        if not compose.is_file():
+            raise GradingUnavailableError(
+                f"track declares runtime.compose={compose_ref!r} but the workspace has no such "
+                f"file ({compose}) — refusing to grade without a resettable environment"
+            )
+        if not self._reset_infra:
+            return {
+                "compose": str(compose),
+                "reset": False,
+                "reason": "reset disabled (BAGU_GRADING_RESET=never)",
+            }
+        if shutil.which("docker") is None:
+            raise GradingUnavailableError(
+                "docker not found on PATH — this track declares container infrastructure"
+            )
+        self._compose(compose, "down", "-v", cwd=workspace)
+        self._compose(compose, "up", "-d", "--wait", cwd=workspace)
+        return {"compose": str(compose), "reset": True}
+
+    def _compose(self, compose: Path, *args: str, cwd: Path) -> None:
+        command = ["docker", "compose", "-f", str(compose), *args]
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self._infra_timeout_s,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GradingUnavailableError(f"{' '.join(command)} failed: {exc}") from exc
+        if proc.returncode != 0:
+            blob = f"{proc.stderr}\n{proc.stdout}".strip()
+            tail = " / ".join(
+                line.strip() for line in blob.splitlines()[-3:] if line.strip()
+            )
+            raise GradingUnavailableError(
+                f"{' '.join(command)} exited {proc.returncode}: {tail[:300]}"
+            )
+
+    # -- 命令构造 ---------------------------------------------------------------
+
+    def _test_command(self, track: TrackManifest, ticket: TicketSpec) -> list[str]:
+        group = ticket.grader.correctness.test_group
+        if not group:
+            raise GradingUnavailableError("ticket declares no grader.correctness.test_group")
+        build = (track.manifest.requires or {}).get("build")
+        if build not in (None, "maven"):
+            raise GradingUnavailableError(
+                f"track declares requires.build={build!r}; this runner only implements maven"
+            )
+        return [self._mvn, "-B", f"-Dgroups={group}", "test"]
+
     # -- public API（GradingRunner 缝） --------------------------------------
 
     def grade(
-        self, *, instance: TicketInstance, ticket: TicketSpec, workspace: Path
+        self,
+        *,
+        instance: TicketInstance,
+        ticket: TicketSpec,
+        track: TrackManifest,
+        workspace: Path,
     ) -> GradingReport:
         workspace = Path(workspace)
         if not workspace.is_dir():
@@ -206,11 +306,10 @@ class DockerGradingRunner:
                 f"maven not found on PATH ({self._mvn!r}) — grading runs on the learner's "
                 "machine (D3); install JDK17 + Maven there, or keep using the stub"
             )
+        command = self._test_command(track, ticket)
+        # 先校验（省得为一个配置错误白等一次容器重启），再重置环境，最后才跑测试。
+        infra = self._prepare_infra(track, workspace)
         group = ticket.grader.correctness.test_group
-        if not group:
-            raise GradingUnavailableError("ticket declares no grader.correctness.test_group")
-
-        command = [self._mvn, "-B", f"-Dgroups={group}", "test"]
         started = datetime.now(UTC)
         timed_out = False
         try:
@@ -263,6 +362,8 @@ class DockerGradingRunner:
                     "java": _tool_version(["java", "-version"]),
                     "maven": _tool_version([self._mvn, "-v"]),
                     "os": platform.platform(),
+                    # 这次阅卷是不是在**重置过**的环境里跑的，必须可审计（§15 风险 6）。
+                    "infra": infra,
                 },
             ),
             correctness=ReportCorrectness(test_group=group, passed=passed, tests=results),

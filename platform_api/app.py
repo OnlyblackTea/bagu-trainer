@@ -26,6 +26,7 @@ from .deps import (
     build_service,
     grading_runner,
     resolve_grading_backend,
+    resolve_grading_reset,
     review_engine,
 )
 from .grading_docker import GradingUnavailableError
@@ -97,6 +98,7 @@ def create_app(
     forge_source: Path | None = None,
     forge_base: Path | None = None,
     grading: GradingBackend | None = None,
+    grading_reset: bool | None = None,
 ) -> FastAPI:
     app = FastAPI(title="bagu-trainer A′", version=PLATFORM_VERSION)
     store, track, tickets, service = build_service(content_dir)
@@ -109,6 +111,7 @@ def create_app(
     )
     # 后端在**启动时**定下来（配错了立刻炸），而不是每个请求再解析一次环境变量。
     backend = resolve_grading_backend(grading)
+    reset_infra = resolve_grading_reset(grading_reset)
 
     app.state.store = store
     app.state.track = track
@@ -117,8 +120,11 @@ def create_app(
     app.state.stage_tickets = load_ticket_dirs(content_dir)
     app.state.service = service
     app.state.forge = forge
-    app.state.grading_runner = lambda scenario: grading_runner(scenario, backend=backend)
+    app.state.grading_runner = lambda scenario: grading_runner(
+        scenario, backend=backend, reset_infra=reset_infra
+    )
     app.state.grading_backend = backend
+    app.state.grading_reset = reset_infra
     app.state.review_engine = review_engine
 
     _register_exception_handlers(app)

@@ -71,7 +71,10 @@ def submit(
     ticket = state.tickets[instance.ticket_id]
     workspace = state.forge.provision(instance)
     report = state.grading_runner(scenario).grade(
-        instance=instance, ticket=ticket, workspace=workspace.path
+        instance=instance,
+        ticket=ticket,
+        track=state.track,
+        workspace=workspace.path,
     )
     submission = state.service.submit(
         instance_id, grading_report=report, pr_url=body.pr_url, defense=body.defense

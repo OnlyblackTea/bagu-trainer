@@ -23,7 +23,12 @@ import pytest
 from platform_api import grading_docker
 from platform_api.grading_docker import DockerGradingRunner, GradingUnavailableError
 from platform_service.grading import GradingRunner
-from platform_service.models import InstanceState, TicketInstance, TicketSpec
+from platform_service.models import (
+    InstanceState,
+    TicketInstance,
+    TicketSpec,
+    TrackManifest,
+)
 
 _SUREFIRE_ALL_PASS = """<?xml version="1.0" encoding="UTF-8"?>
 <testsuite name="com.devteam.seckill.stage01.ProductQueryIndexAcceptanceTest"
@@ -53,19 +58,35 @@ def _fake_which(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _ScriptedRunner(DockerGradingRunner):
-    """把 maven 执行脚本化；解析、物证、报告装配全部走真实代码路径。"""
+    """把 maven / compose 执行脚本化；解析、物证、报告装配全部走真实代码路径。"""
 
-    def __init__(self, *, proc: Any = None, raises: Exception | None = None) -> None:
-        super().__init__(mvn="mvn")
+    def __init__(
+        self,
+        *,
+        proc: Any = None,
+        raises: Exception | None = None,
+        reset_infra: bool = True,
+        compose_raises: Exception | None = None,
+    ) -> None:
+        super().__init__(mvn="mvn", reset_infra=reset_infra)
         self._proc = proc
         self._raises = raises
+        self._compose_raises = compose_raises
         self.calls: list[list[str]] = []
+        #: 按发生顺序记录两件事，用来断言"先重置环境，再跑测试"。
+        self.events: list[str] = []
 
     def _run(self, command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         self.calls.append(list(command))
+        self.events.append("test")
         if self._raises is not None:
             raise self._raises
         return self._proc
+
+    def _compose(self, compose: Path, *args: str, cwd: Path) -> None:
+        self.events.append(f"compose {' '.join(args)}")
+        if self._compose_raises is not None:
+            raise self._compose_raises
 
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Any:
@@ -76,6 +97,37 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Any:
 
 def _ticket(ticket_factory: Any, **kwargs: Any) -> TicketSpec:
     return TicketSpec.model_validate(ticket_factory(**kwargs))
+
+
+def _track(*, compose: str | None = None, build: str | None = "maven") -> TrackManifest:
+    """最小合法 Track（判定面 + 可选 compose / 构建工具），喂给 ``grade()``。
+
+    ``grade()`` 现在收 track，因为阅卷需要两样只有 Track 才知道的东西：用哪个 compose 把环境
+    重置干净（否则"跑过一次参考解迁移"会永久变绿），以及按哪种构建工具派发命令。
+    """
+    requires: dict[str, Any] = {"java": "17"}
+    if build is not None:
+        requires["build"] = build
+    runtime: dict[str, Any] = {
+        "tests": "./tests/",
+        "digest_pin": {"tests": "sha256:x"},
+        "protected_paths": ["./src/test/"],
+    }
+    if compose is not None:
+        runtime["compose"] = compose
+    return TrackManifest.model_validate(
+        {
+            "id": "database-bagu",
+            "name": "数据库八股实战",
+            "trust_level": "self",
+            "manifest": {
+                "requires": requires,
+                "skeleton_repo": "./skeleton",
+                "stages": ["stage-01-product-query-index"],
+            },
+            "runtime": runtime,
+        }
+    )
 
 
 def _instance(ticket: TicketSpec) -> TicketInstance:
@@ -130,7 +182,7 @@ def test_missing_workspace_is_unavailable_not_failed(tmp_path: Path, ticket_fact
     ticket = _ticket(ticket_factory)
     with pytest.raises(GradingUnavailableError, match="workspace does not exist"):
         _ScriptedRunner(proc=_proc()).grade(
-            instance=_instance(ticket), ticket=ticket, workspace=tmp_path / "nope"
+            instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path / "nope"
         )
 
 
@@ -141,7 +193,7 @@ def test_missing_maven_is_unavailable(
     ticket = _ticket(ticket_factory)
     with pytest.raises(GradingUnavailableError, match="maven not found"):
         DockerGradingRunner().grade(
-            instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+            instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
         )
 
 
@@ -151,7 +203,7 @@ def test_missing_test_group_is_unavailable(tmp_path: Path, ticket_factory: Any) 
     ticket = TicketSpec.model_validate(raw)
     with pytest.raises(GradingUnavailableError, match="test_group"):
         _ScriptedRunner(proc=_proc()).grade(
-            instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+            instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
         )
 
 
@@ -163,7 +215,9 @@ def test_green_suite_reports_real_provenance(tmp_path: Path, ticket_factory: Any
     runner = _ScriptedRunner(proc=_proc(returncode=0))
     _write_surefire(tmp_path, _SUREFIRE_ALL_PASS)
 
-    report = runner.grade(instance=_instance(ticket), ticket=ticket, workspace=tmp_path)
+    report = runner.grade(
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
+    )
 
     assert report.correctness.passed is True
     assert report.correctness.test_group == "stage01"
@@ -186,7 +240,7 @@ def test_assertion_failure_and_binding_error_are_distinguished(
     _write_surefire(tmp_path, _SUREFIRE_MIXED)
 
     report = _ScriptedRunner(proc=_proc(returncode=1)).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
     )
 
     assert report.correctness.passed is False
@@ -205,7 +259,7 @@ def test_compile_failure_without_reports_records_the_error_line(
     ticket = _ticket(ticket_factory)
     out = "[INFO] scanning\n[ERROR] COMPILATION ERROR : \n[ERROR] /x/Foo.java:[3,1] ';' expected\n"
     report = _ScriptedRunner(proc=_proc(returncode=1, stdout=out)).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
     )
 
     assert report.correctness.passed is False
@@ -221,7 +275,7 @@ def test_timeout_is_reported_not_raised(tmp_path: Path, ticket_factory: Any) -> 
     exc = subprocess.TimeoutExpired(cmd=["mvn"], timeout=900)
 
     report = _ScriptedRunner(raises=exc, ).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
     )
 
     assert report.correctness.passed is False
@@ -242,7 +296,7 @@ def test_working_tree_changes_are_flagged_with_out_of_scope(
 
     ticket = _ticket(ticket_factory, files_to_change=["in_scope.xml"])
     report = _ScriptedRunner(proc=_proc(returncode=0)).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=repo
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=repo
     )
 
     assert report.files_changed == ["in_scope.xml", "out_of_scope.txt"]
@@ -263,7 +317,7 @@ def test_recorded_base_ref_also_catches_committed_changes(
 
     ticket = _ticket(ticket_factory, files_to_change=["in_scope.xml"])
     report = _ScriptedRunner(proc=_proc(returncode=0)).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=repo
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=repo
     )
 
     assert report.files_changed == ["in_scope.xml"]
@@ -281,7 +335,7 @@ def test_unresolvable_base_ref_falls_back_to_working_tree(
 
     ticket = _ticket(ticket_factory, files_to_change=["in_scope.xml"])
     report = _ScriptedRunner(proc=_proc(returncode=0)).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=repo
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=repo
     )
 
     assert report.files_changed == ["in_scope.xml"]
@@ -297,7 +351,7 @@ def test_declared_performance_is_marked_not_separately_executed(
     assert ticket.grader.performance is not None
 
     report = _ScriptedRunner(proc=_proc(returncode=0)).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
     )
 
     assert report.performance is not None
@@ -311,14 +365,142 @@ def test_absent_performance_stays_none(tmp_path: Path, ticket_factory: Any) -> N
     ticket = TicketSpec.model_validate(raw)
 
     report = _ScriptedRunner(proc=_proc(returncode=0)).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
     )
 
     assert report.performance is None
 
 
-# --- 真跑冒烟（有 maven 的机器才跑，例如那台 VM）--------------------------------
+# --- 基础设施重置（§15 风险 6）：不重置，"骨架红"可能是假的 ----------------------
 
+
+def _with_compose(workspace: Path, ref: str = "./docker/docker-compose.yml") -> Path:
+    compose = workspace / ref.removeprefix("./")
+    compose.parent.mkdir(parents=True, exist_ok=True)
+    compose.write_text("services: {}\n", encoding="utf-8")
+    return compose
+
+
+def test_declared_compose_is_reset_before_the_tests_run(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """**先 down -v 再 up，最后才跑测试。**
+
+    为什么必须重置：验收测试的 ``@Sql`` 跑在长活数据库上。一旦有人在同一个库里跑过参考解的
+    迁移（比如瞄了一眼答案），索引就留在那儿了；此后骨架一个字节不写也能绿——零成本绕过。
+    """
+    ticket = _ticket(ticket_factory)
+    _with_compose(tmp_path)
+    runner = _ScriptedRunner(proc=_proc(returncode=0))
+
+    report = runner.grade(
+        instance=_instance(ticket),
+        ticket=ticket,
+        track=_track(compose="./docker/docker-compose.yml"),
+        workspace=tmp_path,
+    )
+
+    assert runner.events == ["compose down -v", "compose up -d --wait", "test"]
+    assert report.provenance.host_env["infra"]["reset"] is True
+
+
+def test_no_declared_compose_means_no_reset(tmp_path: Path, ticket_factory: Any) -> None:
+    """Track 不声明基础设施（例如纯内存的题）就不该被强行 compose，但要**如实记录**。"""
+    ticket = _ticket(ticket_factory)
+    runner = _ScriptedRunner(proc=_proc(returncode=0))
+
+    report = runner.grade(
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
+    )
+
+    assert runner.events == ["test"]
+    infra = report.provenance.host_env["infra"]
+    assert infra["reset"] is False and infra["compose"] is None
+
+
+def test_reset_can_be_disabled_but_is_recorded_as_such(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """``never`` 关掉重置时，报告必须留下"这次没重置"的痕迹——那时绿要打折看。"""
+    ticket = _ticket(ticket_factory)
+    _with_compose(tmp_path)
+    runner = _ScriptedRunner(proc=_proc(returncode=0), reset_infra=False)
+
+    report = runner.grade(
+        instance=_instance(ticket),
+        ticket=ticket,
+        track=_track(compose="./docker/docker-compose.yml"),
+        workspace=tmp_path,
+    )
+
+    assert runner.events == ["test"]
+    infra = report.provenance.host_env["infra"]
+    assert infra["reset"] is False and "disabled" in infra["reason"]
+
+
+def test_declared_compose_that_is_missing_is_unavailable(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """声明了 compose 却在工作区里找不到：拒绝阅卷，而不是"没重置也照样跑"。"""
+    ticket = _ticket(ticket_factory)
+    runner = _ScriptedRunner(proc=_proc(returncode=0))
+
+    with pytest.raises(GradingUnavailableError, match="refusing to grade"):
+        runner.grade(
+            instance=_instance(ticket),
+            ticket=ticket,
+            track=_track(compose="./docker/docker-compose.yml"),
+            workspace=tmp_path,
+        )
+
+
+def test_compose_failure_is_unavailable_not_a_verdict(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """环境起不来 ⇒ 503 那一类，**不是**学员的代码没过。"""
+    ticket = _ticket(ticket_factory)
+    _with_compose(tmp_path)
+    runner = _ScriptedRunner(
+        proc=_proc(returncode=0),
+        compose_raises=GradingUnavailableError("docker compose up -d --wait exited 1"),
+    )
+
+    with pytest.raises(GradingUnavailableError):
+        runner.grade(
+            instance=_instance(ticket),
+            ticket=ticket,
+            track=_track(compose="./docker/docker-compose.yml"),
+            workspace=tmp_path,
+        )
+
+
+def test_compose_nonzero_exit_reports_the_tail(monkeypatch: Any, tmp_path: Path) -> None:
+    """真 ``_compose`` 的非零退出要带上有用的尾巴，而不是一个光秃秃的 returncode。"""
+    compose = _with_compose(tmp_path)
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        return subprocess.CompletedProcess(
+            args=command, returncode=125, stdout="", stderr="no such service: mysql\nboom"
+        )
+
+    monkeypatch.setattr(grading_docker.subprocess, "run", fake_run)
+    with pytest.raises(GradingUnavailableError, match="boom"):
+        DockerGradingRunner()._compose(compose, "up", "-d", cwd=tmp_path)
+
+
+def test_unknown_build_tool_is_unavailable(tmp_path: Path, ticket_factory: Any) -> None:
+    """构建工具按 Track 声明派发；不认识的**显式报错**，不猜。"""
+    ticket = _ticket(ticket_factory)
+    with pytest.raises(GradingUnavailableError, match="gradle"):
+        DockerGradingRunner().grade(
+            instance=_instance(ticket),
+            ticket=ticket,
+            track=_track(build="gradle"),
+            workspace=tmp_path,
+        )
+
+
+# --- 真跑冒烟（有 maven 的机器才跑，例如那台 VM）--------------------------------
 
 @pytest.mark.skipif(shutil.which("mvn") is None, reason="needs a real JDK17 + Maven")
 def test_real_maven_on_a_non_project_reports_failure_honestly(tmp_path: Path) -> None:
@@ -345,7 +527,7 @@ def test_real_maven_on_a_non_project_reports_failure_honestly(tmp_path: Path) ->
         }
     )
     report = DockerGradingRunner(timeout_s=120).grade(
-        instance=_instance(ticket), ticket=ticket, workspace=tmp_path
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
     )
 
     assert report.correctness.passed is False

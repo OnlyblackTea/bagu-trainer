@@ -55,6 +55,7 @@ def build_server(
     workspace_root: Path | None = None,
     rebuild_demo: bool = False,
     grading: GradingBackend | None = None,
+    grading_reset: bool | None = None,
 ) -> FastAPI:
     """按内容目录装配 app；``content_dir=None`` 时用 demo track-repo。
 
@@ -70,7 +71,12 @@ def build_server(
         else:
             content_dir = demo
         forge_base = forge_base or root / "ws"
-    return create_app(content_dir=content_dir, forge_base=forge_base, grading=grading)
+    return create_app(
+        content_dir=content_dir,
+        forge_base=forge_base,
+        grading=grading,
+        grading_reset=grading_reset,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -98,6 +104,13 @@ def main(argv: list[str] | None = None) -> None:
         help="阅卷后端：stub=预置红绿（默认；也可用 BAGU_GRADING 环境变量）；"
         "docker=在本机真跑 Track 的 canonical 测试（需 JDK17 + Maven + Track 的基础设施）",
     )
+    parser.add_argument(
+        "--grading-reset",
+        choices=("auto", "never"),
+        default=None,
+        help="真阅卷前是否重置 Track 的 compose 基础设施：auto=重置（默认，保证'骨架红'是真红）；"
+        "never=不重置——会把'跑过一次参考解迁移就永久变绿'的绕开放回来",
+    )
     args = parser.parse_args(argv)
 
     app = build_server(
@@ -105,11 +118,12 @@ def main(argv: list[str] | None = None) -> None:
         forge_base=args.forge_base,
         workspace_root=args.workspace_root,
         grading=args.grading,
+        grading_reset=None if args.grading_reset is None else args.grading_reset == "auto",
     )
     import uvicorn
 
     print(f"A′ 后端: http://{args.host}:{args.port}  (docs: /docs)")
-    print(f"阅卷后端: {app.state.grading_backend}")
+    print(f"阅卷后端: {app.state.grading_backend}  环境重置: {app.state.grading_reset}")
     if args.reload:
         uvicorn.run(
             "platform_api.serve:build_server",

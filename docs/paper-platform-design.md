@@ -158,7 +158,7 @@ v0.4 的"prar-agent 模块级复用对照表"已随引擎退休。平台当前�
 | `platform_service/content_loader.py` · `admission.py` | 读 `track.yaml` / `stages/*/ticket.yaml`；schema + 准入门 | 存活（§4.2 / §4.6） |
 | `platform_service/service.py` · `store.py` | 用例编排 + 存储（当前 `InMemoryStore`） | 存活；PostgreSQL 存储列入后续切片 |
 | `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git / fork / PR） | 存活（§7 / §8） |
-| `platform_api/grading_docker.py` | **真阅卷后端**：在工作区跑 `mvn -B -Dgroups=<test_group> test`，把 surefire 的真实结果映成 `GradingReport`（真实 provenance + 真 `git diff` 物证）；环境故障抛 `GradingUnavailableError` → 503 | **新建**（`--grading docker`；§7.1） |
+| `platform_api/grading_docker.py` | **真阅卷后端**：跑测试前按 `runtime.compose` 重置基础设施（`down -v` + `up -d --wait`），再在工作区跑 canonical 测试，把 surefire 的真实结果映成 `GradingReport`（真实 provenance、真 `git diff` 物证）；环境故障抛 `GradingUnavailableError` → 503 | **新建**（`--grading docker`；§7.1） |
 | `platform_service/ai_review.py` · `review_diff.py` | `ReviewEngine` Protocol + 评审前 diff 预处理（体积预检、整文件截断） | 存活（§11.2） |
 | `platform_service/stubs.py` | 三个"诚实占位"桩：Stub 阅卷 / Stub 评审 / Stub Forge（真本地 clone + 真本地 git diff，PR 为占位） | **新建**（真假逐项标注见 spec §C.9） |
 | `platform_api/` | 组合根 + 适配层：FastAPI 纯 REST 控制面（`app` / `deps` / `schemas` / `routes/*` / `serve`）与真实后端实现（`grading_docker`） | **新建**（§5） |
@@ -429,6 +429,8 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
    - **`stub`（默认）**——`StubGradingRunner`："诚实占位"。**什么都不跑**，只按 `scenario` 返回一份**预置**的 `GradingReport`，并在 `provenance.host_env` 里打上 `{"simulated": true}`（不假装跑了 maven，也不假装测过）。
    - **`docker`（真实）**——`platform_api/grading_docker.py::DockerGradingRunner`：在工作区真跑 `mvn -B -Dgroups=<test_group> test`，把 **surefire XML** 映成逐条测试结果（**断言失败 `fail` 与异常 `error` 分开**，这两者对学员的意义不同）；`files_changed` / `out_of_scope_edits` 来自**真 `git diff`**（有 provision 记下的基线 ref 就按它比，能看见**已提交**的改动）；`provenance.host_env` 记 java / maven 版本、退出码、耗时。
      环境故障（缺 maven、工作区不存在、ticket 没声明 `test_group`）抛 `GradingUnavailableError` → 路由映成 **503 `grading_unavailable`**：**绝不伪装成 `passed=False`**，否则等于把平台配置问题栽给学员。
+   - **跑测试前先重置环境**：按 Track 的 `runtime.compose` 做 `down -v` + `up -d --wait`（默认开，`BAGU_GRADING_RESET=never` / `--grading-reset never` 可关）。理由是 §15 风险 6：验收测试跑在**长活**数据库上，"库里有残留索引"能让半道题白送，而工作区里看不出任何痕迹。`provenance.host_env.infra` 如实记录这次**有没有**重置，于是"这次绿是不是在干净环境里跑出来的"可审计。构建工具按 `manifest.requires.build` 派发（当前只实现 maven，别的显式报错而不是猜）。
+   - **平台只信 Track 自己声明的"就绪"信号**：`up -d --wait` 等的是 compose 里那个 healthcheck。它必须能代表**"可连接"**，而不是"进程还在"——实测踩过：`mysqladmin ping -h localhost` 走 unix socket，而 MySQL entrypoint 初始化期间的**临时** mysqld 也在同一 socket 上应答，于是容器在"还在跑 init 脚本（5 万行种子 + ANALYZE，约 80s）、TCP 尚未就绪"时就报 `healthy`；重置完立刻跑的测试因此连不上库、两条用例全 `error`，**平台会把这份红记在学员头上**。Track 侧把 ping 改成 `-h 127.0.0.1`（强制 TCP）即可，平台不替内容猜第二套就绪信号。
 
 ### 7.2 学习者命令面：CLI → REST + SPA（形态已改）
 
@@ -808,7 +810,7 @@ AcceptanceDecision = f(
 | 阶段 | 目标 | 交付 | 状态 |
 |------|------|------|------|
 | **A′ 引擎无关切片** | 单 Track + 单机跑通完整闭环，**不依赖任何引擎** | `platform_api/`（纯 REST 控制面）+ `frontend/`（学习者 SPA）+ 三个 Protocol 缝与"诚实占位"桩 + 内置 demo Track；`content/schema/` + `admission.validate_track` | ✅ **已完成**（后端全量测试 + ruff 绿；前端单测 + 真浏览器 e2e 绿） |
-| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）、✅ **判定面硬门**（§11.3）；⬜ 真实 Forge（Gitea fork/PR，**待环境**）、⬜ PostgreSQL `Store`、⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
+| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）、✅ **判定面硬门**（§11.3）；⬜ 真实 Forge（Gitea fork/PR，**待环境**）、⬜ PostgreSQL `Store`、⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
 | **P2 教学增强** | 让"刷题"更像"带教" | 学习者画像（§10）、过程回放视图（§11.4）、（可选）AI 评审 / 口试挂件（§11.2 / §12.2） | ⬜ |
 | **P3 社区可贡献**（开源命脉） | 让别人也能出题 | `paper new-track` 脚手架生成器、`paper validate-track` CLI + CI 接线、贡献工作流与文档；第二个 Track（JVM / 并发）打样 | ⬜ |
 
@@ -824,7 +826,9 @@ AcceptanceDecision = f(
 3. **并发 sim 阅卷 flaky**：重试 + 置信度，不追求 100% 确定。
 4. **平台与 Track 的契约漂移**：平台依赖 Track 侧的目录 / 分支 / 字段约定（§8.1）。约定一旦漂移，最坏的表现不是报错，而是**解锁判定与 checkout 到的内容悄悄错位**。缓解：启动期硬校验（ticket 目录覆盖 `manifest.stages`、ticket 映射键 = `identity.id`、分支 ref 可解析），任一不满足即**拒绝启动**或返回可读短码，绝不静默降级。
 5. **桩会给人"已经做完了"的错觉**：阅卷已经真了，但 **Forge 仍是占位**（clone 是真的、PR URL 是编的），而 `Workspace.simulated` 与 `provenance.host_env.simulated` **说的不是同一件事**。缓解：两者分开标注，别用一个"模拟"徽标盖住；接口与 UI 都要**逐项**说明真假。
-6. **阅卷的"红"依赖干净的基础设施状态（实测教训，不是推演）**：Track 的验收测试用 `@Sql` 跑迁移脚本，而**参考解那次运行留下的索引留在了共享 MySQL 数据卷里**；于是在同一环境里再跑骨架，`explainUsesIndex` **假绿**（只剩一条 BindingException 红），判别性悄悄消失。把索引删掉后，骨架两条全红、参考解两条全绿——即 **"骨架红 / 参考解绿"只在干净环境里成立**。缓解：① 判别性校验（准入门）必须在**一次性环境**里跑，不能复用长活数据卷；② 真阅卷若要严格，应在每次阅卷前重置 Track 基础设施——当前 `DockerGradingRunner` **不做**这件事，只在 `provenance` 里如实记录环境。
+6. **"绿"可能来自库里的残留，而不是学员写的代码（已缓解，但仍要理解）**：验收测试的 EXPLAIN 断言只看数据库里有没有索引。只要库里曾经建过一次（瞄过一眼参考解、跑过一次它的迁移），**之后把迁移脚本改回骨架的 `SELECT 1`，那半道题依然是绿的**——等于白送半道题，而且工作区里**什么都看不出来**（真 `git diff` 也是干净的，判定面硬门也拦不住，因为没改任何文件）。它不是"卫生问题"，是一个**零成本绕过**。
+   - **已缓解**：真阅卷默认在跑测试前按 `runtime.compose` 做 `down -v` + `up -d --wait`（`BAGU_GRADING_RESET=never` 可关——但**关掉就等于把这条绕过放回来**），并把"这次有没有重置"记进 `provenance.host_env.infra`，于是**"这次绿是在干净环境里跑出来的吗"可审计**。
+   - **仍要做**：① 判别性校验（准入门）同样应在**一次性环境**里跑，不能复用长活数据卷；② 每次阅卷重启容器是有成本的（本机实测 20-40s），要更快应让 Track 的迁移**自清**（例如脚本先 `DROP INDEX IF EXISTS`），而不是省掉重置。
 
 **不在范围**：
 - 班级管理 / 排行榜 / 数值化得分 / 参数化试卷 / 认证模式 runner / 老师终审（v0.4 收缩：平台只服务部署者本人自习刷题，不含多用户教学治理）。

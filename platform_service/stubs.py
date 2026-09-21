@@ -21,6 +21,7 @@ from .models import (
     ReportProvenance,
     TicketInstance,
     TicketSpec,
+    TrackManifest,
 )
 
 _STAMP = "2026-09-10T00:00:00+00:00"
@@ -33,8 +34,14 @@ class StubGradingRunner:
         self._scenario = scenario
 
     def grade(
-        self, *, instance: TicketInstance, ticket: TicketSpec, workspace: Path
+        self,
+        *,
+        instance: TicketInstance,
+        ticket: TicketSpec,
+        track: TrackManifest,
+        workspace: Path,
     ) -> GradingReport:
+        """忽略 ``track``/``workspace``——占位后端本来就不跑任何东西（诚实标注见 docstring）。"""
         passed = self._scenario == "pass"
         correctness = ticket.grader.correctness
         return GradingReport(

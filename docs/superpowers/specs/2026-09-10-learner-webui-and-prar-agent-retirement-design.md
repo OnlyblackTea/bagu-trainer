@@ -368,7 +368,7 @@ React + Vite + TypeScript SPA。建议屏幕（writing-plans 细化）：
 
 | 项 | 现状 | 后续 |
 |---|---|---|
-| 真实阅卷 | ✅ **已完成**（`DockerGradingRunner` + `--grading docker`）：在装了 JDK17 + Maven 的机器上真跑 canonical 测试，surefire 结果映进报告 | 仍未做：每次阅卷前重置 Track 基础设施（共享 MySQL 数据卷会让骨架假绿，见设计 §15 风险 6）。canonical 测试**运行时注入**也未做，已由**判定面硬门**顶上（设计 §11.3，实测见下） |
+| 真实阅卷 | ✅ **已完成**（`DockerGradingRunner` + `--grading docker`）：跑测试前**默认**按 `runtime.compose` 重置环境（`down -v` + `up -d --wait`），再真跑 canonical 测试，surefire 结果映进报告 | canonical 测试**运行时注入**仍未做（已由**判定面硬门**顶上，设计 §11.3，实测见下）；判別性校验仍复用长活环境，宜改成一次性环境 |
 | 真实 Forge | 桩（本地 clone + 占位 PR） | Gitea fork/PR API（**环境缺失**，需自建 Gitea） |
 | 真实 AI 评审/带教 | 桩 | 轻量 harness（如 DeepSeek harness）插入 `ReviewEngine` 缝；可能引入流式（届时再议 SSE/WS） |
 | 持久化 | `InMemoryStore` | PostgreSQL `Store`（sqlalchemy + asyncpg，pyproject 已列 optional `service`） |
@@ -384,6 +384,14 @@ React + Vite + TypeScript SPA。建议屏幕（writing-plans 细化）：
 - **attempt #3（还原判定面，保留解法）**：两条测试 `pass`、`exit=0`、约 7.8s → `tampering: []` → `decide` 判 **pass**，看板 `db-stage-01: passed`。越界笔记（`SCRATCH-notes.md`）三次都只出现在 `out_of_scope_edits` 里，**没有**被硬门误伤。
 - **判别性只在干净环境里成立**：同一环境下先跑过参考解会把 `idx_product_search` 留在共享 MySQL 数据卷里，之后骨架的 `explainUsesIndex` 会**假绿**（详见设计 §15 风险 6）。
 - **Track 侧同时修好**：`seckill-lab` 的 `solutions` 是历史分叉（缺 `track.yaml` / `stages/` / `scripts/` 等后加的 Track 契约文件），不能直接当 `<stage>-sol` 用；已改为**基于 `main`** 只带该阶段那两个文件的分支（§8.1 的「一阶段一 ref」），并声明了 `runtime.protected_paths`（§11.3 判定面）。
+
+**"库里的残留"绕过的 A/B 实测（同一天，同一台机器）**：
+
+- 机制：验收测试的 EXPLAIN 断言只看数据库里有没有索引。库里一旦建过一次，**之后把迁移脚本改回骨架的 `SELECT 1;` 也仍然是绿的**——工作区里看不出任何痕迹（真 `git diff` 干净，判定面硬门也拦不住，因为没改文件）。
+- **phase A（`--grading-reset never`）**：先按参考解改对两个文件 → 绿，库里 `information_schema.STATISTICS` 有 3 行（复合索引三列各一行）；然后把**迁移脚本改回骨架版**再交卷 → **两条测试仍然全 pass**。绕过坐实。
+- **phase B（默认 `auto`）**：同一份工作区、同一个实例状态 → 阅卷前重置 → `explainUsesIndex=fail`（`EXPLAIN 的 key 为 NULL`）、库里索引行数 = 0 → **红**；报告里 `host_env.infra.reset=true`（可审计）。再把迁移脚本改对 → 绿 → `decide` **pass**（诚实路径在重置之下照样走得通）。
+- 重置的代价：`down -v` 后 MySQL 要重新初始化，本机实测**等到 TCP 就绪约 93s**（5 万行种子 + ANALYZE）。
+- **顺带挖出一个 Track bug（已修）**：`docker-compose.yml` 的健康检查写的是 `mysqladmin ping -h localhost`——走的是 **unix socket**，而 entrypoint 初始化期间的**临时** mysqld 也在同一 socket 上应答，于是容器在"TCP 还没就绪"时就报 `healthy`，`up -d --wait` 提前返回，紧接着跑的测试连不上库（`CommunicationsException` / `EOFException`，两条用例全 `error`）——**平台会把这份环境问题的红记在学员头上**。改成 `-h 127.0.0.1` 强制 TCP 后，"healthy" 才代表"可连接"；`digest_pin.compose` 已用 Track 自己的 `scripts/digest-pin.sh` 重算（其余 pin 未变，已与脚本输出逐项核对）。
 
 ---
 

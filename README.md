@@ -45,7 +45,7 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 202 passed
+.venv/Scripts/python.exe -m pytest -q        # 209 passed
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
@@ -72,11 +72,18 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 
 | | `stub` | `docker` |
 |---|---|---|
-| `submit` 做什么 | 立刻返回预置报告 | 在工作区里跑 `mvn -B -Dgroups=<test_group> test` |
+| `submit` 做什么 | 立刻返回预置报告 | 按 `runtime.compose` **先把基础设施重置**（`down -v` + `up -d --wait`），再在工作区里跑 `mvn -B -Dgroups=<test_group> test` |
 | 报告里有什么 | 两套 fixture 的预置结果 | surefire XML：逐条测试真实的 `pass` / `fail` / `error` + 真实报错文本 |
-| `provenance.host_env` | `{"simulated": true}` | java / maven 版本、退出码、耗时、`simulated: false` |
+| `provenance.host_env` | `{"simulated": true}` | java / maven 版本、退出码、耗时、**这次有没有重置环境**、`simulated: false` |
 | `files_changed` / `out_of_scope_edits` | 取自 ticket 声明 | 真 `git diff`（改动与越界都会被抓出来） |
 | 跑不起来时（缺 maven 等） | — | **503 `grading_unavailable`**，绝不伪装成 `passed=False` |
+
+> [!WARNING]
+> `docker` 后端默认**每次阅卷前重置 Track 的 compose 基础设施**——`docker compose down -v`
+> 会**删掉数据卷**（Track 自己的 compose 头注释也把 `down -v` 记为重置仪式）。这是必须的：
+> 验收测试跑在长活数据库上，"库里残留一个索引"就能让半道题白送，而工作区里看不出任何痕迹。
+> 想保留库内状态就 `--grading-reset never` / `BAGU_GRADING_RESET=never`——**但那就等于把那条
+> 绕过放回来**，且报告里会如实记 `infra.reset: false`。
 
 报告随时可从 `GET /submissions/{id}/report` 读——桩时代看不出来，接上真后端才发现这个端点是必需的。
 
@@ -144,7 +151,7 @@ bagu-trainer/
 | 平台领域层 + REST 控制面（`platform_service` + `platform_api`） | ✅ 已实现 |
 | 学习者 SPA（`frontend/`） | ✅ 已实现（单测 + 真浏览器 e2e 绿） |
 | 内置 demo Track（可独立跑通全流程） | ✅ 已实现 |
-| **真实阅卷**（JDK17 + Maven 真跑 canonical 测试） | ✅ 已实现，用 `--grading docker` 开（§7.1）。开发机若没有 JDK17/Maven，请在装了工具链的机器上跑 |
+| **真实阅卷**（JDK17 + Maven 真跑 canonical 测试） | ✅ 已实现，用 `--grading docker` 开（§7.1）。**跑测试前会先重置 Track 的 compose 基础设施**（默认；见下方警告）。开发机若没有 JDK17/Maven，请在装了工具链的机器上跑 |
 | **真实 Forge**（Gitea fork / PR） | ⬜ 桩（真本地 clone + 真本地 git diff，PR 为占位） |
 | **AI 评审 / 口试** | ⬜ 桩；设计为**可选挂件**（`ReviewEngine` 缝），见设计 §11.2 / §12.2 |
 | PostgreSQL 存储 / 学习者画像 / 脚手架生成器 | ⬜ 后续切片，见设计 §14 路线图 |
