@@ -8,6 +8,8 @@ spec §C.9 写的 ``uvicorn platform_api.app:app`` **跑不通**：``create_app`
 
     .venv/Scripts/python.exe -m platform_api.serve                    # demo Track
     .venv/Scripts/python.exe -m platform_api.serve --content-dir ../seckill-lab
+    .venv/Scripts/python.exe -m platform_api.serve --content-dir ../seckill-lab \\
+        --grading docker        # 真跑 canonical 测试（需 JDK17 + Maven，见 D3）
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from fastapi import FastAPI
 
 from .app import create_app
 from .demo_repo import build_demo_track_repo
+from .deps import GradingBackend
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -34,6 +37,7 @@ def build_server(
     forge_base: Path | None = None,
     workspace_root: Path | None = None,
     rebuild_demo: bool = False,
+    grading: GradingBackend | None = None,
 ) -> FastAPI:
     """按内容目录装配 app；``content_dir=None`` 时用 demo track-repo。
 
@@ -48,7 +52,7 @@ def build_server(
         else:
             content_dir = demo
         forge_base = forge_base or root / "ws"
-    return create_app(content_dir=content_dir, forge_base=forge_base)
+    return create_app(content_dir=content_dir, forge_base=forge_base, grading=grading)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -69,14 +73,25 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--reload", action="store_true", help="改代码自动重启")
+    parser.add_argument(
+        "--grading",
+        choices=("stub", "docker"),
+        default=None,
+        help="阅卷后端：stub=预置红绿（默认；也可用 BAGU_GRADING 环境变量）；"
+        "docker=在本机真跑 Track 的 canonical 测试（需 JDK17 + Maven + Track 的基础设施）",
+    )
     args = parser.parse_args(argv)
 
     app = build_server(
-        args.content_dir, forge_base=args.forge_base, workspace_root=args.workspace_root
+        args.content_dir,
+        forge_base=args.forge_base,
+        workspace_root=args.workspace_root,
+        grading=args.grading,
     )
     import uvicorn
 
     print(f"A′ 后端: http://{args.host}:{args.port}  (docs: /docs)")
+    print(f"阅卷后端: {app.state.grading_backend}")
     if args.reload:
         uvicorn.run(
             "platform_api.serve:build_server",

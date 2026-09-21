@@ -1,7 +1,10 @@
 """FastAPI 应用工厂 + 异常映射（设计 spec §C.3/§C.8）。
 
-``create_app`` 是组合根入口：建 store/service/forge/桩工厂挂到 ``app.state``，注册把域异常
+``create_app`` 是组合根入口：建 store/service/forge/后端工厂挂到 ``app.state``，注册把域异常
 翻成 ``{"detail": "<短码>"}`` 的处理器，并挂三组路由。纯 REST，无 SSE/WS（无 AI 流可推）。
+
+阅卷后端由 ``grading`` 参数（或 ``BAGU_GRADING``）选定：``stub`` 离线可跑，``docker`` 在本机
+真跑 Track 的 canonical 测试（见 :mod:`platform_api.deps`）。
 """
 
 from __future__ import annotations
@@ -17,7 +20,15 @@ from platform_service.content_loader import load_stage_refs, load_ticket_dirs
 from platform_service.forge import WorkspaceRefMissingError
 from platform_service.lifecycle import IllegalTransitionError
 
-from .deps import PLATFORM_VERSION, build_service, grading_runner, review_engine
+from .deps import (
+    PLATFORM_VERSION,
+    GradingBackend,
+    build_service,
+    grading_runner,
+    resolve_grading_backend,
+    review_engine,
+)
+from .grading_docker import GradingUnavailableError
 from .stubs_wiring import build_forge
 
 
@@ -67,9 +78,25 @@ def _register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
+    @app.exception_handler(GradingUnavailableError)
+    async def _grading_down(request: Request, exc: GradingUnavailableError) -> JSONResponse:
+        """阅卷**跑不起来**：缺 maven、工作区没了、ticket 没声明 test_group。
+
+        503 而不是 500——"这台机器暂时没条件跑"不是服务坏了；更要紧的是**不能**把它做成
+        ``passed=False``，那等于把平台配置问题栽给学员（§7.1 / D3）。
+        """
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "grading_unavailable", "reason": str(exc)[:300]},
+        )
+
 
 def create_app(
-    *, content_dir: Path, forge_source: Path | None = None, forge_base: Path | None = None
+    *,
+    content_dir: Path,
+    forge_source: Path | None = None,
+    forge_base: Path | None = None,
+    grading: GradingBackend | None = None,
 ) -> FastAPI:
     app = FastAPI(title="bagu-trainer A′", version=PLATFORM_VERSION)
     store, track, tickets, service = build_service(content_dir)
@@ -80,6 +107,8 @@ def create_app(
         base_dir=base,
         stage_refs=load_stage_refs(content_dir),
     )
+    # 后端在**启动时**定下来（配错了立刻炸），而不是每个请求再解析一次环境变量。
+    backend = resolve_grading_backend(grading)
 
     app.state.store = store
     app.state.track = track
@@ -88,7 +117,8 @@ def create_app(
     app.state.stage_tickets = load_ticket_dirs(content_dir)
     app.state.service = service
     app.state.forge = forge
-    app.state.grading_runner = grading_runner
+    app.state.grading_runner = lambda scenario: grading_runner(scenario, backend=backend)
+    app.state.grading_backend = backend
     app.state.review_engine = review_engine
 
     _register_exception_handlers(app)

@@ -66,6 +66,59 @@ def test_decide_without_review_is_409(client: Any) -> None:
     assert r.status_code == 409 and r.json()["detail"] == "decide_needs_report_and_review"
 
 
+def test_submitted_report_is_readable(client: Any) -> None:
+    """报告必须能从 REST 读到。
+
+    真阅卷时这是学员**唯一**能看到"哪条测试红了、为什么、在什么环境跑的"的地方——
+    桩时代看不出来（反正都是预置的），所以这个端点是接真后端时才显得必需。
+    """
+    iid = _stage00(client)
+    sub = client.post(f"/instances/{iid}/submit", params={"scenario": "fail"}, json={}).json()
+    r = client.get(f"/submissions/{sub['id']}/report")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["correctness"]["passed"] is False
+    assert body["submission_id"] == sub["id"]
+    assert body["provenance"]["runner_trust"] == "self"
+
+
+def test_report_before_submit_is_404(client: Any) -> None:
+    r = client.get("/submissions/ghost/report")
+    assert r.status_code == 404 and r.json()["detail"] == "report_not_found"
+
+
+def test_grading_unavailable_is_503_not_a_failed_verdict(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """真阅卷跑不起来（本机没有 maven）时要给 **503 + 短码**。
+
+    关键在"不能做成 passed=False"：那是把平台配置问题栽给学员，学员会以为自己代码错了。
+    """
+    from fastapi.testclient import TestClient
+
+    from platform_api import grading_docker
+    from platform_api.app import create_app
+    from platform_api.demo_repo import build_demo_track_repo
+
+    monkeypatch.setattr(grading_docker.shutil, "which", lambda name: None)
+    repo = build_demo_track_repo(tmp_path / "demo")
+    real_client = TestClient(
+        create_app(content_dir=repo, forge_base=tmp_path / "ws", grading="docker")
+    )
+    real_client.post("/enrollments", json={"learner": "deployer"})
+    iid = next(
+        i["id"]
+        for i in real_client.get("/instances", params={"learner": "deployer"}).json()
+        if i["ticket_id"] == "db-stage-00"
+    )
+    real_client.post(f"/instances/{iid}/start")
+
+    r = real_client.post(f"/instances/{iid}/submit", json={})
+    assert r.status_code == 503
+    assert r.json()["detail"] == "grading_unavailable"
+    assert "maven" in r.json()["reason"]
+
+
 def test_submit_on_locked_is_409(client: Any) -> None:
     client.post("/enrollments", json={"learner": "deployer"})
     inst = client.get("/instances", params={"learner": "deployer"}).json()

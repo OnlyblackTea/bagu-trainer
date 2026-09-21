@@ -368,13 +368,21 @@ React + Vite + TypeScript SPA。建议屏幕（writing-plans 细化）：
 
 | 项 | 现状 | 后续 |
 |---|---|---|
-| 真实阅卷 | 桩 | `DockerGradingRunner`（Docker + JDK17 + Maven）。**环境缺失**：本机 java 是 25 非 17，无 Docker/Maven——需先备环境 |
+| 真实阅卷 | ✅ **已完成**（`DockerGradingRunner` + `--grading docker`）：在装了 JDK17 + Maven 的机器上真跑 canonical 测试，surefire 结果映进报告 | 仍是"每次阅卷前重置 Track 基础设施"未做（共享 MySQL 数据卷会让骨架假绿，见设计 §15 风险 6）；另见 §7.3 的注入/越界硬门 |
 | 真实 Forge | 桩（本地 clone + 占位 PR） | Gitea fork/PR API（**环境缺失**，需自建 Gitea） |
 | 真实 AI 评审/带教 | 桩 | 轻量 harness（如 DeepSeek harness）插入 `ReviewEngine` 缝；可能引入流式（届时再议 SSE/WS） |
 | 持久化 | `InMemoryStore` | PostgreSQL `Store`（sqlalchemy + asyncpg，pyproject 已列 optional `service`） |
 | 个性化 | 无 | LearnerProfile（设计 §10，P1）：画像驱动名词解释补强，不降考点难度 |
 | 多 Track 管理 | 单 Track fixture | 贡献者后台（社区提交新 Track / 扩展八股面） |
-| 退休执行 | 已规划（Section B） | **独立授权**后执行删除 + submodule 解除 |
+| 退休执行 | ✅ **已执行**（Section B，获独立授权） | — |
+
+**真阅卷的实测记录（2026-09-10，在一台装了 Docker/JDK17/Maven 的 Linux 机器上）**：
+
+- 平台以 `--grading docker` 起，跑完 `报名 → start → provision(真 clone) → submit → review → decide → retry → 改题 → submit → decide` 全流程，全部通过。
+- 交卷 #1（骨架）：`passed=False`，`searchReturnsCorrectOrderedResults=error`（`Invalid bound statement ... searchProducts`）+ `explainUsesIndex=fail`（`EXPLAIN 的 key 为 NULL`），`exit=1`、约 9.3s，`host_env.simulated=false`，越界文件被 `out_of_scope_edits` 抓到 → `decide` 判 **fail**。
+- 交卷 #2（把参考解那两个文件取进工作区）：两条测试 `pass`、`exit=0`、约 7.1s → `decide` 判 **pass**，看板 `db-stage-01: passed`。
+- **判别性只在干净环境里成立**：同一环境下先跑过参考解会把 `idx_product_search` 留在共享 MySQL 数据卷里，之后骨架的 `explainUsesIndex` 会**假绿**（详见设计 §15 风险 6）。
+- **Track 侧同时修好**：`seckill-lab` 的 `solutions` 是历史分叉（缺 `track.yaml` / `stages/` / `scripts/` 等后加的 Track 契约文件），不能直接当 `<stage>-sol` 用；已改为**基于 `main`** 只带该阶段那两个文件的分支（§8.1 的「一阶段一 ref」）。
 
 ---
 

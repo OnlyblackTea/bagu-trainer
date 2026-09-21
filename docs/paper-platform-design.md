@@ -157,12 +157,13 @@ v0.4 的"prar-agent 模块级复用对照表"已随引擎退休。平台当前�
 | `platform_service/lifecycle.py` · `unlock.py` · `acceptance.py` | 状态机合法性、DAG 解锁、确定性验收门 | 存活（§9.2 / §11.3） |
 | `platform_service/content_loader.py` · `admission.py` | 读 `track.yaml` / `stages/*/ticket.yaml`；schema + 准入门 | 存活（§4.2 / §4.6） |
 | `platform_service/service.py` · `store.py` | 用例编排 + 存储（当前 `InMemoryStore`） | 存活；PostgreSQL 存储列入后续切片 |
-| `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git / fork / PR） | **新建**；真实实现待环境（§7 / §8） |
+| `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git / fork / PR） | 存活（§7 / §8） |
+| `platform_api/grading_docker.py` | **真阅卷后端**：在工作区跑 `mvn -B -Dgroups=<test_group> test`，把 surefire 的真实结果映成 `GradingReport`（真实 provenance + 真 `git diff` 物证）；环境故障抛 `GradingUnavailableError` → 503 | **新建**（`--grading docker`；§7.1） |
 | `platform_service/ai_review.py` · `review_diff.py` | `ReviewEngine` Protocol + 评审前 diff 预处理（体积预检、整文件截断） | 存活（§11.2） |
 | `platform_service/stubs.py` | 三个"诚实占位"桩：Stub 阅卷 / Stub 评审 / Stub Forge（真本地 clone + 真本地 git diff，PR 为占位） | **新建**（真假逐项标注见 spec §C.9） |
-| `platform_api/` | 组合根：FastAPI 纯 REST 控制面（`app` / `deps` / `schemas` / `routes/*` / `serve`） | **新建**（§5） |
+| `platform_api/` | 组合根 + 适配层：FastAPI 纯 REST 控制面（`app` / `deps` / `schemas` / `routes/*` / `serve`）与真实后端实现（`grading_docker`） | **新建**（§5） |
 | `frontend/` | 学习者 SPA（React + Vite + TS，**从零写**，Apache-2.0） | **新建**（§7.2） |
-| 脚手架生成器 / 准入门 CLI / 学习者画像 / PG 存储 / 真实阅卷 / 真实 Forge | 未来切片 | 见 §2 后续切片表（§14 路线图） |
+| 脚手架生成器 / 准入门 CLI / 学习者画像 / PG 存储 / 真实 Forge / canonical 测试运行时注入 | 未来切片 | 见 spec §2 后续切片表与 §14 路线图 |
 
 > **两处诚实债务（纯改名/删字段即可收敛，留待真实挂件落地时一并处理）**：
 > `TicketInstance.engine_version` 与 `GradingReport.engine_version` 是 v0.4 的版本锚点，退休引擎后语义悬空；
@@ -315,7 +316,7 @@ progression:
 
 ### 4.5 track 脚手架生成器 —— `paper new-track`（AI 辅助）
 
-降低贡献门槛的关键工具。**当前状态：未实现**——A′ 切片只落了内容 schema（§4.2/§4.3）与准入门（§4.6）；脚手架生成器是 §2 后续切片。将来即使接上可选 AI 挂件来起草草稿，**生成器本体也不许依赖 LLM**（D4：离线也能手工出卷）。
+降低贡献门槛的关键工具。**当前状态：未实现**——A′ 切片只落了内容 schema（§4.2/§4.3）与准入门（§4.6）；脚手架生成器是 spec §2 后续切片表。将来即使接上可选 AI 挂件来起草草稿，**生成器本体也不许依赖 LLM**（D4：离线也能手工出卷）。
 
 ```
 paper new-track --topic "JVM 八股" --concepts "GC,类加载,内存模型,JIT"
@@ -418,7 +419,10 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 1. **零云成本**：契合 D3 与开源自托管；平台中心**零阅卷算力**，也不引入强制 LLM 成本（D4）。
 2. **契合 seckill-lab 既有事实**：它本来就要求学员本地 `docker compose up` 真 MySQL(13306)+Redis(16379) 跑 `mvn test -Dgroups=stageNN`（**拒绝 H2/Testcontainers**，因为 InnoDB 间隙锁/MVCC/EXPLAIN 行为不对会教错八股）。本地阅卷 = 把这个既有动作**工具化、标准化**。
 3. **真环境真信号**：并发 sim（Stage3 零超卖）这类测试在学员真机上跑最贴近实际。
-4. **平台侧只留一个缝**：阅卷经 `platform_service/grading.py::GradingRunner` Protocol 注入。当前是 `StubGradingRunner`——"诚实占位"：它**什么都不跑**，只按 `scenario` 返回一份**预置**的 `GradingReport`，并在 `provenance.host_env` 里打上 `{"simulated": true}`（**不假装跑了 maven**，也不假装测过）；真实现（Docker + JDK17 + Maven）待环境就绪，列入 §2 后续切片。
+4. **平台侧只留一个缝，缝上挂两个后端**：阅卷经 `platform_service/grading.py::GradingRunner` Protocol 注入，由 `platform_api/deps.py` 按 `--grading` / `BAGU_GRADING` 选：
+   - **`stub`（默认）**——`StubGradingRunner`："诚实占位"。**什么都不跑**，只按 `scenario` 返回一份**预置**的 `GradingReport`，并在 `provenance.host_env` 里打上 `{"simulated": true}`（不假装跑了 maven，也不假装测过）。
+   - **`docker`（真实）**——`platform_api/grading_docker.py::DockerGradingRunner`：在工作区真跑 `mvn -B -Dgroups=<test_group> test`，把 **surefire XML** 映成逐条测试结果（**断言失败 `fail` 与异常 `error` 分开**，这两者对学员的意义不同）；`files_changed` / `out_of_scope_edits` 来自**真 `git diff`**（有 provision 记下的基线 ref 就按它比，能看见**已提交**的改动）；`provenance.host_env` 记 java / maven 版本、退出码、耗时。
+     环境故障（缺 maven、工作区不存在、ticket 没声明 `test_group`）抛 `GradingUnavailableError` → 路由映成 **503 `grading_unavailable`**：**绝不伪装成 `passed=False`**，否则等于把平台配置问题栽给学员。
 
 ### 7.2 学习者命令面：CLI → REST + SPA（形态已改）
 
@@ -449,6 +453,13 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 - 学员对 `src/test`、`pom.xml`、fixture 的改动**一律不参与阅卷**（grader 只认 canonical 版本 + `files_to_change` 白名单内的业务改动）。
 
 > 这是**轻摩擦**：挡住"顺手改测试作弊"，但**不挡铁了心的人**（D2 君子协定，§13）。
+
+> **⚠ 本节尚未实现，而接上真阅卷后它变成了活的风险。** 现状是 `runtime.tests` 与
+> `ticket.grader.correctness.canonical_test` 都指向**仓内 `src/test`**——也就是说 canonical
+> 测试**就在学员的工作区里**，"运行时注入、学员改不到"这件事还只是设计意图。于是学员理论上可以
+> 改测试让真阅卷变绿。当前**唯一的兜底是 `out_of_scope_edits`**（真 `git diff` 出的越界告警，§7.4），
+> 而它是**告警不是硬门**。把它做成硬门（改了 `src/test` / `pom.xml` / fixture 即判 fail）比做注入
+> 便宜得多，是更划算的下一步。
 
 ### 7.4 阅卷报告（evidence）结构化格式
 
@@ -487,6 +498,9 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 
 > **`engine_version` 的现状**：字段名是 v0.4 的版本锚（当时钉的是引擎版本），现在装的是**平台版本**
 > （`platform_api/deps.py::PLATFORM_VERSION`，当前 `a-prime-0.1.0`）——模型遗留命名，见 §3.1 债务。
+
+> **报告怎么拿到**：`GET /submissions/{submission_id}/report`（报告在 `submit` 时产生；此前调用 404 `report_not_found`）。
+> 桩时代报告内容是预置的，看不出缺这个端点；接上真后端后它是**必需**的——否则学员只知道"没过"，不知道**哪条测试、为什么、在什么环境下**没过。
 
 > **v0.3 定位变更：grading-report = 不可信证据（claim，带 provenance）**。本地阅卷发生在学员自有设备（D3），平台**无法把红绿当事实**——`correctness.passed` 是学员侧工具的**自报声明**，不是已验证事实。所以报告必须自带 `provenance`（谁、什么环境、何时）+ 版本锚点（钉回 §9.1 TicketInstance）+ `runner_trust` 信任级，且**证据继承与 track 同源的信任分级**（self/verified/community，§13.2）：
 > - `self`：自习平台（v0.4 起）的**唯一**取值——没有受控 runner 复跑，红绿始终是学员侧工具的自报声明，靠荣誉制（§13.1）而非密码学签名背书。
@@ -667,7 +681,7 @@ PR 描述模板由 `ticket.yaml.submission.template` 生成，学员必填：
 
 **形态（v0.5）**：AI 评审不是平台的一部分，而是一个**可选挂件**，经 `platform_service/ai_review.py::ReviewEngine` Protocol 注入。
 A′ 装的是 `StubReviewEngine`（诚实占位：按 `scenario` 返回 approve / request_changes 两套**预置**响应，正文自己写着"模拟评审结论"，**不读任何输入**）；
-真实实现（任意轻量 LLM harness）是 §2 后续切片。**挂件缺席时闭环照走**——这正是 D4 要的（§11.3 的裁决不依赖它）。
+真实实现（任意轻量 LLM harness）是 spec §2 后续切片表。**挂件缺席时闭环照走**——这正是 D4 要的（§11.3 的裁决不依赖它）。
 
 AI 评审产出**建议 + 锚定点评**，写进 `Review` 实体；它**不直接置 passed**——非确定性的 LLM 输出不能直接驱动确定性的状态机解锁（见 §11.3）。
 
@@ -779,7 +793,7 @@ AcceptanceDecision = f(
 | 阶段 | 目标 | 交付 | 状态 |
 |------|------|------|------|
 | **A′ 引擎无关切片** | 单 Track + 单机跑通完整闭环，**不依赖任何引擎** | `platform_api/`（纯 REST 控制面）+ `frontend/`（学习者 SPA）+ 三个 Protocol 缝与"诚实占位"桩 + 内置 demo Track；`content/schema/` + `admission.validate_track` | ✅ **已完成**（后端全量测试 + ruff 绿；前端单测 + 真浏览器 e2e 绿） |
-| **P1 真实化** | 把三个桩换成真实现，接上真 Track | 真实阅卷（Docker + JDK17 + Maven，**待环境**）、真实 Forge（Gitea fork/PR，**待环境**）、PostgreSQL `Store`、seckill-lab 补齐**一阶段一 ref**（§8.1） | ⬜ 待着手 |
+| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）；⬜ 真实 Forge（Gitea fork/PR，**待环境**）、⬜ PostgreSQL `Store`、⬜ canonical 测试运行时注入 / 越界硬门（§7.3） | 🔶 **进行中** |
 | **P2 教学增强** | 让"刷题"更像"带教" | 学习者画像（§10）、过程回放视图（§11.4）、（可选）AI 评审 / 口试挂件（§11.2 / §12.2） | ⬜ |
 | **P3 社区可贡献**（开源命脉） | 让别人也能出题 | `paper new-track` 脚手架生成器、`paper validate-track` CLI + CI 接线、贡献工作流与文档；第二个 Track（JVM / 并发）打样 | ⬜ |
 
@@ -794,7 +808,8 @@ AcceptanceDecision = f(
 2. **本地阅卷天然可伪造**：荣誉制下接受，靠答辩（+ 可选口试）交叉暴露兜底；自习定位下不设认证模式 / 老师终审。
 3. **并发 sim 阅卷 flaky**：重试 + 置信度，不追求 100% 确定。
 4. **平台与 Track 的契约漂移**：平台依赖 Track 侧的目录 / 分支 / 字段约定（§8.1）。约定一旦漂移，最坏的表现不是报错，而是**解锁判定与 checkout 到的内容悄悄错位**。缓解：启动期硬校验（ticket 目录覆盖 `manifest.stages`、ticket 映射键 = `identity.id`、分支 ref 可解析），任一不满足即**拒绝启动**或返回可读短码，绝不静默降级。
-5. **桩会给人"已经做完了"的错觉**：A′ 的阅卷与 PR 都是**占位**。缓解：接口与 UI 都带"模拟"徽标（`SimulatedBadge`），并在 §2 后续切片表里**逐项标注真假**，文档也不含糊。
+5. **桩会给人"已经做完了"的错觉**：阅卷已经真了，但 **Forge 仍是占位**（clone 是真的、PR URL 是编的），而 `Workspace.simulated` 与 `provenance.host_env.simulated` **说的不是同一件事**。缓解：两者分开标注，别用一个"模拟"徽标盖住；接口与 UI 都要**逐项**说明真假。
+6. **阅卷的"红"依赖干净的基础设施状态（实测教训，不是推演）**：Track 的验收测试用 `@Sql` 跑迁移脚本，而**参考解那次运行留下的索引留在了共享 MySQL 数据卷里**；于是在同一环境里再跑骨架，`explainUsesIndex` **假绿**（只剩一条 BindingException 红），判别性悄悄消失。把索引删掉后，骨架两条全红、参考解两条全绿——即 **"骨架红 / 参考解绿"只在干净环境里成立**。缓解：① 判别性校验（准入门）必须在**一次性环境**里跑，不能复用长活数据卷；② 真阅卷若要严格，应在每次阅卷前重置 Track 基础设施——当前 `DockerGradingRunner` **不做**这件事，只在 `provenance` 里如实记录环境。
 
 **不在范围**：
 - 班级管理 / 排行榜 / 数值化得分 / 参数化试卷 / 认证模式 runner / 老师终审（v0.4 收缩：平台只服务部署者本人自习刷题，不含多用户教学治理）。

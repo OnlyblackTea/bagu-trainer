@@ -79,6 +79,20 @@ def submit(
     return submission.model_dump(mode="json")
 
 
+@router.get("/submissions/{submission_id}/report")
+def grading_report(submission_id: str, request: Request) -> dict[str, Any]:
+    """阅卷报告（§7.4）：**不可信自报告**，但学员必须看得到——否则真阅卷等于没做。
+
+    报告在 ``submit`` 时产生；此前调用返回 404 ``report_not_found``。真阅卷下这里带
+    ``provenance.host_env``（maven/java 版本、退出码、耗时）与**逐条测试**的真实结果，
+    正是学员定位失败所需的信息。
+    """
+    report = request.app.state.store.get_report(submission_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    return report.model_dump(mode="json")
+
+
 @router.post("/submissions/{submission_id}/review")
 async def review(
     submission_id: str,

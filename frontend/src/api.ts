@@ -32,6 +32,8 @@ export type ErrorCode =
   | 'diff_too_large'
   | 'git_command_failed'
   | 'workspace_ref_missing'
+  | 'report_not_found'
+  | 'grading_unavailable'
 
 export class ApiError extends Error {
   readonly status: number
@@ -56,7 +58,10 @@ export class ApiError extends Error {
 }
 
 /** 短码 → 人话。每条都要说清"发生了什么 + 我该做什么"。 */
-export function humanize(detail: string, extra?: { ref?: string | null; available?: string[] }): string {
+export function humanize(
+  detail: string,
+  extra?: { ref?: string | null; available?: string[]; reason?: string },
+): string {
   switch (detail) {
     case 'not_found':
       return '找不到这个资源：实例、工单或提交可能已失效或被重建。'
@@ -73,6 +78,12 @@ export function humanize(detail: string, extra?: { ref?: string | null; availabl
       const avail = extra?.available?.length ? `；仓库里现有：${extra.available.join('、')}` : ''
       return `这个 Track 缺少${ref}。§C.5 要求一个阶段一个分支——请让 Track 作者补出该分支${avail}。`
     }
+    case 'report_not_found':
+      return '还没有阅卷报告：先「提交」才会产生报告，报告是随提交一起生成的。'
+    case 'grading_unavailable': {
+      const why = extra?.reason ? `（${extra.reason}）` : ''
+      return `阅卷跑不起来${why}。这是**平台/环境**问题，不是你代码的问题：本机需要 JDK17 + Maven，以及 Track 声明的基础设施。`
+    }
     default:
       return `后端返回了未识别的错误：${detail}`
   }
@@ -82,6 +93,7 @@ interface ErrorBody {
   detail?: unknown
   ref?: string | null
   available?: string[]
+  reason?: string
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -110,7 +122,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError({
       status: res.status,
       detail,
-      message: humanize(detail, { ref: body.ref, available: body.available }),
+      message: humanize(detail, {
+        ref: body.ref,
+        available: body.available,
+        reason: body.reason,
+      }),
       ref: body.ref,
       available: body.available,
     })
