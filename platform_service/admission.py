@@ -89,6 +89,7 @@ def validate_track(
     checks.append(_check_files_to_change(root, track, tickets))
     checks.append(_check_bagu_map_anchors(root, track, tickets))
     checks.append(_check_runtime_pinned(track))
+    checks.append(_check_protected_paths(root, track))
     checks.append(_check_trust_level(track))
     checks.append(_check_d1(tickets))
     checks.append(_check_no_spoiler(root, tickets))
@@ -165,6 +166,33 @@ def _check_runtime_pinned(track: TrackManifest) -> AdmissionCheck:
         else f"entries without digest_pin: {uncovered}"
     )
     return AdmissionCheck("runtime_pinned", not uncovered, message, True)
+
+
+def _check_protected_paths(root: Path, track: TrackManifest) -> AdmissionCheck:
+    """Every declared judged-surface path must resolve inside the skeleton (§11.3).
+
+    A typo here is a **silent hole**: the gate would cheerfully pass a learner who edited
+    the canonical test, because the pattern never matched anything. Failing admission
+    loudly beats shipping a track whose judged surface is declared but not actually
+    covered — which is exactly the failure this declaration exists to prevent.
+    """
+    skeleton = _resolve(root, track.manifest.skeleton_repo)
+    missing = [p for p in track.runtime.protected_paths if not _pattern_exists(skeleton, p)]
+    message = (
+        f"all {len(track.runtime.protected_paths)} judged-surface path(s) exist in skeleton"
+        if not missing
+        else f"judged-surface paths that match nothing: {missing}"
+    )
+    return AdmissionCheck("protected_paths", not missing, message, True)
+
+
+def _pattern_exists(skeleton: Path, pattern: str) -> bool:
+    rel = pattern.replace("\\", "/").removeprefix("./").rstrip("/")
+    if not rel:
+        return False
+    if any(ch in rel for ch in "*?["):
+        return next(iter(skeleton.glob(rel)), None) is not None
+    return (skeleton / rel).exists()
 
 
 def _check_trust_level(track: TrackManifest) -> AdmissionCheck:

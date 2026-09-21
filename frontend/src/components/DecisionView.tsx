@@ -30,6 +30,17 @@ export function DecisionView({
   if (!submission) missing.push('提交（跑阅卷）')
   if (!review) missing.push('发起 AI 评审')
 
+  const inputs = decision?.decision.inputs
+  const tampering = inputs?.tampering ?? []
+  const tampered = tampering.length > 0
+  const verdict = decision?.decision.verdict
+  const title =
+    verdict === 'pass'
+      ? '通过：下一阶段已解锁'
+      : tampered
+        ? '未通过：判定面被改动'
+        : '未通过：请按评审意见返工'
+
   return (
     <section className="card" data-testid="decision-view">
       <h2 className="card__title">决策结果</h2>
@@ -58,28 +69,43 @@ export function DecisionView({
 
       {decision && (
         <div
-          className={`alert ${decision.decision.verdict === 'pass' ? 'alert--ok' : 'alert--error'}`}
+          className={`alert ${verdict === 'pass' ? 'alert--ok' : 'alert--error'}`}
           style={{ marginTop: 12 }}
           data-testid="verdict"
         >
-          <strong>
-            {decision.decision.verdict === 'pass'
-              ? '通过：下一阶段已解锁'
-              : '未通过：请按评审意见返工'}
-          </strong>
+          <strong>{title}</strong>
           <div className="muted" style={{ marginTop: 4 }}>
-            判据：阅卷 correctness ={' '}
-            {String(decision.decision.inputs.correctness_gate)} · 评审 ={' '}
-            {decision.decision.inputs.review_recommendation} · 证据信任 ={' '}
-            {decision.decision.inputs.evidence_trust}（决定性门，非 LLM 打分）
+            判据：阅卷 correctness = {String(inputs?.correctness_gate)} · 评审 ={' '}
+            {inputs?.review_recommendation} · 证据信任 = {inputs?.evidence_trust} · 判定面改动 ={' '}
+            {tampering.length} 处（决定性门，非 LLM 打分）
           </div>
-          {decision.decision.verdict === 'pass' && (
+          {tampered && (
+            <div data-testid="tampering" style={{ marginTop: 4 }}>
+              <p style={{ marginBottom: 4 }}>
+                <strong>你改动了本阶段的判定面</strong>——阅卷测试、构建配置或 Track 的基础设施。
+                这种情况下<strong>绿也不算绿</strong>：判定面就是判据本身，改了它就没有可判的东西了。
+              </p>
+              <ul style={{ margin: '0 0 8px 18px' }}>
+                {tampering.map((path) => (
+                  <li key={path}>
+                    <code>{path}</code>
+                  </li>
+                ))}
+              </ul>
+              <p style={{ marginBottom: 0 }}>
+                下一步：把它们还原成 Track 的原始版本（例如{' '}
+                <code>git checkout origin/&lt;阶段分支&gt; -- &lt;文件&gt;</code>），只保留业务改动，
+                再「返工重来」。
+              </p>
+            </div>
+          )}
+          {verdict === 'pass' && (
             <p style={{ marginBottom: 0 }}>
               下一步：从<strong>下一阶段的分支</strong> cherry-pick / 提 PR 合入你的 dev，
               再「开始」下一阶段。平台不替你跑这些 git 写操作。
             </p>
           )}
-          {decision.decision.verdict === 'fail' && (
+          {verdict === 'fail' && !tampered && (
             <p style={{ marginBottom: 0 }}>
               下一步：在本地 dev 上按评审意见修改，然后「返工重来」再走一遍
               提交 → 评审 → 决策。

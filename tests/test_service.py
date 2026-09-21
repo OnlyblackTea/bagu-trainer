@@ -103,6 +103,50 @@ def test_full_pass_flow_unlocks_immediate_dependent(env: Any) -> None:
     assert _live(env.store, "db-stage-02").state is InstanceState.LOCKED  # not yet
 
 
+def test_decide_fails_when_the_judged_surface_was_edited(env: Any) -> None:
+    """报告全绿也没用：改过判定面（canonical 测试）就是 fail，并在决定里留下证据。
+
+    判定面来自 Track 的 ``runtime.protected_paths``，由服务在 decide 时与报告里的
+    ``files_changed`` 求交——所以这条**不依赖** AI 评审，是确定性的（§11.3）。
+    """
+    env.service.enroll(_LEARNER)
+    inst = _live(env.store, "db-stage-00")
+    env.service.start(inst.id)
+    claim = env.report(passed=True, files_changed=["src/test/java/AcceptanceTest.java"])
+    submission = env.service.submit(
+        inst.id, grading_report=GradingReport.model_validate(claim)
+    )
+    env.service.review(submission.id, _make_review(submission.id, Recommendation.APPROVE))
+
+    decision = env.service.decide(submission.id)
+
+    assert decision.inputs.correctness_gate is True
+    assert decision.inputs.tampering == ["src/test/java/AcceptanceTest.java"]
+    assert decision.verdict is Verdict.FAIL
+    assert _live(env.store, "db-stage-00").state is InstanceState.FAILED
+
+
+def test_decide_ignores_changes_outside_the_judged_surface(env: Any) -> None:
+    """越界但不在判定面的改动（比如业务文件、随手笔记）不该硬拦——那只是告警。"""
+    env.service.enroll(_LEARNER)
+    inst = _live(env.store, "db-stage-00")
+    env.service.start(inst.id)
+    claim = env.report(
+        passed=True,
+        files_changed=["src/main/ProductMapper.xml", "SCRATCH-notes.md"],
+        out_of_scope_edits=["SCRATCH-notes.md"],
+    )
+    submission = env.service.submit(
+        inst.id, grading_report=GradingReport.model_validate(claim)
+    )
+    env.service.review(submission.id, _make_review(submission.id, Recommendation.APPROVE))
+
+    decision = env.service.decide(submission.id)
+
+    assert decision.inputs.tampering == []
+    assert decision.verdict is Verdict.PASS
+
+
 def test_request_changes_fails_without_unlock(env: Any) -> None:
     env.service.enroll(_LEARNER)
     inst = _live(env.store, "db-stage-00")

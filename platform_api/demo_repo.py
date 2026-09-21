@@ -87,7 +87,11 @@ def _track_dict() -> dict[str, Any]:
     digest_pin = {name: f"sha256:{name}0d1e2f" for name in entries}
     digest_pin["mysql"] = "sha256:0d1e2f3a4b5c"
     digest_pin["redis"] = "sha256:9a8b7c6d5e4f"
-    runtime: dict[str, Any] = {"digest_pin": digest_pin}
+    # 判定面（§11.3）：demo 的骨架里有 src/test/，改它就该硬 fail。
+    runtime: dict[str, Any] = {
+        "digest_pin": digest_pin,
+        "protected_paths": ["./src/test/"],
+    }
     runtime.update(entries)
     return {
         "track": {
@@ -159,6 +163,13 @@ def build_demo_track_repo(dest: Path) -> Path:
     (dest / "bagu-map.md").write_text(_BAGU_MAP, encoding="utf-8")
     (dest / "track.yaml").write_text(
         yaml.safe_dump(_track_dict(), allow_unicode=True), encoding="utf-8"
+    )
+    # 冒烟测试占位：真 Track 的 src/test 也是这样"有东西但不管业务"，同时让
+    # track.yaml 声明的 protected_paths（§11.3）指向一个真实存在的目录。
+    smoke = dest / "src" / "test"
+    smoke.mkdir(parents=True, exist_ok=True)
+    (smoke / "SmokeTest.java").write_text(
+        "// demo smoke test placeholder（真 Track 的 src/test 同此）\n", encoding="utf-8"
     )
     for dirname, ticket_id, stage, title, prerequisites in _TICKETS:
         stage_dir = dest / "stages" / dirname

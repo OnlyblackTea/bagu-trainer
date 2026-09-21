@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import itertools
 
-from .acceptance import decide_acceptance
+from .acceptance import decide_acceptance, find_tampering
 from .lifecycle import record_submission, transition
 from .lifecycle import reissue as reissue_instance
 from .models import (
@@ -183,10 +183,12 @@ class PlatformService:
     def decide(self, submission_id: str) -> AcceptanceDecision:
         """``grading → passed | failed`` via the deterministic gate (§11.3).
 
-        Consumes the report's ``correctness.passed``, the Review's recommendation and
-        the track's ``trust_level`` as evidence trust. On ``pass`` the instance goes
-        ``passed`` and its DAG dependents unlock; on ``fail`` it goes ``failed`` (retry
-        path). The snapshotted inputs make the verdict auditable.
+        Consumes the report's ``correctness.passed``, the Review's recommendation, the
+        track's ``trust_level`` as evidence trust, and whether the learner touched the
+        track's **judged surface** (``runtime.protected_paths``) — the last one is a hard
+        fail regardless of red/green (§11.3). On ``pass`` the instance goes ``passed`` and
+        its DAG dependents unlock; on ``fail`` it goes ``failed`` (retry path). The
+        snapshotted inputs make the verdict auditable.
         """
         submission = self._must_get_submission(submission_id)
         instance = self._must_get_instance(submission.instance_id)
@@ -197,15 +199,19 @@ class PlatformService:
                 f"submission {submission_id} needs both a grading report and a review"
             )
 
+        # 判定面被改动 ⇒ 硬门 fail。注意这条**不依赖** AI 评审：它是确定性的（§11.3）。
+        tampering = find_tampering(report.files_changed, self._track.runtime.protected_paths)
         inputs = AcceptanceInputs(
             correctness_gate=report.correctness.passed,
             review_recommendation=review.recommendation,
             evidence_trust=self._track.trust_level,
+            tampering=tampering,
         )
         verdict = decide_acceptance(
             correctness_gate=inputs.correctness_gate,
             review_recommendation=inputs.review_recommendation,
             evidence_trust=inputs.evidence_trust,
+            tampering=inputs.tampering,
             config=inputs.config,
         )
         decision = AcceptanceDecision(

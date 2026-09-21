@@ -154,6 +154,10 @@ class TrackRuntime(_Strict):
     tests: str | None = None
     sim: str | None = None
     digest_pin: dict[str, str] = Field(min_length=1)
+    #: The JUDGED SURFACE (§11.3): a learner change to any of these fails the gate.
+    #: While canonical tests still live in the learner's repo (§7.3 pending), declaring
+    #: them here is the cheap hard gate that keeps "edit the test" from being a free pass.
+    protected_paths: list[str] = Field(min_length=1)
 
 
 class TrackManifestBlock(_Strict):
@@ -322,11 +326,17 @@ class Review(_Strict):
 
 class AcceptanceInputs(_Strict):
     """The exact inputs the gate consumed — makes the decision auditable (§11.3).
-    ``config`` is ``auto`` only; ``teacher-confirm`` was removed in v0.4."""
+    ``config`` is ``auto`` only; ``teacher-confirm`` was removed in v0.4.
+
+    ``tampering`` lists the changed files that fall inside the track's declared judged
+    surface (``runtime.protected_paths``). Non-empty ⇒ the verdict is ``fail`` no matter
+    how green the report is: a green produced by editing the test is not a green.
+    """
 
     correctness_gate: bool
     review_recommendation: Recommendation
     evidence_trust: TrustLevel
+    tampering: list[str] = Field(default_factory=list)
     config: Literal["auto"] = "auto"
 
 

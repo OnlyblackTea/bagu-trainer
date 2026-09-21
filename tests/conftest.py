@@ -99,6 +99,7 @@ def make_track(
     stages: list[str] | None = None,
     digest_pin: dict[str, str] | None = None,
     runtime_entries: dict[str, str] | None = None,
+    protected_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     """A schema-valid track manifest dict (design §4.2); override as needed."""
     review: dict[str, Any] = {"ci": "paper validate-track"}
@@ -120,6 +121,11 @@ def make_track(
         digest_pin["redis"] = _FAKE_DIGEST_REDIS
     runtime: dict[str, Any] = {"digest_pin": digest_pin}
     runtime.update(entries)
+    # The judged surface (§11.3) is REQUIRED: a track that does not declare what its
+    # verdict depends on cannot be protected from "edit the test" while §7.3 is pending.
+    runtime["protected_paths"] = (
+        protected_paths if protected_paths is not None else ["./src/test/", "./pom.xml"]
+    )
     return {
         "track": {
             "id": track_id,

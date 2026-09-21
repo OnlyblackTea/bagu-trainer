@@ -73,3 +73,64 @@ def test_decision_is_deterministic() -> None:
         evidence_trust=TrustLevel.SELF,
     )
     assert first is second is Verdict.PASS
+
+
+# --- 判定面（§11.3）：改了判据，绿也不算绿 ---------------------------------------
+
+
+def test_tampering_fails_even_when_everything_else_is_green() -> None:
+    """本节的重点：报告全绿、评审 approve、信任级合格——只要动过判定面，仍然 fail。
+
+    没有这一条，"把 canonical 测试改成永远绿"就是一条免费通道：§7.3 的运行时注入还没实现，
+    测试此刻就躺在学员的工作区里。
+    """
+    verdict = acceptance.decide_acceptance(
+        correctness_gate=True,
+        review_recommendation=Recommendation.APPROVE,
+        evidence_trust=TrustLevel.SELF,
+        tampering=["src/test/java/com/devteam/seckill/stage01/ProductQueryIndexAcceptanceTest.java"],
+    )
+    assert verdict is Verdict.FAIL
+
+
+def test_empty_tampering_does_not_block_a_green() -> None:
+    verdict = acceptance.decide_acceptance(
+        correctness_gate=True,
+        review_recommendation=Recommendation.APPROVE,
+        evidence_trust=TrustLevel.SELF,
+        tampering=[],
+    )
+    assert verdict is Verdict.PASS
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        # 目录前缀（声明 "./src/test/"）覆盖其下一切
+        (["src/test/java/AcceptanceTest.java"], ["src/test/java/AcceptanceTest.java"]),
+        # 具体文件
+        (["pom.xml"], ["pom.xml"]),
+        # 不在判定面里 → 仍只是"越界告警"，不是篡改（不要用硬门误伤记笔记的人）
+        (["SCRATCH-notes.md"], []),
+        (["src/main/resources/mapper/ProductMapper.xml"], []),
+        # 前缀撞名不能误判：src/testing/ 不在 src/test/ 下
+        (["src/testing/Foo.java"], []),
+    ],
+)
+def test_find_tampering(changed: list[str], expected: list[str]) -> None:
+    assert acceptance.find_tampering(changed, ["./src/test/", "./pom.xml"]) == expected
+
+
+def test_find_tampering_handles_globs_and_backslash_paths() -> None:
+    protected = ["./src/test/java/com/devteam/seckill/stage*/", "./**/build.gradle"]
+    changed = [
+        "src\\test\\java\\com\\devteam\\seckill\\stage01\\T.java",
+        "sub/build.gradle",
+        "build.gradle",
+        "src/main/Other.java",
+    ]
+    assert acceptance.find_tampering(changed, protected) == [
+        "build.gradle",
+        "src/test/java/com/devteam/seckill/stage01/T.java",
+        "sub/build.gradle",
+    ]

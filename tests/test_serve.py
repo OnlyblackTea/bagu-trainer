@@ -48,6 +48,21 @@ def test_demo_repo_and_workspaces_live_under_the_workspace_root(tmp_path: Path) 
     assert (root / "ws").is_dir()
 
 
+def test_stale_demo_repo_is_rebuilt_instead_of_crashing(tmp_path: Path) -> None:
+    """内容 schema 变严后，复用旧的 demo 会让服务**启动时**抛一个毫不相干的 schema 错。
+
+    复用 demo 的收益是"重启不崩"，不该反过来变成"改了 schema 就起不来"。对 demo（不是用户
+    内容）来说，重建才是正确恢复——所以这里不静默降级，也不把锅甩给调用者。
+    """
+    root = tmp_path / "root"
+    build_server(workspace_root=root)
+    (root / "demo" / "track.yaml").write_text("track:\n  id: broken\n", encoding="utf-8")
+
+    app = build_server(workspace_root=root)  # 应当重建，而不是抛 ContentValidationError
+
+    assert TestClient(app).get("/tracks").status_code == 200
+
+
 def test_main_parses_flags_without_starting_a_server(monkeypatch: Any, tmp_path: Path) -> None:
     """``main`` 的职责是解析参数 + 装配 app；真起 uvicorn 由 e2e 覆盖。"""
     import platform_api.serve as serve

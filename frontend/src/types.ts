@@ -155,6 +155,8 @@ export interface DecisionOut {
       correctness_gate: boolean
       review_recommendation: Recommendation
       evidence_trust: TrustLevel
+      /** 学员改动的**判定面**文件（§11.3）：非空即 fail，与红绿无关。 */
+      tampering: string[]
       config: 'auto'
     }
     verdict: Verdict

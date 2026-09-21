@@ -45,12 +45,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 186 passed
+.venv/Scripts/python.exe -m pytest -q        # 202 passed
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，40 passed
+npm test                                      # vitest + RTL，41 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 
@@ -88,6 +88,9 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
   而是**根本没有会写业务代码的组件**。因此 D1 不需要 guardrail 去守，它是状态机的形状。
 - **D2 —— 荣誉制防剧透。** 只做轻摩擦：**一阶段一 ref**（未解锁阶段不在工作区里）、过关前不 surfaced 参考解。
   不设硬性高墙；开源的答案本来也藏不住。
+  > 唯一的例外是**判定面硬门**：Track 声明 `runtime.protected_paths`（canonical 测试 / 构建配置 / 基础设施），
+  > 学员改动其中任何一个，**即使阅卷是绿的也判 fail**（设计 §11.3）。这不是防剧透，而是因为
+  > §7.3 的"测试运行时注入"还没实现 —— 测试此刻就躺在学员的工作区里，不拦的话"把测试改成永远绿"是免费通道。
 - **D3 —— 阅卷跑在学员自己的算力上。** 平台中心 **零** 阅卷算力、**零** 强制 LLM 成本。
 - **D4 —— 引擎无关。** 依赖面只有 **Track 内容 + git + 本地工具链**；AI 只作为**可选挂件**接在
   `ReviewEngine` 缝上，**缺席时闭环照走**。

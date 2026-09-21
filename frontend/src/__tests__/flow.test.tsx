@@ -121,6 +121,7 @@ function fakeBackend() {
             correctness_gate: gradingPassed,
             review_recommendation: 'approve',
             evidence_trust: 'self',
+            tampering: [],
             config: 'auto',
           },
           verdict,

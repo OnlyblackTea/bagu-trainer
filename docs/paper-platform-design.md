@@ -154,7 +154,7 @@ v0.4 的"prar-agent 模块级复用对照表"已随引擎退休。平台当前�
 | 模块 | 是什么 | 状态 |
 |------|--------|------|
 | `platform_service/models.py` | 纯 Pydantic 领域模型（`TicketInstance` / `GradingReport` / `Review` / `AcceptanceDecision`…），`extra="forbid"` | 存活（§9.1） |
-| `platform_service/lifecycle.py` · `unlock.py` · `acceptance.py` | 状态机合法性、DAG 解锁、确定性验收门 | 存活（§9.2 / §11.3） |
+| `platform_service/lifecycle.py` · `unlock.py` · `acceptance.py` | 状态机合法性、DAG 解锁、确定性验收门（含**判定面硬门** `find_tampering`） | 存活（§9.2 / §11.3） |
 | `platform_service/content_loader.py` · `admission.py` | 读 `track.yaml` / `stages/*/ticket.yaml`；schema + 准入门 | 存活（§4.2 / §4.6） |
 | `platform_service/service.py` · `store.py` | 用例编排 + 存储（当前 `InMemoryStore`） | 存活；PostgreSQL 存储列入后续切片 |
 | `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git / fork / PR） | 存活（§7 / §8） |
@@ -212,6 +212,10 @@ track:
     build: ./scripts/build.sh              # 骨架构建
     tests: ./stages/*/tests/               # canonical 测试（运行时注入，§7.3）
     sim: ./stages/*/sim/                   # 并发模拟器（Stage3+）
+    protected_paths:                       # ★判定面（§11.3，**必填**）：改了这些 → 验收门直接 fail
+      - ./stages/*/tests/                  #   判据本身（canonical 测试 + fixture）
+      - ./pom.xml                          #   构建配置（可以拿它"跳过测试"）
+      - ./docker/                          #   基础设施（可以拿它弱化环境）
     digest_pin:                            # 锁定可执行依赖 digest，防供应链漂移
       mysql: "sha256:..."
       redis: "sha256:..."
@@ -313,6 +317,7 @@ progression:
 | `bagu-map.md` 八股地图 | ✅ | 过关后讲解锚点 |
 | `hints/` | ✅ | 阶梯提示 |
 | `solutions/` 参考解 | ✅ | **按阶段切分为独立 ref**（`<stage>-sol`，§8）：准入校验（骨架红 / 解绿）+ 过关后对照；开源下不藏 |
+| `runtime.protected_paths` 判定面 | ✅ | 声明"判据依赖哪些文件"（§11.3）：改了它**即使阅卷绿也判 fail**；准入门会验证每条声明真能在骨架里匹配到——**写错一个字母就是静默漏洞** |
 
 ### 4.5 track 脚手架生成器 —— `paper new-track`（AI 辅助）
 
@@ -354,6 +359,7 @@ paper new-track --topic "JVM 八股" --concepts "GC,类加载,内存模型,JIT"
 | 八股地图锚点有效 | `bagu_map_ref` 指向的章节存在 |
 | 无泄题 | 工单/hints 文本里不含 solutions 的关键实现（粗筛 + 维护者人审） |
 | **manifest/runtime 二分合规** | `manifest` 不含可执行内容；`runtime` 声明的每个可执行入口（compose/build/tests/sim）都有 `digest_pin` |
+| **判定面已声明且真实存在** | `runtime.protected_paths`（§11.3，必填）每条都要能在骨架里匹配到东西——**写错一个字母就是静默漏洞**（门会放过改了 canonical 测试的人），所以要硬卡 |
 | **trust_level 标注** | `community` track 必须显式标 `trust_level`；升 `verified` 需 `signed_by` 维护者签名 + digest 锁定 |
 
 > **供应链告警（核心安全认知）**：community track 不是"数据"，而是**一组会在学员设备上执行任意代码的供应链包**——`runtime.compose` 能起任意容器、`runtime.build` 能跑任意脚本、canonical 测试本身就是可执行代码。所以 `validate-track` 不只校验"内容质量"，更要校验"runtime 入口被 digest 锁定、被 CI 在隔离环境跑过、trust_level 被如实标注"。完整威胁模型（信任分级、sandbox 纵深防御及其在学员机器上的**诚实边界**）见 §13。
@@ -454,12 +460,19 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 
 > 这是**轻摩擦**：挡住"顺手改测试作弊"，但**不挡铁了心的人**（D2 君子协定，§13）。
 
-> **⚠ 本节尚未实现，而接上真阅卷后它变成了活的风险。** 现状是 `runtime.tests` 与
-> `ticket.grader.correctness.canonical_test` 都指向**仓内 `src/test`**——也就是说 canonical
-> 测试**就在学员的工作区里**，"运行时注入、学员改不到"这件事还只是设计意图。于是学员理论上可以
-> 改测试让真阅卷变绿。当前**唯一的兜底是 `out_of_scope_edits`**（真 `git diff` 出的越界告警，§7.4），
-> 而它是**告警不是硬门**。把它做成硬门（改了 `src/test` / `pom.xml` / fixture 即判 fail）比做注入
-> 便宜得多，是更划算的下一步。
+> **⚠ 本节（运行时注入）仍未实现**：现状是 `runtime.tests` 与 `ticket.grader.correctness.canonical_test`
+> 都指向**仓内 `src/test`**——canonical 测试**就在学员的工作区里**，"注入、学员改不到"还只是设计意图。
+>
+> **已用一条更便宜的替代挡住主要通道**：Track 声明 **`runtime.protected_paths`（判定面）**，平台在
+> `decide` 时把它与真 `git diff` 出的 `files_changed` 求交，非空即 **fail**（§11.3 的 `tampering`
+> 输入）——**哪怕报告全绿**。seckill-lab 现在声明的是 `src/test/`、`pom.xml`、`scripts/`、`docker/`。
+> 准入门会检查每条声明**真的指向骨架里的东西**：写错一个字母就是静默漏洞（门会放过改了测试的人），
+> 所以宁可让 `validate_track` 响亮地失败。
+>
+> **剩下的口子（诚实记账）**：① 判定面是 Track **自己声明**的，声明漏了就等于没保护——这依赖内容
+> 作者 + 准入门，不是平台能推断出来的；② 报告本身是**不可信自报告**（§7.4），`files_changed` 也由
+> 它提供，所以在"铁了心伪造"那一档上这条门同样能绕过（D2 荣誉制，§13.1）。它挡的是**顺手改测试**，
+> 不是密码学级防伪。
 
 ### 7.4 阅卷报告（evidence）结构化格式
 
@@ -691,7 +704,7 @@ AI 评审产出**建议 + 锚定点评**，写进 `Review` 实体；它**不直�
 | 代码质量 | 是否符合 track 约定（seckill-lab `docs/架构与约定.md`：分层/命名/MyBatis SQL 约定） |
 | 证据完整度 | EXPLAIN/sim 证据是否齐、是否佐证结论 |
 | 独立性 | hints 用量、attempt 次数（来自画像） |
-| 越界告警 | `out_of_scope_edits` 非空（改了 test/pom/fixture）→ 标红，提示 AcceptanceDecision 重点核查 |
+| 越界告警 | `out_of_scope_edits` 非空（改了白名单外的文件）→ 标红，提示 AcceptanceDecision 重点核查。**注意这不是硬门**：记笔记、加自己的辅助文件都算越界，但都不该拦人。真正的硬门是"动了判定面"，归 §11.3 的 `tampering` |
 
 输出：`recommendation ∈ {approve, request_changes}` + 每条 rubric 的锚定点评。锚点由平台自己维护为三元组 `(path, line, side)`（`models.ReviewComment`），`anchor` 只作展示、**从不回解析**。**注意：正确性红绿不在此表**——它是确定性硬门，归 §11.3，不交给 AI 自由裁量。
 
@@ -704,17 +717,19 @@ AcceptanceDecision = f(
     correctness_gate,       # 硬门：grading-report.correctness.passed（按 runner_trust 决定采信度，§7.4）
     review_recommendation,  # AI Review 的建议（approve / request_changes），非确定性被隔离在此单一输入
     evidence_trust,         # 证据信任级 self|verified|community（§7.4 / §13.2）
+    tampering,              # 学员改动的**判定面**文件（runtime.protected_paths ∩ files_changed，§7.3）
     config                  # auto（自习场景唯一模式）
 ) → pass | fail
 ```
 
 | 模式 | 谁/什么拍板 | 适用 |
 |------|-----------|------|
-| **auto**（唯一） | correctness 硬门绿 + review=approve + 证据信任级达标 → 自动 pass | 部署者自习 |
+| **auto**（唯一） | correctness 硬门绿 + review=approve + 证据信任级达标 + **判定面未被改动** → 自动 pass | 部署者自习 |
 
 - **确定性**：相同输入永远得到相同 pass/fail，可重放、可审计；AI 的非确定性被关进 `review_recommendation` 这一个输入。
-- **解耦**：危险的 `AI output → passed → unlock` 耦合被切断，改为 `AI output → recommendation →（连同硬门/证据信任/配置）→ AcceptanceDecision → unlock`。
-- **留痕**：每次裁决写一条 AcceptanceDecision（输入快照 + 结果 + 时间 + 裁决者[auto]），re-issue 或申诉时可回溯。
+- **解耦**：危险的 `AI output → passed → unlock` 耦合被切断，改为 `AI output → recommendation →（连同硬门/证据信任/判定面/配置）→ AcceptanceDecision → unlock`。
+- **`tampering` 是硬输入，不是评分**：它来自**真 `git diff`**（§7.4）与 Track 声明的判定面**求交**，非空即 `fail`——**哪怕报告全绿**。理由见 §7.3：canonical 测试此刻就躺在学员的工作区里，"把测试改成永远绿"必须不能算过。它与 AI 评审无关，因此这条门在挂件缺席时照样成立。
+- **留痕**：每次裁决写一条 AcceptanceDecision（输入快照 + 结果 + 时间 + 裁决者[auto]），re-issue 或申诉时可回溯；`tampering` 里**点名**是哪几个文件，学员不用猜自己为什么"绿了还不过"。
 
 > 这是 seckill-lab 原本"人决策验收"的延续：自习场景把"人"换成"确定性策略门 + 客观测试 + AI 建议"，部署者本人无需第三方终审。
 >
@@ -793,7 +808,7 @@ AcceptanceDecision = f(
 | 阶段 | 目标 | 交付 | 状态 |
 |------|------|------|------|
 | **A′ 引擎无关切片** | 单 Track + 单机跑通完整闭环，**不依赖任何引擎** | `platform_api/`（纯 REST 控制面）+ `frontend/`（学习者 SPA）+ 三个 Protocol 缝与"诚实占位"桩 + 内置 demo Track；`content/schema/` + `admission.validate_track` | ✅ **已完成**（后端全量测试 + ruff 绿；前端单测 + 真浏览器 e2e 绿） |
-| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）；⬜ 真实 Forge（Gitea fork/PR，**待环境**）、⬜ PostgreSQL `Store`、⬜ canonical 测试运行时注入 / 越界硬门（§7.3） | 🔶 **进行中** |
+| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）、✅ **判定面硬门**（§11.3）；⬜ 真实 Forge（Gitea fork/PR，**待环境**）、⬜ PostgreSQL `Store`、⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
 | **P2 教学增强** | 让"刷题"更像"带教" | 学习者画像（§10）、过程回放视图（§11.4）、（可选）AI 评审 / 口试挂件（§11.2 / §12.2） | ⬜ |
 | **P3 社区可贡献**（开源命脉） | 让别人也能出题 | `paper new-track` 脚手架生成器、`paper validate-track` CLI + CI 接线、贡献工作流与文档；第二个 Track（JVM / 并发）打样 | ⬜ |
 

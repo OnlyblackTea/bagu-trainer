@@ -221,7 +221,7 @@ describe('ReviewView（屏幕 4）', () => {
 
 // --- 屏幕 5：决策结果 -----------------------------------------------------------
 
-function decision(verdict: 'pass' | 'fail'): DecisionOut {
+function decision(verdict: 'pass' | 'fail', tampering: string[] = []): DecisionOut {
   return {
     decision: {
       id: 'ad-1',
@@ -230,6 +230,7 @@ function decision(verdict: 'pass' | 'fail'): DecisionOut {
         correctness_gate: verdict === 'pass',
         review_recommendation: 'approve',
         evidence_trust: 'self',
+        tampering,
         config: 'auto',
       },
       verdict,
@@ -323,5 +324,30 @@ describe('DecisionView（屏幕 5）', () => {
       />,
     )
     expect(screen.getByRole('button', { name: /返工重来/ })).toBeDisabled()
+  })
+
+  it('判定面被改动时点名文件，并解释为什么"绿也不算绿"', () => {
+    render(
+      <DecisionView
+        instance={makeInstance({ state: 'failed' })}
+        submission={submission}
+        review={review}
+        decision={decision('fail', [
+          'src/test/java/com/devteam/seckill/stage01/ProductQueryIndexAcceptanceTest.java',
+        ])}
+        busy={false}
+        onDecide={() => {}}
+        onRetry={() => {}}
+      />,
+    )
+    const verdict = screen.getByTestId('verdict')
+    expect(verdict).toHaveTextContent('未通过：判定面被改动')
+    expect(verdict).toHaveTextContent('判定面改动 = 1 处')
+    // 不能只说"按评审意见返工"——那不是这次失败的原因
+    expect(verdict).not.toHaveTextContent('请按评审意见返工')
+    const box = screen.getByTestId('tampering')
+    expect(box).toHaveTextContent('绿也不算绿')
+    expect(box).toHaveTextContent('ProductQueryIndexAcceptanceTest.java')
+    expect(box).toHaveTextContent(/git checkout/)
   })
 })

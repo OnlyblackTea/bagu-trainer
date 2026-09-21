@@ -22,6 +22,10 @@ _DEFAULT_FILES = [
     "src/main/resources/db/migration/V1__stage01_index.sql",
 ]
 _SKELETON = {rel: "// skeleton placeholder\n" for rel in _DEFAULT_FILES}
+# The judged surface (§11.3) must resolve in the skeleton, so the default tree carries a
+# smoke-test placeholder and a build file — exactly like a real skeleton does.
+_SKELETON["src/test/SmokeTest.java"] = "// smoke placeholder\n"
+_SKELETON["pom.xml"] = "<project/>\n"
 _SOLUTION_LINE = "CREATE INDEX idx_product_search ON product(category, name);"
 _SOLUTIONS = {"ProductQueryIndex.sql": _SOLUTION_LINE + "\n"}
 
@@ -157,6 +161,27 @@ def test_manifest_coverage_passes_when_ticket_dir_is_declared(build_track) -> No
     report = validate_track(build_track())
     assert _check(report, "manifest_coverage").passed
     assert report.ok
+
+
+# --- 判定面（§11.3）------------------------------------------------------------
+
+
+def test_protected_paths_are_verified_against_the_skeleton(build_track) -> None:
+    check = _check(validate_track(build_track()), "protected_paths")
+    assert check.passed and check.hard
+
+
+def test_protected_path_matching_nothing_is_hard_fail(build_track, track_factory) -> None:
+    """判定面写错一个字母就是**静默漏洞**：门会放过改了 canonical 测试的人。
+
+    宁可准入门响亮地失败，也不要发布一个"声明了判定面、实际什么都没盖住"的 Track。
+    """
+    track = track_factory(protected_paths=["./src/test/", "./pom.xmlx"])  # 拼错
+    report = validate_track(build_track(track=track))
+    check = _check(report, "protected_paths")
+    assert not check.passed and check.hard
+    assert "pom.xmlx" in check.message
+    assert not report.ok
 
 
 def test_ticket_dir_absent_from_manifest_is_hard_fail(build_track, track_factory) -> None:

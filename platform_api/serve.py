@@ -15,9 +15,12 @@ spec §C.9 写的 ``uvicorn platform_api.app:app`` **跑不通**：``create_app`
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 from fastapi import FastAPI
+
+from platform_service.content_loader import ContentValidationError, load_track
 
 from .app import create_app
 from .demo_repo import build_demo_track_repo
@@ -31,6 +34,20 @@ DEFAULT_PORT = 8000
 DEFAULT_WORKSPACE_ROOT = _REPO_ROOT / "scratch" / "_serve"
 
 
+def _demo_is_still_valid(demo: Path) -> bool:
+    """复用的 demo 仓库还能过**当前** schema 吗？
+
+    复用是必须的（见下），但内容 schema 一旦变严（例如 §11.3 新增必填的
+    ``runtime.protected_paths``），旧的 demo 就会让服务在**启动时**抛一个跟"我刚改的东西"
+    毫不相干的 ``ContentValidationError``。对 demo（不是用户内容）来说，重建才是正确恢复。
+    """
+    try:
+        load_track(demo / "track.yaml")
+    except ContentValidationError:
+        return False
+    return True
+
+
 def build_server(
     content_dir: Path | None = None,
     *,
@@ -42,12 +59,13 @@ def build_server(
     """按内容目录装配 app；``content_dir=None`` 时用 demo track-repo。
 
     demo 仓库**幂等复用**：已存在就不重建——重建会在"内容没变"时让 ``git commit`` 无话可提交
-    而报错，重启开发服务器就崩。
+    而报错，重启开发服务器就崩。但复用前会用当前 schema 验一次，不通过就重建（见上）。
     """
     if content_dir is None:
         root = workspace_root or DEFAULT_WORKSPACE_ROOT
         demo = root / "demo"
-        if rebuild_demo or not (demo / ".git").exists():
+        if rebuild_demo or not (demo / ".git").exists() or not _demo_is_still_valid(demo):
+            shutil.rmtree(demo, ignore_errors=True)
             content_dir = build_demo_track_repo(demo)
         else:
             content_dir = demo

@@ -65,7 +65,7 @@
           "type": "object",
           "additionalProperties": false,
           "description": "EXECUTABLE entry points (the supply-chain attack surface — these really run on the learner's machine). Per §4.6 every executable entry must be covered by digest_pin.",
-          "required": ["digest_pin"],
+          "required": ["digest_pin", "protected_paths"],
           "properties": {
             "compose": {
               "type": "string",
@@ -82,6 +82,12 @@
             "sim": {
               "type": "string",
               "description": "Concurrency simulator (Stage3+)."
+            },
+            "protected_paths": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "description": "The JUDGED SURFACE (§11.3): paths whose contents the verdict depends on — canonical tests, build config, fixtures, the track's own infra. Any learner change to one of them FAILS the acceptance gate outright. This is the cheap hard gate that stands in for runtime test injection (§7.3) until that lands: while the canonical tests still live inside the learner's repo, declaring them here is what keeps 'edit the test' from being a free pass. Globs allowed (e.g. ./src/test/ or ./**/pom.xml)."
             },
             "digest_pin": {
               "type": "object",
