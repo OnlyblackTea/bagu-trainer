@@ -418,7 +418,7 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 1. **零云成本**：契合 D3 与开源自托管；平台中心**零阅卷算力**，也不引入强制 LLM 成本（D4）。
 2. **契合 seckill-lab 既有事实**：它本来就要求学员本地 `docker compose up` 真 MySQL(13306)+Redis(16379) 跑 `mvn test -Dgroups=stageNN`（**拒绝 H2/Testcontainers**，因为 InnoDB 间隙锁/MVCC/EXPLAIN 行为不对会教错八股）。本地阅卷 = 把这个既有动作**工具化、标准化**。
 3. **真环境真信号**：并发 sim（Stage3 零超卖）这类测试在学员真机上跑最贴近实际。
-4. **平台侧只留一个缝**：阅卷经 `platform_service/grading.py::GradingRunner` Protocol 注入。当前是 `StubGradingRunner`——"诚实占位"（真跑一次本地命令拿退出码，**不假装跑了 maven**）；真实现（Docker + JDK17 + Maven）待环境就绪，列入 §2 后续切片。
+4. **平台侧只留一个缝**：阅卷经 `platform_service/grading.py::GradingRunner` Protocol 注入。当前是 `StubGradingRunner`——"诚实占位"：它**什么都不跑**，只按 `scenario` 返回一份**预置**的 `GradingReport`，并在 `provenance.host_env` 里打上 `{"simulated": true}`（**不假装跑了 maven**，也不假装测过）；真实现（Docker + JDK17 + Maven）待环境就绪，列入 §2 后续切片。
 
 ### 7.2 学习者命令面：CLI → REST + SPA（形态已改）
 
@@ -666,7 +666,7 @@ PR 描述模板由 `ticket.yaml.submission.template` 生成，学员必填：
 ### 11.2 AI 评审（可选挂件 · 顾问性 · 非确定性）
 
 **形态（v0.5）**：AI 评审不是平台的一部分，而是一个**可选挂件**，经 `platform_service/ai_review.py::ReviewEngine` Protocol 注入。
-A′ 装的是 `StubReviewEngine`（诚实占位：按阅卷硬门给出 approve / request_changes 两条分支的确定性结论）；
+A′ 装的是 `StubReviewEngine`（诚实占位：按 `scenario` 返回 approve / request_changes 两套**预置**响应，正文自己写着"模拟评审结论"，**不读任何输入**）；
 真实实现（任意轻量 LLM harness）是 §2 后续切片。**挂件缺席时闭环照走**——这正是 D4 要的（§11.3 的裁决不依赖它）。
 
 AI 评审产出**建议 + 锚定点评**，写进 `Review` 实体；它**不直接置 passed**——非确定性的 LLM 输出不能直接驱动确定性的状态机解锁（见 §11.3）。
