@@ -1,4 +1,4 @@
-"""Unit tests for platform_service.lifecycle (design v0.4 §9.2 state machine)."""
+"""Unit tests for platform_service.lifecycle (design v0.5 §9.2 state machine)."""
 
 from __future__ import annotations
 

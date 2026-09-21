@@ -128,6 +128,20 @@ rd /s /q .git\modules\prar-agent
 - `git submodule status` 无输出；`.gitmodules` 无 prar-agent 段。
 - `grep -rn "prar" .`（排除本 spec 与 `docs/` 决策记录段）无命中。
 - `grep -rn "prar\|GPL\|submodule" NOTICE Makefile paper_cli/` 无命中；`README.md` 只允许开头那段 v0.5 变更说明（决策记录）。
+
+**执行结果（2026-09-10，已执行，获独立授权）**：
+
+- **B.1 删除**：`orchestrator/`（3 文件）、`platform_service/mentor.py`、`contracts/`（3 文件）、`tests/test_session_pool.py`、`tests/test_mentor.py` —— 共 **9 个跟踪文件** `git rm`。
+- **B.2 子模块**：`git submodule deinit -f prar-agent` → `git rm -f prar-agent` → 删 `.git/modules/prar-agent` → `.gitmodules`（唯一条目，整文件删）→ `.git/config` 已无 `submodule.*` 段。**验收**：`git submodule status` **空输出**。
+- **B.3 改造**：`pyproject.toml`（packages 去 `orchestrator`/`contracts`、deps 去 `websockets`、`testpaths` 去 `contracts`、description 去引擎叙事、补 `paper_cli` 到 packages）；`Makefile` 重写（去 `bootstrap`/`submodule-status`/`bump-submodule`/`test-boundary`/`test-contract`，补 `serve`/`web`/`e2e`）；`NOTICE` 删引擎段并把内容仓改为第 1 节；`paper_cli/__init__.py` 改述为"REST + SPA 已定，CLI 可选"；`platform_service/__init__.py`、`ai_review.py`、`review_diff.py`、`models.py`、`admission.py`、`platform_api/__init__.py` 的 docstring 全面清理（含 20 个文件的 `design v0.4 §x` → `v0.5 §x`）。
+- **清单外一并处理（同属"失效引用"一类，非新增范围）**：
+  1. 8 处存活代码的 `(GPL boundary intact)` 尾注 → `(D4)`（边界已无对象）；
+  2. `ENGINE_DIFF_CHAR_LIMIT` → `REVIEW_DIFF_CHAR_LIMIT`（B.3 标为可选，此处做了）；
+  3. 指向**已删除文档**的 `CONTRACTS §5.x` / 裸 `§5.x` / `契约三` 引用（`models.py`、`review_diff.py`、`stubs.py` + 3 个测试文件）→ 改指设计稿 §11.2 或直接改述；
+  4. `.gitignore` 的子模块段；本机一个陈旧的 `paper_platform.egg-info/`（已在 gitignore 内、含退休架构的旧 PKG-INFO）一并清除；
+  5. README 里"残留尚未删除"的提示改为"已清除"，测试计数 220 → 173。
+- **B.4 验收**：`git submodule status` 空；对 `docs/` 与 README 决策说明之外的全部文件 grep `prar` / `GPL` / `submodule` / `orchestrator` / `CONTRACTS` **零命中**；`pytest -q` **173 passed**（220 − 47 个随被删文件移除的用例）；`ruff check .` 全绿；`import platform_api, platform_service` 成功、`import orchestrator` 失败（`ModuleNotFoundError`）。
+- 回归：`frontend/` **零改动**（本次不涉及前端）。
 - `.venv\Scripts\python.exe -m pytest` 全绿（已删 `tests/test_session_pool.py`、`tests/test_mentor.py`、`contracts/`）。
 - `.venv\Scripts\python.exe -m ruff check .` 全绿。
 - `python -c "import platform_api, platform_service"` 成功；`import orchestrator` 失败（已删）。

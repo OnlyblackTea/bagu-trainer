@@ -1,18 +1,23 @@
 """Platform control plane (§2.1) — the deployer's self-study / drill loop.
 
-This package is the platform side of the three-layer topology. It reaches the engine
-ONLY through ``orchestrator.prar_bridge`` (GPL boundary, §6.6), runs ZERO grading
-compute and forces ZERO LLM cost (D3 — grading runs on the learner's machine; any LLM
-use is the deployer's own key). It is a practice ground and a seckill-lab extension
-that admits community Track contributions — there are no classes, rankings or scores
-(removed in v0.4).
+This package is the platform side of the three-layer topology (content / toolchain /
+platform). It runs ZERO grading compute and forces ZERO LLM cost (D3 — grading runs on
+the learner's machine; any LLM use is the deployer's own key). It is a practice ground
+and a seckill-lab extension that admits community Track contributions — there are no
+classes, rankings or scores (removed in v0.4).
+
+It is **engine-free** (D4): no AI sits on the critical path. Grading, git/PR and the
+optional advisory review enter through three injected Protocols, so this layer imports
+no concrete backend and is fully offline-testable.
 
 Implemented — pure, offline, unit-tested domain logic:
 
-* ``models``         — the v0.4 domain: TicketSpec/TrackManifest content projections
+* ``models``         — the v0.4/v0.5 domain: TicketSpec/TrackManifest content projections
                        plus runtime entities. ``extra="forbid"`` rejects every field
                        the v0.4 contraction removed (fixture_seed/signature/score/...).
 * ``content_loader`` — YAML -> JSON-Schema (Draft 2020-12) -> typed models (§4.2/§4.3).
+                       Ticket identity is ``identity.id``; stages are discovered by
+                       globbing ``stages/*/ticket.yaml`` (§8.1).
 * ``store``          — the persistence seam: a ``Store`` Protocol + ``InMemoryStore``.
 * ``lifecycle``      — the TicketInstance state machine (§9.2): locked -> available ->
                        in_progress -> submitted -> grading -> passed | failed, plus
@@ -28,26 +33,20 @@ Implemented — pure, offline, unit-tested domain logic:
 * ``service``        — ``PlatformService``: the facade threading the above into the
                        end-to-end enroll -> start -> submit -> review -> decide loop.
 
-Implemented — engine-integration layer (the v0.2.0 payoff). Each drives ``prar_bridge``
-through an *injected* engine Protocol, so it imports neither orchestrator nor the engine
-and is unit-tested offline against a fake (GPL boundary intact):
+The three seams — a Protocol for each backend, with the concrete implementation
+wired in by the ``platform_api`` composition root:
 
-* ``review_diff``    — diff prep for the AI Review (契约三): ``git diff`` with the default
-                       ``a/`` ``b/`` prefix plus the 120k whole-file volume preflight that
-                       catches the first-file-overflow trap before any token is burned.
-* ``ai_review``      — AI-Review *generation* (§6.5/§11.2): register the submission, call
-                       ``POST /reviews`` by ``submission_id`` (XOR), and faithfully persist
-                       the response — the anchor triple, ``dimension_findings`` and
-                       ``truncated_files`` — since §5 exposes no GET /reviews.
-* ``mentor``         — ``MentorSession``: the 发卷 -> 接卷 -> 开发 arc (§6.2/§6.3) over a
-                       human-actor session, entering ACTING *without* an Executor and never
-                       connecting ``ws_act`` (D1 is structural — the Protocol names no
-                       executor method). ``orchestrator.session_pool`` opens + self-attests
-                       those mentor sessions (``actor="human"`` + external workspace).
+* ``grading``        — ``GradingRunner``: run the track's canonical tests on the
+                       learner's machine and return a ``GradingReport`` (§7).
+* ``forge``          — ``ForgeClient``: provision a workspace from the stage refs
+                       (§8.1) and describe the resulting PR (§8).
+* ``ai_review``      — ``ReviewEngine``: the OPTIONAL advisory review (§11.2).
+* ``review_diff``    — diff prep *for* that review: the whole-file volume preflight that
+                       refuses an over-large diff before any backend is called.
+* ``stubs``          — the three honest placeholders used until real backends exist.
 
 Pending — needs HTTP, a real DB, external infra or an open decision (out of scope here):
-``paper grade`` grading *execution* (BLOCKED on appendix C Q2 — the ``paper_cli`` form is
-undecided), FastAPI routers (``[service]`` extra), a SQLAlchemy/PostgreSQL ``Store``, gitea
-fork/PR plumbing (incl. TODO 4 — write ``scratch/`` into the student repo's ``.gitignore``
-at fork/instantiation), and LearnerProfile (§10).
+real grading execution (Docker + JDK17 + Maven), a Gitea-backed ``ForgeClient``, a
+SQLAlchemy/PostgreSQL ``Store``, an LLM-backed ``ReviewEngine`` (§11.2), and
+LearnerProfile (§10).
 """

@@ -1,4 +1,4 @@
-"""End-to-end unit tests for platform_service.service (design v0.4 §9.2 / §11.3).
+"""End-to-end unit tests for platform_service.service (design v0.5 §9.2 / §11.3).
 
 Drive the whole offline loop against an :class:`InMemoryStore` over a 3-ticket linear
 DAG (stage-00 → 01 → 02): enroll mints correctly-initialised instances; a green

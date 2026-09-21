@@ -1,4 +1,4 @@
-"""Unit tests for platform_service.acceptance (design v0.4 §11.3 deterministic gate)."""
+"""Unit tests for platform_service.acceptance (design v0.5 §11.3 deterministic gate)."""
 
 from __future__ import annotations
 

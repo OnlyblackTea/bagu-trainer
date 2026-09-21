@@ -45,7 +45,7 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 220 passed
+.venv/Scripts/python.exe -m pytest -q        # 173 passed
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
@@ -77,7 +77,7 @@ npx playwright test                           # 真浏览器 + 真后端，3 pas
 bagu-trainer/
 ├── LICENSE                 Apache-2.0（本仓）
 ├── NOTICE                  署名
-├── Makefile                bootstrap / test / lint
+├── Makefile                test / lint / serve / web / e2e
 ├── pyproject.toml
 ├── platform_service/       纯领域层（无 HTTP / 无 DB / 无引擎）
 │   ├── models.py           Pydantic 领域模型（extra="forbid"）
@@ -101,10 +101,9 @@ bagu-trainer/
 └── tests/                  pytest（后端全量）
 ```
 
-> **引擎时代的残留（尚未删除）**：`orchestrator/`、`platform_service/mentor.py`、`contracts/`、
-> `prar-agent/` 子模块与 `.gitmodules`、`tests/test_session_pool.py`、`tests/test_mentor.py`
-> 都还在仓里。删除清单与验收标准已备好（spec **Section B**），但**需要独立授权**才能执行——
-> 所以本仓现在的文件树比上面这张图多出这些项。
+> **引擎时代的残留已清除**（spec Section B，已执行）：引擎适配层、git 子模块与
+> GPL 边界守卫、以及两个引擎相关的测试文件均已删除；`pyproject.toml` / `Makefile` /
+> `NOTICE` 同步去掉了子模块与边界措辞。上面这张图**就是**当前的文件树。
 
 ---
 

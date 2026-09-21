@@ -1,4 +1,4 @@
-"""Deterministic acceptance gate (design v0.4 §11.3).
+"""Deterministic acceptance gate (design v0.5 §11.3).
 
 Decoupled from the advisory AI Review (§11.2): the verdict is a pure function of the
 objective correctness result, the Review's recommendation, and the evidence's trust
@@ -6,7 +6,7 @@ tier — never of an LLM's free-form mood. ``config`` is ``auto`` only (v0.4 rem
 ``teacher-confirm``), so a decision is reproducible and auditable from the snapshotted
 :class:`~platform_service.models.AcceptanceInputs`.
 
-Pure logic: no engine, no HTTP, no DB (GPL boundary intact).
+Pure logic: no engine, no HTTP, no DB (D4).
 """
 
 from __future__ import annotations

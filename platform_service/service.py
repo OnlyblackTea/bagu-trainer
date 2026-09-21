@@ -1,4 +1,4 @@
-"""Orchestration facade for the platform control plane (design v0.4 §9.2 / §11.3).
+"""Orchestration facade for the platform control plane (design v0.5 §9.2 / §11.3).
 
 :class:`PlatformService` threads the pure slices — :mod:`~platform_service.store`,
 :mod:`~platform_service.lifecycle`, :mod:`~platform_service.unlock` and
@@ -9,8 +9,8 @@ fully unit-testable offline:
 
 It owns identity minting and the version anchor (``engine_version`` here; the ticket
 supplies ``ticket_version`` / ``test_version``). The AI Review and the grading report
-are *inputs* the caller hands in — generating them needs the engine and is out of scope
-for this slice. No engine, no HTTP, no DB (GPL boundary intact).
+are *inputs* the caller hands in — generating them needs a real backend and is out of scope
+for this slice. No engine, no HTTP, no DB (D4).
 """
 
 from __future__ import annotations

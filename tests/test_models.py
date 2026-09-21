@@ -1,4 +1,4 @@
-"""Unit tests for platform_service.models (design v0.4 §9.1 / §11).
+"""Unit tests for platform_service.models (design v0.5 §9.1 / §11).
 
 Beyond construction + JSON round-trip, these lock the v0.4 contraction: every
 removed field (``fixture_seed`` / ``signature`` / score / weight / teacher-confirm
@@ -231,8 +231,8 @@ def test_ticket_spec_rejects_parametric(sample_ticket) -> None:
 
 
 def test_review_retains_engine_anchor_detail_and_incompleteness_signal() -> None:
-    """CONTRACTS §5 has no GET /reviews, so the stored Review is the ONLY copy: it must
-    retain the anchor triple + engine-corrected quote (契约三) and ``truncated_files``
+    """A review is not retrievable, so the stored Review is the ONLY copy: it must
+    retain the anchor triple + corrected quote and ``truncated_files``
     (the sole incompleteness signal). New fields are optional, so an unanchored comment
     still constructs from ``(dimension, text)`` alone."""
     review = Review(

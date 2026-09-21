@@ -1,4 +1,4 @@
-"""Unit tests for platform_service.content_loader (design v0.4 §4.2/§4.3).
+"""Unit tests for platform_service.content_loader (design v0.5 §4.2/§4.3).
 
 The loader is the gate from untrusted content YAML to typed models: it must reject
 schema violations (including the v0.4-removed ``parametric``) with a

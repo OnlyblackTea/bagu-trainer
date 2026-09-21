@@ -1,8 +1,8 @@
-"""Unit tests for platform_service.review_diff (design v0.4 §6.6.1 契约三).
+"""Unit tests for platform_service.review_diff (design v0.5 §11.2).
 
-The volume preflight mirrors the engine's whole-file truncation (CONTRACTS §5.6) so
+The volume preflight mirrors the whole-file truncation rule (REVIEW_DIFF_CHAR_LIMIT) so
 the platform can detect the trap where a first-file overflow yields an empty diff but
-a normal-looking review (§5.8a) — the platform must preflight the volume itself.
+a normal-looking review — the platform must preflight the volume itself.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def test_over_limit_truncates_by_whole_file() -> None:
 
 
 def test_first_file_overflow_is_flagged() -> None:
-    """The dangerous case: even the first file alone exceeds the limit, so the engine
+    """The dangerous case: even the first file alone exceeds the limit, so the backend
     would keep nothing and still return a normal-looking review."""
     big = (
         "diff --git a/big.py b/big.py\n"
@@ -77,8 +77,8 @@ def test_first_file_overflow_is_flagged() -> None:
     assert vol.truncated_files == ("big.py",)
 
 
-def test_default_limit_matches_engine() -> None:
-    assert review_diff.ENGINE_DIFF_CHAR_LIMIT == 120_000
+def test_default_limit_matches_review_budget() -> None:
+    assert review_diff.REVIEW_DIFF_CHAR_LIMIT == 120_000
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -129,7 +129,7 @@ def test_generate_diff_uses_git_default_prefix(tmp_path: Path) -> None:
 def test_generate_diff_forces_default_prefix_despite_config(
     tmp_path: Path, key: str, value: str
 ) -> None:
-    """契约三 铁律: the engine needs a/ b/ prefixes; a learner's global
+    """Iron law: git's default a/ b/ prefixes are required; a learner's global
     ``diff.noprefix`` / ``diff.mnemonicPrefix`` must not leak in and introduce
     anchor ambiguity (noprefix drops the side, mnemonicPrefix uses c/ c/)."""
     repo = _repo_with_one_change(tmp_path)

@@ -42,8 +42,3 @@ scratch/
 # ---- OS ----
 .DS_Store
 Thumbs.db
-
-# ---- Submodule working state ----
-# prar-agent/ is a pinned submodule; ignore stray local edits inside it from
-# this repo's status view (engine changes belong in the prar-agent repo).
-/prar-agent/**/*.pyc

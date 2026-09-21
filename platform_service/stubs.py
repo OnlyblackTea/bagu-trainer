@@ -66,7 +66,7 @@ class StubGradingRunner:
 class StubReviewEngine:
     """结构化满足 :class:`platform_service.ai_review.ReviewEngine`（不 import 它）。
 
-    返回 CONTRACTS §5.2 形状的 ReviewResponse dict；``scenario`` 选 approve/request_changes。
+    返回 Review 响应形状的 dict；``scenario`` 选 approve/request_changes。
     request_changes 带一条锚定行级评论，供 UI 演示行级评审；approve 无评论。
     """
 

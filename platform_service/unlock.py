@@ -1,11 +1,11 @@
-"""Prerequisites-DAG evaluation for unlocking (design v0.4 §4.3 / §9.2).
+"""Prerequisites-DAG evaluation for unlocking (design v0.5 §4.3 / §9.2).
 
 v0.3 reversed the old forward-pointing ``unlock_next``: each ticket declares WHO IT
 DEPENDS ON via ``progression.prerequisites``, forming a DAG. The unlock check is
 "are all my prerequisites passed?". A single prerequisite degenerates to a linear
 chain; a diamond's join node waits for every branch.
 
-Pure graph logic: no engine, no HTTP, no DB (GPL boundary intact).
+Pure graph logic: no engine, no HTTP, no DB (D4).
 """
 
 from __future__ import annotations

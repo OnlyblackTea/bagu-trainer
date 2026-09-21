@@ -1,4 +1,4 @@
-"""Unit tests for platform_service.store (design v0.4 §9.1 persistence seam).
+"""Unit tests for platform_service.store (design v0.5 §9.1 persistence seam).
 
 Covers save/get/list for every runtime entity plus the query axes the service
 relies on: instances by (learner, ticket), submissions by instance (seq-ordered),

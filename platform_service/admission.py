@@ -1,4 +1,4 @@
-"""Track admission gate — the library behind ``paper validate-track`` (design v0.4 §4.6).
+"""Track admission gate — the library behind ``paper validate-track`` (design v0.5 §4.6).
 
 Runs the STATIC half of admission on a track directory: schema validity, skeleton
 file presence, bagu-map anchors, runtime digest-pinning, trust-level endorsement, the
@@ -9,7 +9,7 @@ spoiler filter. The check that needs real compute — running the canonical test
 failed, so this module stays pure and offline.
 
 The ``paper validate-track`` CLI wrapper lives in ``paper_cli`` (out of scope here).
-No engine, no HTTP, no DB (GPL boundary intact).
+No engine, no HTTP, no DB (D4).
 """
 
 from __future__ import annotations
@@ -183,14 +183,14 @@ def _check_trust_level(track: TrackManifest) -> AdmissionCheck:
 
 
 def _check_d1(tickets: list[TicketSpec]) -> AdmissionCheck:
-    """D1 (§6.4): the mentor's writable set must never touch the graded files."""
+    """D1: a ticket's declared writable set must never touch the graded files (§4.3)."""
     violations: list[str] = []
     for ticket in tickets:
         overlap = set(ticket.mentor_policy.may_write) & set(ticket.scope.files_to_change)
         if overlap:
             violations.append(f"{ticket.identity.id}:{sorted(overlap)}")
     message = (
-        "mentor may_write never intersects files_to_change (D1)"
+        "may_write never intersects files_to_change (D1)"
         if not violations
         else f"D1 violations: {violations}"
     )

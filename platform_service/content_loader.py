@@ -1,4 +1,4 @@
-"""Content loading + JSON-Schema validation (design v0.4 §4.2 track / §4.3 ticket).
+"""Content loading + JSON-Schema validation (design v0.5 §4.2 track / §4.3 ticket).
 
 The single gate between untrusted content-repo YAML and the typed domain models:
 read YAML → validate against the frozen JSON Schema (Draft 2020-12) → project into
@@ -13,7 +13,7 @@ is a *board* list: it may declare a stage that ships no ticket (``stage-00-onboa
 is an onboarding/environment stage, not an assessed one), so it must never be the thing
 that decides which tickets exist.
 
-Pure filesystem + schema logic: no engine, no HTTP, no DB (GPL boundary intact).
+Pure filesystem + schema logic: no engine, no HTTP, no DB (D4).
 """
 
 from __future__ import annotations

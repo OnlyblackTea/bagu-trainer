@@ -1,4 +1,4 @@
-"""Unit tests for platform_service.unlock (design v0.4 §4.3/§9.2 prerequisites DAG)."""
+"""Unit tests for platform_service.unlock (design v0.5 §4.3/§9.2 prerequisites DAG)."""
 
 from __future__ import annotations
 

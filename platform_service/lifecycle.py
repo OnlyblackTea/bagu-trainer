@@ -1,4 +1,4 @@
-"""TicketInstance lifecycle state machine (design v0.4 §9.2).
+"""TicketInstance lifecycle state machine (design v0.5 §9.2).
 
 States: ``locked → available → in_progress → submitted → grading → passed | failed``.
 A failed instance retries (``failed → in_progress``) within the SAME instance under a
@@ -6,7 +6,7 @@ new Submission; a content/version change RE-ISSUES: the old instance is parked a
 ``stale`` and a fresh instance anchors the bumped versions. ``passed`` is terminal in
 the happy path (it triggers unlock) but can still be staled by a re-issue.
 
-Pure state logic: no engine, no HTTP, no DB (GPL boundary intact).
+Pure state logic: no engine, no HTTP, no DB (D4).
 """
 
 from __future__ import annotations

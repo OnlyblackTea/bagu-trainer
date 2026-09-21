@@ -1,4 +1,4 @@
-"""Domain models for the platform control plane (design v0.4 §9.1 / §11).
+"""Domain models for the platform control plane (design v0.5 §9.1 / §11).
 
 Pure Pydantic v2 data — no engine, no HTTP, no DB. Every model forbids extra keys,
 so a stale ``parametric`` / ``fixture_seed`` / ``signature`` / score field from the
@@ -90,7 +90,7 @@ class TicketBrief(_Strict):
 
 
 class TicketScope(_Strict):
-    """D1: the AI mentor NEVER writes ``files_to_change`` (§6.4)."""
+    """D1: the graded surface — no AI component in the platform writes these (§1.2)."""
 
     files_to_change: list[str] = Field(min_length=1)
 
@@ -116,7 +116,11 @@ class Hint(_Strict):
 
 
 class MentorPolicy(_Strict):
-    """§6.4 / D1: ``may_write`` must not intersect ``scope.files_to_change``."""
+    """§4.3 / D1: ``may_write`` must not intersect ``scope.files_to_change``.
+
+    Kept in the schema after v0.5 (the mentor/executor role is gone): published Tracks
+    still declare it and a future advisory gadget may read it. See design §4.3.
+    """
 
     mode: Literal["pure_mentor", "mentor_then_reveal"]
     may_write: list[str] = Field(default_factory=list)
@@ -271,8 +275,8 @@ class ReviewComment(_Strict):
     """One anchored, qualitative note (§11.2). NO weight/score — the rubric's
     scoring was removed in v0.4; dimensions survive as a checklist only.
 
-    The anchor is the frozen triple ``(path, line, side)`` (CONTRACTS §5.3) plus the
-    engine-corrected ``quote`` (the anchor line's real text, §5.4). ``anchor`` is a
+    The anchor is the frozen triple ``(path, line, side)`` (design §11.2) plus the
+    backend-corrected ``quote`` (the anchor line's real text). ``anchor`` is a
     platform-built display string, never parsed back from the engine's convenience
     string. All anchor fields are ``None`` for an unanchored comment. They are retained
     verbatim because §5 exposes no GET /reviews — the stored Review is the only copy.
@@ -288,7 +292,7 @@ class ReviewComment(_Strict):
 
 
 class DimensionFinding(_Strict):
-    """Per-dimension commentary from the AI Review (CONTRACTS §5.2 ``dimension_findings``).
+    """Per-dimension commentary from the AI Review (design §11.2 ``dimension_findings``).
 
     A qualitative checklist verdict per rubric dimension (§11.2) — NO score."""
 
@@ -300,10 +304,10 @@ class Review(_Strict):
     """AI Review — advisory, non-deterministic (§11.2). Its ``recommendation``
     feeds the gate but carries NO numeric score.
 
-    ``truncated_files`` (CONTRACTS §5.6) is the sole signal that the review was
+    ``truncated_files`` is the sole signal that the review was
     incomplete (a file was dropped whole for exceeding the char limit);
     ``dimension_findings`` retains the per-dimension commentary. Both are persisted
-    because §5 exposes no GET /reviews — this Review is the only copy the platform has.
+    because a review is not retrievable — this Review is the only copy the platform has.
     """
 
     id: str

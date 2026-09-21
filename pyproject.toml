@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bagu-trainer"
 version = "0.1.0"
-description = "发卷平台（bagu-trainer）—— 基于 prar-agent 引擎、开源可自托管的八股实战考核平台。AI 负责管理 / 带教 / 评审，人类亲手写代码，阅卷在学习者自己的机器上运行。"
+description = "发卷平台（bagu-trainer）—— 开源可自托管的八股实战演练所。平台发工单、收 PR、跑确定性验收门并解锁下一关；人类亲手写代码，阅卷在学习者自己的机器上跑，AI 评审是可选的挂件。"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "OnlyblackTea" }]
-keywords = ["education", "interview-prep", "agent", "self-hosted", "exam"]
+keywords = ["education", "interview-prep", "self-hosted", "exam"]
 classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
@@ -18,21 +18,22 @@ classifiers = [
   "Intended Audience :: Education",
 ]
 
-# Core runtime: only what the engine adapter + content schemas need.
-# NOTE: this repo NEVER imports prar-agent's Python modules (GPL boundary, §6.7).
-# The engine is reached over HTTP/WS only, hence httpx + websockets, not its deps.
+# Core runtime: the pure domain layer + content schemas.
+# The platform is engine-free (D4): no AI backend is required on the critical path,
+# and none is imported. httpx is kept for the future HTTP backends (a Gitea Forge /
+# an LLM-backed ReviewEngine); nothing shipped today needs it.
 dependencies = [
   "httpx>=0.27",
-  "websockets>=12",
   "pydantic>=2.7",
   "pyyaml>=6",
   "jsonschema>=4.21",
 ]
 
 [project.optional-dependencies]
-# Platform control plane (§2.1) — FastAPI service.
+# Platform control plane (§2.1) — FastAPI REST control plane.
 service = ["fastapi>=0.111", "uvicorn>=0.30", "sqlalchemy>=2.0", "asyncpg>=0.29"]
-# Learner-device client (§7.2). CLI form is provisional pending design Q2.
+# Learner-device CLI (§7.2). The form is settled as REST + SPA, so this extra only
+# exists for the optional future CLI.
 cli = ["typer>=0.12"]
 dev = [
   "pytest>=8",
@@ -47,11 +48,11 @@ Repository = "https://github.com/OnlyblackTea/bagu-trainer"
 Issues = "https://github.com/OnlyblackTea/bagu-trainer/issues"
 
 [tool.setuptools]
-packages = ["orchestrator", "platform_service", "contracts", "platform_api", "platform_api.routes"]
+packages = ["platform_service", "platform_api", "platform_api.routes", "paper_cli"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["contracts", "tests"]
+testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
 

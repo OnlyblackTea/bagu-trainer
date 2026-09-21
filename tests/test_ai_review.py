@@ -1,10 +1,10 @@
-"""Unit tests for platform_service.ai_review (design v0.4 §6.5/§11.2, CONTRACTS §5).
+"""Unit tests for platform_service.ai_review (design v0.5 §11.2).
 
-The engine is injected (a fake here), so the response-mapping and the diff preflight
-discipline are tested offline — no live engine, no HTTP. The fake's ReviewResponse
-mirrors CONTRACTS §5.2 verbatim, including the engine's own ``anchor`` string format
+The reviewer is injected (a fake here), so the response-mapping and the diff preflight
+discipline are tested offline — no live backend, no HTTP. The fake's ReviewResponse
+carries the full response shape, including the backend's own ``anchor`` string format
 (``path#side:line``) so the tests can prove the platform builds its own display anchor
-from the triple instead of parsing the engine's.
+from the triple instead of parsing the backend's.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from platform_service.models import Recommendation
 SESSION = "eng-sess-1"
 ENGINE_SUBMISSION = "eng-sub-1"
 
-# CONTRACTS §5.2 ReviewResponse, verbatim shape.
+# Review response shape (design §11.2).
 _REVIEW_RESPONSE: dict[str, Any] = {
     "id": "eng-rev-1",
     "session_id": SESSION,
@@ -68,7 +68,7 @@ _SMALL_DIFF = (
 
 
 class FakeReviewEngine:
-    """Duck-typed stand-in for the two PrarBridge methods ai_review uses."""
+    """Duck-typed stand-in for the two ReviewEngine methods ai_review uses."""
 
     def __init__(
         self,
@@ -161,7 +161,7 @@ async def test_generate_review_maps_engine_response_to_platform_review() -> None
 
 
 async def test_generate_review_sends_submission_id_not_diff() -> None:
-    """XOR (CONTRACTS §5.1): the diff goes to create_submission; the review references
+    """XOR (design §11.2): the diff goes to create_submission; the review references
     it by submission_id and must NOT re-send the diff."""
     engine = FakeReviewEngine()
     await ai_review.generate_review(
@@ -174,7 +174,7 @@ async def test_generate_review_sends_submission_id_not_diff() -> None:
 
 
 async def test_generate_review_backfills_defense_and_report() -> None:
-    """CONTRACTS §5.1: defense_text / grading_report are NOT auto-carried from the
+    """(design §11.2) defense_text / grading_report are NOT auto-carried from the
     submission, so the platform must re-send them to the review call."""
     engine = FakeReviewEngine()
     report = {"correctness": {"passed": True}}
@@ -192,7 +192,7 @@ async def test_generate_review_backfills_defense_and_report() -> None:
 
 
 async def test_generate_review_refuses_first_file_overflow_before_touching_engine() -> None:
-    """The §5.8a trap: a first file over the limit yields an empty-but-normal review,
+    """The first-file-overflow trap: a first file over the limit yields an empty-but-normal review,
     so the platform refuses before any engine call (no submission, no token burn)."""
     engine = FakeReviewEngine()
     big = (

@@ -1,11 +1,11 @@
-"""Persistence seam for the platform control plane (design v0.4 §9.1).
+"""Persistence seam for the platform control plane (design v0.5 §9.1).
 
 :class:`Store` fixes the *shape* of persistence; :class:`InMemoryStore` is the
 dict-backed implementation used by tests and single-process self-study. A
 PostgreSQL/SQLAlchemy backend can land later (with the ``[service]`` extra) without
 changing this Protocol — the rest of the platform depends only on the seam.
 
-Pure in-memory logic: no engine, no HTTP, no real DB (GPL boundary intact).
+Pure in-memory logic: no engine, no HTTP, no real DB (D4).
 """
 
 from __future__ import annotations
