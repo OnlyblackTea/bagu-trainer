@@ -121,15 +121,27 @@ class GiteaApi:
             )
         # 已经开过同一个 PR：Gitea 会给 409/422，直接找回来当成功（幂等）。
         if response.status_code in (409, 422):
-            for pull in self.list_pulls(upstream=upstream, head=f"{fork_owner}:{head_branch}"):
+            for pull in self.list_pulls(upstream=upstream, head=head_branch):
                 return str(pull["html_url"])
         payload = self.claim(response, f"open PR {upstream} <- {fork_owner}:{head_branch}")
         return str(payload["html_url"])
 
     def list_pulls(self, *, upstream: str, head: str) -> list[dict]:
+        """找某个 head 分支已开的 PR。
+
+        ``head`` 传**分支名**即可：实测（Gitea 1.22）fork PR 的 ``head.label`` 就是分支名
+        （``dev``），**不是** ``owner:branch``。一开始按 ``owner:branch`` 比，导致"重复开 PR"
+        找不到已有 PR、退化成一个 503——这正是端到端才暴露出来的那类错。
+        """
         owner, name = upstream.split("/", 1)
         response = self._request(
             "GET", f"/repos/{owner}/{name}/pulls", params={"state": "open", "limit": 50}
         )
         pulls = self.claim(response, f"list pulls {upstream}")
-        return [p for p in pulls if p.get("head", {}).get("label") == head]
+        wanted = {head, head.split(":")[-1]}
+        return [
+            p
+            for p in pulls
+            if p.get("head", {}).get("ref") in wanted
+            or p.get("head", {}).get("label") in wanted
+        ]

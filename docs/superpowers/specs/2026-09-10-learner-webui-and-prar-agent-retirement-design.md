@@ -369,7 +369,7 @@ React + Vite + TypeScript SPA。建议屏幕（writing-plans 细化）：
 | 项 | 现状 | 后续 |
 |---|---|---|
 | 真实阅卷 | ✅ **已完成**（`DockerGradingRunner` + `--grading docker`）：跑测试前**默认**按 `runtime.compose` 重置环境（`down -v` + `up -d --wait`），再真跑 canonical 测试，surefire 结果映进报告 | canonical 测试**运行时注入**仍未做（已由**判定面硬门**顶上，设计 §11.3，实测见下）；判別性校验仍复用长活环境，宜改成一次性环境 |
-| 真实 Forge | ✅ **已实现**（`GiteaForgeClient` + `--forge gitea`）：`provision` = API 确保 fork → clone 到工作区 → 建 `dev` 分支 → 把阶段分支的 SHA 记进本地 `bagu.baseRef`；`create_pr` = 真开 PR 并返回 `html_url`。token 只用于那次 clone，随后把 remote 改回干净 URL | ⬜ 还差 VM 上的端到端实测（Gitea 1.22 镜像已在机器上）；private fork 的凭据配置要写进部署文档 |
+| 真实 Forge | ✅ **已完成并端到端实测**（`GiteaForgeClient` + `--forge gitea`）：`provision` = API 确保 fork → clone 到工作区 → 建 `dev` 分支 → 把阶段分支的 SHA 记进本地 `bagu.baseRef`；`create_pr` = 真开 PR 并返回 `html_url`。token 只用于那次 clone，随后把 remote 改回干净 URL | private fork 的凭据配置要写进部署文档；判別性校验仍在长活环境里跑 |
 | 真实 AI 评审/带教 | 桩 | 轻量 harness（如 DeepSeek harness）插入 `ReviewEngine` 缝；可能引入流式（届时再议 SSE/WS） |
 | 持久化 | `InMemoryStore` | PostgreSQL `Store`（sqlalchemy + asyncpg，pyproject 已列 optional `service`） |
 | 个性化 | 无 | LearnerProfile（设计 §10，P1）：画像驱动名词解释补强，不降考点难度 |

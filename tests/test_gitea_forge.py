@@ -147,6 +147,42 @@ def test_create_pull_without_a_remote_branch_is_not_a_500() -> None:
 
 
 @respx.mock
+def test_reopening_the_same_pull_is_idempotent() -> None:
+    """重复开 PR 不是错误：Gitea 给 409/422，我们应找回已有 PR 并返回同一个 URL。
+
+    实测（Gitea 1.22）fork PR 的 ``head.label`` 就是分支名 ``dev``，**不是** ``owner:branch``；
+    按后者去比会找不到已有 PR，然后带着原始 409 抛出去、退化成 503
+    ——这个 bug 是 VM 上的端到端才暴露出来的，所以这里补一条回归。
+    """
+    respx.post(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
+        return_value=httpx.Response(409, json={"message": "pull request already exists"})
+    )
+    respx.get(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "html_url": "https://gitea.test/upstream/track/pulls/9",
+                    "head": {"label": DEV_BRANCH, "ref": DEV_BRANCH},
+                },
+                {"html_url": "https://gitea.test/other", "head": {"label": "feature"}},
+            ],
+        )
+    )
+
+    url = _api().create_pull(
+        upstream=_UPSTREAM,
+        fork_owner=_FORK_OWNER,
+        head_branch=DEV_BRANCH,
+        base_branch="main",
+        title="t",
+        body="b",
+    )
+
+    assert url == "https://gitea.test/upstream/track/pulls/9"
+
+
+@respx.mock
 def test_create_pull_auth_failure_is_unavailable() -> None:
     respx.post(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
         return_value=httpx.Response(401, json={"message": "token is invalid"})
