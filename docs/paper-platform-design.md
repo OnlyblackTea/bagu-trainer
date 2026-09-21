@@ -159,6 +159,7 @@ v0.4 的"prar-agent 模块级复用对照表"已随引擎退休。平台当前�
 | `platform_service/service.py` · `store.py` | 用例编排 + 存储（当前 `InMemoryStore`） | 存活；PostgreSQL 存储列入后续切片 |
 | `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git / fork / PR） | 存活（§7 / §8） |
 | `platform_api/grading_docker.py` | **真阅卷后端**：跑测试前按 `runtime.compose` 重置基础设施（`down -v` + `up -d --wait`），再在工作区跑 canonical 测试，把 surefire 的真实结果映成 `GradingReport`（真实 provenance、真 `git diff` 物证）；环境故障抛 `GradingUnavailableError` → 503 | **新建**（`--grading docker`；§7.1） |
+| `platform_api/gitea.py` · `forge_gitea.py` | **真 Forge 后端**：`GiteaApi`（最小 REST 封装：仓库在不在 / 确保 fork / 开 PR）+ `GiteaForgeClient`（provision = 真 fork + clone + 建 `dev` 分支 + 记基线；create_pr = 真开 PR 返回 `html_url`） | **新建**（`--forge gitea`；§8.1） |
 | `platform_service/ai_review.py` · `review_diff.py` | `ReviewEngine` Protocol + 评审前 diff 预处理（体积预检、整文件截断） | 存活（§11.2） |
 | `platform_service/stubs.py` | 三个"诚实占位"桩：Stub 阅卷 / Stub 评审 / Stub Forge（真本地 clone + 真本地 git diff，PR 为占位） | **新建**（真假逐项标注见 spec §C.9） |
 | `platform_api/` | 组合根 + 适配层：FastAPI 纯 REST 控制面（`app` / `deps` / `schemas` / `routes/*` / `serve`）与真实后端实现（`grading_docker`） | **新建**（§5） |
@@ -810,7 +811,7 @@ AcceptanceDecision = f(
 | 阶段 | 目标 | 交付 | 状态 |
 |------|------|------|------|
 | **A′ 引擎无关切片** | 单 Track + 单机跑通完整闭环，**不依赖任何引擎** | `platform_api/`（纯 REST 控制面）+ `frontend/`（学习者 SPA）+ 三个 Protocol 缝与"诚实占位"桩 + 内置 demo Track；`content/schema/` + `admission.validate_track` | ✅ **已完成**（后端全量测试 + ruff 绿；前端单测 + 真浏览器 e2e 绿） |
-| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）、✅ **判定面硬门**（§11.3）；⬜ 真实 Forge（Gitea fork/PR，**待环境**）、⬜ PostgreSQL `Store`、⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
+| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ **真 Forge**（`GiteaForgeClient` + `--forge gitea`：真 fork + 真 PR）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）、✅ **判定面硬门**（§11.3）；⬜ 真 Forge 的 VM 端到端实测、⬜ PostgreSQL `Store`、⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
 | **P2 教学增强** | 让"刷题"更像"带教" | 学习者画像（§10）、过程回放视图（§11.4）、（可选）AI 评审 / 口试挂件（§11.2 / §12.2） | ⬜ |
 | **P3 社区可贡献**（开源命脉） | 让别人也能出题 | `paper new-track` 脚手架生成器、`paper validate-track` CLI + CI 接线、贡献工作流与文档；第二个 Track（JVM / 并发）打样 | ⬜ |
 

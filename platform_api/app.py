@@ -17,7 +17,11 @@ from fastapi.responses import JSONResponse
 
 from platform_service.ai_review import ReviewDiffTooLargeError
 from platform_service.content_loader import load_stage_refs, load_ticket_dirs
-from platform_service.forge import WorkspaceRefMissingError
+from platform_service.forge import (
+    ForgeUnavailableError,
+    RemoteBranchMissingError,
+    WorkspaceRefMissingError,
+)
 from platform_service.lifecycle import IllegalTransitionError
 
 from .deps import (
@@ -30,7 +34,7 @@ from .deps import (
     review_engine,
 )
 from .grading_docker import GradingUnavailableError
-from .stubs_wiring import build_forge
+from .stubs_wiring import ForgeBackend, build_forge, forge_backend_name
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
@@ -79,6 +83,36 @@ def _register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
+    @app.exception_handler(ForgeUnavailableError)
+    async def _forge_down(request: Request, exc: ForgeUnavailableError) -> JSONResponse:
+        """Forge（Gitea）不可达 / 认证失败 / API 报错。
+
+        503 而不是 500：这是**基础设施**问题（跟"你的代码没过"毫无关系），短码 + 原因让
+        部署者一眼知道该去修 Gitea 还是修代码。
+        """
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "forge_unavailable", "reason": str(exc)[:300]},
+        )
+
+    @app.exception_handler(RemoteBranchMissingError)
+    async def _no_remote_branch(
+        request: Request, exc: RemoteBranchMissingError
+    ) -> JSONResponse:
+        """远端还没有学员的 dev 分支，所以开不了 PR。
+
+        409（不是 500）：**预期内**的普通状况——学员只是还没 push。带着分支名回去，
+        前端才能说清"你要先 push 哪个分支"。
+        """
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "remote_branch_missing",
+                "repo": exc.repo,
+                "branch": exc.branch,
+            },
+        )
+
     @app.exception_handler(GradingUnavailableError)
     async def _grading_down(request: Request, exc: GradingUnavailableError) -> JSONResponse:
         """阅卷**跑不起来**：缺 maven、工作区没了、ticket 没声明 test_group。
@@ -99,6 +133,7 @@ def create_app(
     forge_base: Path | None = None,
     grading: GradingBackend | None = None,
     grading_reset: bool | None = None,
+    forge: ForgeBackend | None = None,
 ) -> FastAPI:
     app = FastAPI(title="bagu-trainer A′", version=PLATFORM_VERSION)
     store, track, tickets, service = build_service(content_dir)
@@ -108,6 +143,7 @@ def create_app(
         source_repo=forge_source or content_dir,
         base_dir=base,
         stage_refs=load_stage_refs(content_dir),
+        backend=forge,
     )
     # 后端在**启动时**定下来（配错了立刻炸），而不是每个请求再解析一次环境变量。
     backend = resolve_grading_backend(grading)
@@ -120,12 +156,27 @@ def create_app(
     app.state.stage_tickets = load_ticket_dirs(content_dir)
     app.state.service = service
     app.state.forge = forge
+    app.state.forge_backend = forge_backend_name(forge)
     app.state.grading_runner = lambda scenario: grading_runner(
         scenario, backend=backend, reset_infra=reset_infra
     )
     app.state.grading_backend = backend
     app.state.grading_reset = reset_infra
     app.state.review_engine = review_engine
+
+    @app.get("/meta")
+    def meta() -> dict[str, object]:
+        """前端据此决定"哪些环节其实是占位"。
+
+        桩/真后端必须**逐项**如实上报（`grading_backend` / `forge_backend`）：一个笼统的"模拟"
+        徽标会把真阅卷也标成假的（§15 风险 5）。
+        """
+        return {
+            "platform_version": PLATFORM_VERSION,
+            "grading_backend": app.state.grading_backend,
+            "grading_reset": app.state.grading_reset,
+            "forge_backend": app.state.forge_backend,
+        }
 
     _register_exception_handlers(app)
 

@@ -45,7 +45,7 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 209 passed
+.venv/Scripts/python.exe -m pytest -q        # 226 passed
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
@@ -86,6 +86,28 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 > 绕过放回来**，且报告里会如实记 `infra.reset: false`。
 
 报告随时可从 `GET /submissions/{id}/report` 读——桩时代看不出来，接上真后端才发现这个端点是必需的。
+
+### 真 Forge（Gitea）
+
+默认 `--forge stub`：`provision` 就是本地 clone、`create_pr` 返回一个占位 URL。要真 fork、真开 PR：
+
+```bash
+export BAGU_GITEA_URL=http://<gitea-host>:3000
+export BAGU_GITEA_TOKEN=<access token>        # 需要 write:repository
+export BAGU_GITEA_UPSTREAM=<owner>/<repo>     # Track 内容在上游的仓
+export BAGU_GITEA_OWNER=<你的账号>             # fork 落到谁名下
+python -m platform_api.serve --content-dir ../seckill-lab --forge gitea
+```
+
+| | `stub` | `gitea` |
+|---|---|---|
+| `provision` | 本地 clone 源仓 | 先经 API 确保 **fork** 存在，再 clone 你的 fork，并建好 `dev` 分支 |
+| 基线 | 不记 | 把阶段分支的 SHA 记进 `bagu.baseRef`（阅卷物证据此比出**已提交**的改动） |
+| `create_pr` | 占位 URL | 真开 PR（`<owner>:dev` → 阶段分支），返回可点的 `html_url` |
+| 报错 | — | Gitea 连不上/认证失败 → **503 `forge_unavailable`**；你还没 push `dev` → **409 `remote_branch_missing`**（带上分支名） |
+
+> token 只用于那一次 clone，随后 remote 会被改回干净 URL——不会留在 `.git/config` 里。
+> 私有 fork 若要长期免密 push，仍需在**你的**机器上配好 git 凭据（平台不代跑 git 写操作）。
 
 ---
 

@@ -25,6 +25,7 @@ from platform_service.content_loader import ContentValidationError, load_track
 from .app import create_app
 from .demo_repo import build_demo_track_repo
 from .deps import GradingBackend
+from .stubs_wiring import ForgeBackend
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -56,6 +57,7 @@ def build_server(
     rebuild_demo: bool = False,
     grading: GradingBackend | None = None,
     grading_reset: bool | None = None,
+    forge: ForgeBackend | None = None,
 ) -> FastAPI:
     """按内容目录装配 app；``content_dir=None`` 时用 demo track-repo。
 
@@ -76,6 +78,7 @@ def build_server(
         forge_base=forge_base,
         grading=grading,
         grading_reset=grading_reset,
+        forge=forge,
     )
 
 
@@ -111,6 +114,13 @@ def main(argv: list[str] | None = None) -> None:
         help="真阅卷前是否重置 Track 的 compose 基础设施：auto=重置（默认，保证'骨架红'是真红）；"
         "never=不重置——会把'跑过一次参考解迁移就永久变绿'的绕开放回来",
     )
+    parser.add_argument(
+        "--forge",
+        choices=("stub", "gitea"),
+        default=None,
+        help="Forge 后端：stub=本地 clone + 占位 PR URL（默认；也可用 BAGU_FORGE）；"
+        "gitea=真 fork + 真 PR（需要 BAGU_GITEA_URL/TOKEN/UPSTREAM/OWNER）",
+    )
     args = parser.parse_args(argv)
 
     app = build_server(
@@ -119,11 +129,15 @@ def main(argv: list[str] | None = None) -> None:
         workspace_root=args.workspace_root,
         grading=args.grading,
         grading_reset=None if args.grading_reset is None else args.grading_reset == "auto",
+        forge=args.forge,
     )
     import uvicorn
 
     print(f"A′ 后端: http://{args.host}:{args.port}  (docs: /docs)")
-    print(f"阅卷后端: {app.state.grading_backend}  环境重置: {app.state.grading_reset}")
+    print(
+        f"阅卷后端: {app.state.grading_backend}  环境重置: {app.state.grading_reset}"
+        f"  Forge: {app.state.forge_backend}"
+    )
     if args.reload:
         uvicorn.run(
             "platform_api.serve:build_server",

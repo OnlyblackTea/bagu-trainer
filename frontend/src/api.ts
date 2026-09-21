@@ -34,6 +34,8 @@ export type ErrorCode =
   | 'workspace_ref_missing'
   | 'report_not_found'
   | 'grading_unavailable'
+  | 'forge_unavailable'
+  | 'remote_branch_missing'
 
 export class ApiError extends Error {
   readonly status: number
@@ -60,7 +62,7 @@ export class ApiError extends Error {
 /** 短码 → 人话。每条都要说清"发生了什么 + 我该做什么"。 */
 export function humanize(
   detail: string,
-  extra?: { ref?: string | null; available?: string[]; reason?: string },
+  extra?: { ref?: string | null; available?: string[]; reason?: string; branch?: string },
 ): string {
   switch (detail) {
     case 'not_found':
@@ -84,6 +86,12 @@ export function humanize(
       const why = extra?.reason ? `（${extra.reason}）` : ''
       return `阅卷跑不起来${why}。这是**平台/环境**问题，不是你代码的问题：本机需要 JDK17 + Maven，以及 Track 声明的基础设施。`
     }
+    case 'forge_unavailable': {
+      const why = extra?.reason ? `（${extra.reason}）` : ''
+      return `Forge（Gitea）连不上或拒绝了这个请求${why}。这是**基础设施**问题，不是你代码的问题：检查 Gitea 是否在跑、token 是否有效。`
+    }
+    case 'remote_branch_missing':
+      return `远端还没有 ${extra?.branch ?? 'dev'} 分支，所以开不了 PR。先在工作区里把改动 push 到该分支（平台不代你跑 git 写操作），再回来开单。`
     default:
       return `后端返回了未识别的错误：${detail}`
   }
@@ -94,6 +102,8 @@ interface ErrorBody {
   ref?: string | null
   available?: string[]
   reason?: string
+  repo?: string
+  branch?: string
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -126,6 +136,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         ref: body.ref,
         available: body.available,
         reason: body.reason,
+        branch: body.branch,
       }),
       ref: body.ref,
       available: body.available,

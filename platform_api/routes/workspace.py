@@ -52,4 +52,5 @@ def create_pr(instance_id: str, request: Request) -> dict[str, Any]:
     instance = _must_instance(request, instance_id)
     ws = request.app.state.forge.provision(instance)
     url = request.app.state.forge.create_pr(instance, base=ws.base_ref, head=ws.head_ref)
-    return {"pr_url": url, "simulated": True}
+    # simulated 如实来自 Forge 本身：真 Gitea 下这里就是 false，不能再写死 true。
+    return {"pr_url": url, "simulated": ws.simulated}

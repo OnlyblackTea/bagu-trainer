@@ -26,6 +26,77 @@ def test_create_app_wires_state(tmp_path: Path) -> None:
     assert app.state.service is not None and app.state.forge is not None
 
 
+def test_meta_reports_each_backend_honestly(tmp_path: Path) -> None:
+    """前端据此决定"哪些环节是占位"——必须**逐项**如实。
+
+    一个笼统的"模拟"徽标会把真阅卷（已经能真跑 maven）也标成假的（§15 风险 5）。
+    """
+    body = TestClient(_app(tmp_path)).get("/meta").json()
+
+    assert body["platform_version"]
+    assert body["grading_backend"] == "stub" and body["grading_reset"] is True
+    assert body["forge_backend"] == "stub"
+
+
+def test_unreachable_forge_is_503_not_a_bad_grade(tmp_path: Path, monkeypatch) -> None:
+    """Gitea 连不上 ⇒ 503 + forge_unavailable，而不是把基础设施问题说成"你的代码没过"。"""
+    monkeypatch.setenv("BAGU_GITEA_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("BAGU_GITEA_TOKEN", "tok")
+    monkeypatch.setenv("BAGU_GITEA_UPSTREAM", "upstream/track")
+    monkeypatch.setenv("BAGU_GITEA_OWNER", "deployer")
+    repo = build_demo_track_repo(tmp_path / "demo")
+    client = TestClient(
+        create_app(content_dir=repo, forge_base=tmp_path / "ws", forge="gitea")
+    )
+    client.post("/enrollments", json={"learner": "deployer"})
+    iid = next(
+        i["id"]
+        for i in client.get("/instances", params={"learner": "deployer"}).json()
+        if i["ticket_id"] == "db-stage-00"
+    )
+    client.post(f"/instances/{iid}/start")
+
+    r = client.post(f"/instances/{iid}/provision")
+
+    assert r.status_code == 503 and r.json()["detail"] == "forge_unavailable"
+    assert r.json()["reason"]
+
+
+def test_missing_remote_branch_is_409_with_the_branch_name(tmp_path: Path) -> None:
+    """学员还没 push ⇒ 409（预期内），并带上分支名——前端才能说清"先 push 哪个分支"。"""
+    from platform_service.forge import RemoteBranchMissingError
+
+    app = _app(tmp_path)
+    client = TestClient(app)
+    client.post("/enrollments", json={"learner": "deployer"})
+    iid = next(
+        i["id"]
+        for i in client.get("/instances", params={"learner": "deployer"}).json()
+        if i["ticket_id"] == "db-stage-00"
+    )
+    client.post(f"/instances/{iid}/start")
+
+    class _NoBranchForge:
+        """只在 create_pr 上不同：provision 仍走真桩（否则测不到路由 → 处理器的映射）。"""
+
+        def __init__(self, inner) -> None:
+            self._inner = inner
+
+        def provision(self, instance):
+            return self._inner.provision(instance)
+
+        def create_pr(self, instance, *, base, head):
+            raise RemoteBranchMissingError(repo="deployer/track", branch="dev")
+
+    app.state.forge = _NoBranchForge(app.state.forge)
+
+    r = client.post(f"/instances/{iid}/pr")
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == "remote_branch_missing"
+    assert r.json()["branch"] == "dev" and r.json()["repo"] == "deployer/track"
+
+
 def test_create_app_exposes_stage_dir_index(tmp_path: Path) -> None:
     """看板按目录名书写，故需要目录名 → ticket 的索引（目录名不是身份）。"""
     app = _app(tmp_path)

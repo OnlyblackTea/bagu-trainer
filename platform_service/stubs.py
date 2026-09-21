@@ -9,12 +9,16 @@
 from __future__ import annotations
 
 import itertools
-import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
-from .forge import Workspace, WorkspaceRefMissingError
+from .forge import (
+    Workspace,
+    must_have_ref,
+    prepare_workspace,
+    stage_branch_for,
+)
 from .models import (
     GradingReport,
     ReportCorrectness,
@@ -173,64 +177,20 @@ class StubForgeClient:
     def workspace_path(self, instance: TicketInstance) -> Path:
         return self._base_dir / instance.id
 
-    def _refs(self, instance: TicketInstance, repo: Path) -> tuple[str, str]:
-        stage = self._stage_refs.get(instance.ticket_id)
-        if stage is None:
-            raise WorkspaceRefMissingError(
-                repo=repo,
-                ref=None,
-                available=sorted(set(self._stage_refs.values())),
-                reason=(
-                    f"track declares no stage branch for ticket {instance.ticket_id!r}"
-                ),
-            )
-        return f"origin/{stage}", f"origin/{stage}{self.SOLUTION_REF_SUFFIX}"
-
-    @staticmethod
-    def _available_refs(repo: Path) -> list[str]:
-        out = subprocess.run(
-            ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        return sorted(out.stdout.split())
-
-    def _must_have_ref(self, repo: Path, ref: str) -> None:
-        probe = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", ref],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        if probe.returncode != 0:
-            raise WorkspaceRefMissingError(
-                repo=repo,
-                ref=ref,
-                available=self._available_refs(repo),
-                reason=(
-                    "track-repo lacks the stage branch this ticket is diffed against; "
-                    "§C.5 requires one branch per stage"
-                ),
-            )
-
     def provision(self, instance: TicketInstance) -> Workspace:
         dest = self.workspace_path(instance)
-        if not dest.exists():
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
-                ["git", "clone", "-q", str(self._source), str(dest)],
-                check=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-            )
-        base_ref, head_ref = self._refs(instance, dest)
-        self._must_have_ref(dest, base_ref)
-        self._must_have_ref(dest, head_ref)
+        stage = stage_branch_for(instance.ticket_id, self._stage_refs)
+        base_ref = f"origin/{stage}"
+        head_ref = f"{base_ref}{self.SOLUTION_REF_SUFFIX}"
+        # 桩**不**建 dev 分支：没有人真的写代码，diff 两端都是内容预置的 ref。
+        prepare_workspace(
+            dest=dest, clone_url=str(self._source), base_ref=base_ref, make_dev_branch=False
+        )
+        must_have_ref(
+            dest,
+            head_ref,
+            reason="content must ship a <stage>-sol ref for the stub diff to have two ends",
+        )
         return Workspace(path=dest, branch="dev", base_ref=base_ref, head_ref=head_ref)
 
     def create_pr(self, instance: TicketInstance, *, base: str, head: str) -> str:
