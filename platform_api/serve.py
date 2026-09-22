@@ -24,7 +24,7 @@ from platform_service.content_loader import ContentValidationError, load_track
 
 from .app import create_app
 from .demo_repo import build_demo_track_repo
-from .deps import GradingBackend
+from .deps import GradingBackend, StoreBackend
 from .stubs_wiring import ForgeBackend
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +58,8 @@ def build_server(
     grading: GradingBackend | None = None,
     grading_reset: bool | None = None,
     forge: ForgeBackend | None = None,
+    store: StoreBackend | None = None,
+    database_url: str | None = None,
 ) -> FastAPI:
     """按内容目录装配 app；``content_dir=None`` 时用 demo track-repo。
 
@@ -79,6 +81,8 @@ def build_server(
         grading=grading,
         grading_reset=grading_reset,
         forge=forge,
+        store_backend=store,
+        database_url=database_url,
     )
 
 
@@ -121,6 +125,19 @@ def main(argv: list[str] | None = None) -> None:
         help="Forge 后端：stub=本地 clone + 占位 PR URL（默认；也可用 BAGU_FORGE）；"
         "gitea=真 fork + 真 PR（需要 BAGU_GITEA_URL/TOKEN/UPSTREAM/OWNER）",
     )
+    parser.add_argument(
+        "--store",
+        choices=("memory", "postgres"),
+        default=None,
+        help="持久化后端：memory=进程内字典，重启即失忆（默认；也可用 BAGU_STORE）；"
+        "postgres=进度落库，重启后还在（需 --database-url 或 BAGU_DATABASE_URL + psycopg）",
+    )
+    parser.add_argument(
+        "--database-url",
+        default=None,
+        help="--store postgres 用的 libpq 连接串，例如 "
+        "postgresql://bagu:bagu@127.0.0.1:5432/bagu（也可用 BAGU_DATABASE_URL）",
+    )
     args = parser.parse_args(argv)
 
     app = build_server(
@@ -130,13 +147,15 @@ def main(argv: list[str] | None = None) -> None:
         grading=args.grading,
         grading_reset=None if args.grading_reset is None else args.grading_reset == "auto",
         forge=args.forge,
+        store=args.store,
+        database_url=args.database_url,
     )
     import uvicorn
 
     print(f"A′ 后端: http://{args.host}:{args.port}  (docs: /docs)")
     print(
         f"阅卷后端: {app.state.grading_backend}  环境重置: {app.state.grading_reset}"
-        f"  Forge: {app.state.forge_backend}"
+        f"  Forge: {app.state.forge_backend}  存储: {app.state.store_backend}"
     )
     if args.reload:
         uvicorn.run(

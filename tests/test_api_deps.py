@@ -4,10 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from platform_api.demo_repo import build_demo_track_repo
-from platform_api.deps import PLATFORM_VERSION, build_service, grading_runner, review_engine
+from platform_api.deps import (
+    PLATFORM_VERSION,
+    build_service,
+    build_store,
+    grading_runner,
+    resolve_store_backend,
+    review_engine,
+    store_backend_name,
+)
 from platform_service.models import InstanceState
 from platform_service.service import PlatformService
+from platform_service.store import InMemoryStore, Store
 from platform_service.stubs import StubGradingRunner, StubReviewEngine
 
 
@@ -36,3 +47,39 @@ def test_build_service_does_not_require_a_ticket_per_manifest_stage(tmp_path: Pa
 def test_factories_pick_scenario() -> None:
     assert isinstance(grading_runner("pass"), StubGradingRunner)
     assert isinstance(review_engine("approve"), StubReviewEngine)
+
+
+def test_build_service_accepts_an_injected_store(tmp_path: Path) -> None:
+    """缝的用处：换 store 不需要 PlatformService 或路由知情。"""
+    repo = build_demo_track_repo(tmp_path / "demo")
+    mine = InMemoryStore()
+    store, _, _, service = build_service(repo, mine)
+    assert store is mine
+    service.enroll("deployer")
+    assert len(mine.list_instances(learner="deployer")) == 3
+
+
+def test_memory_store_is_the_zero_config_default() -> None:
+    assert resolve_store_backend() == "memory"
+    assert isinstance(build_store(), InMemoryStore)
+    assert store_backend_name(build_store()) == "memory"
+
+
+def test_store_backend_rejects_typos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """配错的存储后端必须现在炸，而不是等学员交卷时才发现进度没地方存。"""
+    monkeypatch.setenv("BAGU_STORE", "postgress")
+    with pytest.raises(ValueError, match="BAGU_STORE"):
+        resolve_store_backend()
+    assert resolve_store_backend("memory") is not None  # 显式参数压过坏环境变量
+
+
+def test_postgres_backend_without_dsn_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BAGU_DATABASE_URL", raising=False)
+    from platform_api.store_postgres import StoreUnavailableError
+
+    with pytest.raises(StoreUnavailableError):
+        build_store("postgres")
+
+
+def test_build_store_satisfies_the_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert isinstance(build_store(), Store)

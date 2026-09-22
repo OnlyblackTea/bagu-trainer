@@ -4,13 +4,15 @@
 翻成 ``{"detail": "<短码>"}`` 的处理器，并挂三组路由。纯 REST，无 SSE/WS（无 AI 流可推）。
 
 阅卷后端由 ``grading`` 参数（或 ``BAGU_GRADING``）选定：``stub`` 离线可跑，``docker`` 在本机
-真跑 Track 的 canonical 测试（见 :mod:`platform_api.deps`）。
+真跑 Track 的 canonical 测试（见 :mod:`platform_api.deps`）。持久化后端由 ``store`` /
+``store_backend``（或 ``BAGU_STORE``）选定：``memory`` 重启即失忆，``postgres`` 落库。
 """
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -28,11 +30,14 @@ from platform_service.lifecycle import IllegalTransitionError
 from .deps import (
     PLATFORM_VERSION,
     GradingBackend,
+    StoreBackend,
     build_service,
+    build_store,
     grading_runner,
     resolve_grading_backend,
     resolve_grading_reset,
     review_engine,
+    store_backend_name,
 )
 from .grading_docker import GradingUnavailableError
 from .stubs_wiring import ForgeBackend, build_forge, forge_backend_name
@@ -150,9 +155,14 @@ def create_app(
     grading: GradingBackend | None = None,
     grading_reset: bool | None = None,
     forge: ForgeBackend | None = None,
+    store: Any = None,
+    store_backend: StoreBackend | None = None,
+    database_url: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="bagu-trainer A′", version=PLATFORM_VERSION)
-    store, track, tickets, service = build_service(content_dir)
+    # store 可以先建好传进来（测试常用），也可以只给 backend/dsn 让这里建。
+    store = store if store is not None else build_store(store_backend, dsn=database_url)
+    store, track, tickets, service = build_service(content_dir, store)
     base = forge_base or (content_dir.parent / "_workspaces")
     # ref 布局来自内容：stage 分支按阶段命名，不拿 ticket id 当分支名（§C.5）。
     forge = build_forge(
@@ -166,6 +176,7 @@ def create_app(
     reset_infra = resolve_grading_reset(grading_reset)
 
     app.state.store = store
+    app.state.store_backend = store_backend_name(store)
     app.state.track = track
     app.state.tickets = tickets
     # 看板按 stage 目录名书写而 ticket 按 identity.id 标识，故发卷路由需要这份索引。
@@ -185,13 +196,15 @@ def create_app(
         """前端据此决定"哪些环节其实是占位"。
 
         桩/真后端必须**逐项**如实上报（`grading_backend` / `forge_backend`）：一个笼统的"模拟"
-        徽标会把真阅卷也标成假的（§15 风险 5）。
+        徽标会把真阅卷也标成假的（§15 风险 5）。`store_backend` 同理——学员有权知道攒的进度
+        是"重启就没"（memory）还是落了库（postgres）。
         """
         return {
             "platform_version": PLATFORM_VERSION,
             "grading_backend": app.state.grading_backend,
             "grading_reset": app.state.grading_reset,
             "forge_backend": app.state.forge_backend,
+            "store_backend": app.state.store_backend,
         }
 
     _register_exception_handlers(app)

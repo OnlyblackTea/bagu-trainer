@@ -12,6 +12,7 @@ The samples carry NO ``parametric`` / ``fixture_seed`` (removed in design v0.4).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -286,4 +287,36 @@ def client(demo_app: Any) -> Any:
     from fastapi.testclient import TestClient
 
     return TestClient(demo_app)
+
+
+# --- 持久化（PostgreSQL）-------------------------------------------------------
+# 需要一台真库。没有 DSN 就 **skip**，不静默通过：内存那一半证明不了任何 SQL。
+
+POSTGRES_DSN_ENV = "BAGU_TEST_POSTGRES_DSN"
+
+
+@pytest.fixture
+def postgres_dsn() -> str:
+    """libpq 连接串；用 ``BAGU_TEST_POSTGRES_DSN`` 指定（建议指向一个可随便清的库）。"""
+    dsn = os.environ.get(POSTGRES_DSN_ENV, "").strip()
+    if not dsn:
+        pytest.skip(f"{POSTGRES_DSN_ENV} 未设置：跳过 PostgreSQL 相关验证")
+    return dsn
+
+
+@pytest.fixture
+def clean_postgres(postgres_dsn: str) -> str:
+    """建表 → 清空 → 交出 DSN。**它会 TRUNCATE** —— 别指向真实进度库。
+
+    建表必须在这里发生：清空一个还不存在的表会以 ``UndefinedTable`` 炸掉每一条测试，
+    而不是给出"库是空的"。
+    """
+    import psycopg
+
+    from platform_api.store_postgres import PostgresStore
+
+    PostgresStore(postgres_dsn)  # 幂等建表（`_ensure_schema`）
+    with psycopg.connect(postgres_dsn) as conn:
+        conn.execute("TRUNCATE bagu_documents, bagu_id_seq")
+    return postgres_dsn
 

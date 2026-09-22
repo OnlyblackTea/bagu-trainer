@@ -45,7 +45,7 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 226 passed
+.venv/Scripts/python.exe -m pytest -q        # 234 passed, 12 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
@@ -86,6 +86,39 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 > 绕过放回来**，且报告里会如实记 `infra.reset: false`。
 
 报告随时可从 `GET /submissions/{id}/report` 读——桩时代看不出来，接上真后端才发现这个端点是必需的。
+
+### 进度存在哪（持久化）
+
+默认 `--store memory`：进度在进程内存里，**重启即失忆**（enrollment / 实例状态 / 提交 / 报告 /
+判定全没）。单机自托管想让它活过重启，换 PostgreSQL：
+
+```bash
+python -m platform_api.serve --content-dir ../seckill-lab \
+    --store postgres --database-url 'postgresql://bagu:pw@127.0.0.1:5432/bagu'
+# 等价：BAGU_STORE=postgres BAGU_DATABASE_URL=... python -m platform_api.serve ...
+```
+
+| | `memory` | `postgres` |
+|---|---|---|
+| 重启后 | 一切归零 | 实例状态 / 提交 / 报告 / 判定 / 已解锁的后继都还在 |
+| 取号 | 进程内计数器 | `bagu_id_seq`，落库（所以重启后接着发新号，**不会覆盖**上一轮的实例） |
+| 表 | — | `bagu_documents`（`kind, id` 主键 + `payload jsonb`，按 learner/ticket/instance 建索引）+ `bagu_id_seq` |
+| 依赖 | — | `pip install 'bagu-trainer[postgres]'`（psycopg3） |
+| `GET /meta` | `"store_backend": "memory"` | `"store_backend": "postgres"` |
+
+`/meta` 会**如实**报当前用的是哪个——学员有权知道攒的进度是"重启就没"还是落了库。
+
+PostgreSQL 腿的一致性测试与内存腿**同一套**（`tests/test_store.py` 参数化），另有 `tests/test_persistence.py`
+用两个独立的 app 实例模拟重启。本地没库时这些用例 **skip**，不静默通过（内存腿证明不了 SQL）；要真跑：
+
+```bash
+docker run -d --name bagu-pg -e POSTGRES_PASSWORD=bagu -e POSTGRES_DB=bagu_test -p 5432:5432 pgvector/pgvector:pg16
+BAGU_TEST_POSTGRES_DSN='postgresql://postgres:bagu@127.0.0.1:5432/bagu_test' \
+  .venv/Scripts/python.exe -m pytest -q tests/test_store.py tests/test_persistence.py
+```
+
+> [!WARNING]
+> 那个 DSN 的库会被 **`TRUNCATE`**。指一个专门用来跑测试的库，别指向真实进度库。
 
 ### 真 Forge（Gitea）
 

@@ -15,8 +15,6 @@ for this slice. No engine, no HTTP, no DB (D4).
 
 from __future__ import annotations
 
-import itertools
-
 from .acceptance import decide_acceptance, find_tampering
 from .errors import GateNotReadyError, NotFoundError
 from .lifecycle import record_submission, transition
@@ -85,12 +83,17 @@ class PlatformService:
         self._engine_version = engine_version
         _assert_identity_keys(tickets)
         self._prereq_graph = build_prereq_graph(tickets.values())
-        self._ids = itertools.count(1)
 
     # --- identity ------------------------------------------------------------
 
     def _next_id(self, prefix: str) -> str:
-        return f"{prefix}-{next(self._ids)}"
+        """Mint through the store, never from a process-local counter.
+
+        A counter local to this object restarts at 1 with the process, and since
+        ``save_*`` upserts by identity the first post-restart save would overwrite an
+        existing row instead of adding one. See :meth:`Store.next_id`.
+        """
+        return self._store.next_id(prefix)
 
     def _must_get_instance(self, instance_id: str) -> TicketInstance:
         instance = self._store.get_instance(instance_id)

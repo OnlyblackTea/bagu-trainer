@@ -31,7 +31,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # Platform control plane (§2.1) — FastAPI REST control plane.
-service = ["fastapi>=0.111", "uvicorn>=0.30", "sqlalchemy>=2.0", "asyncpg>=0.29"]
+service = ["fastapi>=0.111", "uvicorn>=0.30"]
+# Durable Store (§9.1) — psycopg3 is the SYNC driver on purpose: PlatformService and every
+# store method are synchronous, so asyncpg would need an asyncio bridge in the middle.
+# (The previous entry here listed sqlalchemy+asyncpg, neither of which was imported anywhere.)
+postgres = ["psycopg[binary]>=3.1"]
 # Learner-device CLI (§7.2). The form is settled as REST + SPA, so this extra only
 # exists for the optional future CLI.
 cli = ["typer>=0.12"]

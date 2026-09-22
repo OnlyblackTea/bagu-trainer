@@ -1,9 +1,9 @@
 """Persistence seam for the platform control plane (design v0.5 §9.1).
 
 :class:`Store` fixes the *shape* of persistence; :class:`InMemoryStore` is the
-dict-backed implementation used by tests and single-process self-study. A
-PostgreSQL/SQLAlchemy backend can land later (with the ``[service]`` extra) without
-changing this Protocol — the rest of the platform depends only on the seam.
+dict-backed implementation used by tests. The durable PostgreSQL backend lives in
+``platform_api/store_postgres.py`` — the adapter layer, because the domain layer must
+not import a driver (D4) — and satisfies this Protocol unchanged.
 
 Pure in-memory logic: no engine, no HTTP, no real DB (D4).
 """
@@ -31,6 +31,18 @@ class Store(Protocol):
     Reports, reviews and decisions are keyed by ``submission_id`` — there is at
     most one of each per submission, because a retry is a NEW Submission (§9.2).
     """
+
+    def next_id(self, prefix: str) -> str:
+        """Mint a fresh ``"<prefix>-<n>"`` that no earlier call has handed out.
+
+        Identity minting lives on this seam rather than in a process-local counter
+        because ``save_*`` **upserts by identity**: once the store outlives the
+        process, a counter that restarts at 1 mints ids that already exist, and the
+        next save silently overwrites a previous instance/enrollment/submission
+        instead of creating one. That is the §9.2 "a retry is a NEW Submission"
+        invariant quietly breaking. A durable store must therefore own the sequence.
+        """
+        ...
 
     def save_user(self, user: User) -> None:
         ...
@@ -98,6 +110,12 @@ class InMemoryStore(Store):
         self._reports: dict[str, GradingReport] = {}
         self._reviews: dict[str, Review] = {}
         self._decisions: dict[str, AcceptanceDecision] = {}
+        self._counters: dict[str, int] = {}
+
+    def next_id(self, prefix: str) -> str:
+        value = self._counters.get(prefix, 0) + 1
+        self._counters[prefix] = value
+        return f"{prefix}-{value}"
 
     def save_user(self, user: User) -> None:
         self._users[user.id] = user

@@ -13,6 +13,15 @@
   Track 的 canonical 测试。需要 JDK17 + Maven，以及 Track 声明的 compose 基础设施（§7.1）——
   也就是 D3 说的"学员自己的机器"。
 
+**持久化后端的选择**（``BAGU_STORE`` 环境变量或 ``serve --store``）：
+
+* ``memory``（默认）—— :class:`~platform_service.store.InMemoryStore`：进程内字典，
+  **重启即失忆**。够用于跑测试和"我就想看看界面"；
+* ``postgres`` —— :class:`~platform_api.store_postgres.PostgresStore`：进度落库，重启后
+  enrollment/instance/submission/report/decision 都还在。DSN 取自 ``--database-url`` 或
+  ``BAGU_DATABASE_URL``（psycopg3 的 libpq 连接串，例如
+  ``postgresql://user:pw@127.0.0.1:5432/bagu``）。
+
 **真阅卷前的环境重置**（``BAGU_GRADING_RESET`` 环境变量或 ``serve --grading-reset``）：
 
 * ``auto``（默认）—— 每次阅卷前按 ``runtime.compose`` 做 ``down -v`` + ``up -d --wait``。
@@ -41,14 +50,48 @@ PLATFORM_VERSION = "a-prime-0.1.0"
 GradingScenario = Literal["pass", "fail"]
 ReviewScenario = Literal["approve", "request_changes"]
 GradingBackend = Literal["stub", "docker"]
+StoreBackend = Literal["memory", "postgres"]
 
 #: 选阅卷后端的开关。默认 ``stub``：装好 JDK17+Maven 之前，平台照样能整条跑通。
 GRADING_BACKEND_ENV = "BAGU_GRADING"
 #: 真阅卷前是否重置 Track 基础设施：``auto``（默认，重置）/ ``never``（不重置，会放大"假绿"）。
 GRADING_RESET_ENV = "BAGU_GRADING_RESET"
+#: 选持久化后端的开关。默认 ``memory``：不再默认失忆之后，这个默认值也该显式改过来，
+#: 但先保持"零配置能跑"，由 ``serve`` 在启动横幅里如实打印当前用的是哪个。
+STORE_BACKEND_ENV = "BAGU_STORE"
+#: ``--store postgres`` 时用的 libpq 连接串。
+DATABASE_URL_ENV = "BAGU_DATABASE_URL"
 
 _TRUTHY = frozenset({"auto", "1", "true", "yes"})
 _FALSY = frozenset({"never", "0", "false", "no"})
+
+
+def resolve_store_backend(explicit: StoreBackend | None = None) -> StoreBackend:
+    """显式参数 > 环境变量 > ``memory``。取值非法时**立刻**炸。"""
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get(STORE_BACKEND_ENV, "memory").strip().lower()
+    if raw not in ("memory", "postgres"):
+        raise ValueError(f"{STORE_BACKEND_ENV} must be 'memory' or 'postgres', got {raw!r}")
+    return raw  # type: ignore[return-value]
+
+
+def build_store(backend: StoreBackend | None = None, *, dsn: str | None = None) -> Store:
+    """按 ``backend``（缺省读环境变量）产出一个 :class:`Store`。
+
+    ``postgres_store`` 是**惰性导入**：``memory`` 路径不该因为"没装 psycopg"而打不开，
+    反过来说选了 ``postgres`` 又没装驱动，应当在这里立刻炸（配错要现在就知道）。
+    """
+    if resolve_store_backend(backend) == "postgres":
+        from .store_postgres import PostgresStore
+
+        return PostgresStore(dsn or os.environ.get(DATABASE_URL_ENV, ""))
+    return InMemoryStore()
+
+
+def store_backend_name(store: Store) -> StoreBackend:
+    """如实上报当前用的是哪个 store（``/meta`` 用；前端据此说清"重启会不会丢"）。"""
+    return "postgres" if type(store).__name__ == "PostgresStore" else "memory"
 
 
 def resolve_grading_backend(explicit: GradingBackend | None = None) -> GradingBackend:
@@ -77,8 +120,12 @@ def resolve_grading_reset(explicit: bool | None = None) -> bool:
 
 def build_service(
     content_dir: Path,
+    store: Store | None = None,
 ) -> tuple[Store, TrackManifest, dict[str, TicketSpec], PlatformService]:
-    """加载 ``content_dir`` 的 track + 全部 ticket，装配一个 InMemoryStore 上的服务。
+    """加载 ``content_dir`` 的 track + 全部 ticket，装配服务。
+
+    ``store`` 缺省是 :class:`InMemoryStore`；传一个（例如 :class:`PostgresStore`）就用它——
+    ``PlatformService`` 只认缝，换后端不改它一行。
 
     Ticket 发现走 :func:`~platform_service.content_loader.load_tickets`（glob
     ``stages/*/ticket.yaml``、按 ``identity.id`` 为键），**不按 ``manifest.stages``
@@ -87,7 +134,7 @@ def build_service(
     """
     track = load_track(content_dir / "track.yaml")
     tickets = load_tickets(content_dir)
-    store = InMemoryStore()
+    store = store if store is not None else InMemoryStore()
     service = PlatformService(store, track, tickets, engine_version=PLATFORM_VERSION)
     return store, track, tickets, service
 
