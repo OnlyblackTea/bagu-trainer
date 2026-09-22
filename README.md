@@ -19,9 +19,10 @@
 ## 本地跑起来
 
 > **部署到别的机器上？先读 [`docs/deployment.md`](docs/deployment.md)。**
-> 它会先讲清两件事实：平台**没有认证**（怎么对外暴露是部署者的事），以及**工作区 / 阅卷工具链 /
-> 数据库都在跑后端的那台机器上**——所以"我想在自己电脑上用 IDE 写代码"的正解是**把后端跑在自己
-> 电脑上**，而不是想办法让远端后端去读你本地的目录。
+> 它会先讲清两件事实：平台**没有认证**（怎么对外暴露是部署者的事），以及**只有阅卷工具链与数据库
+> 必须在后端那台机器上**——工作区（你写代码的那份 clone）可以在任何地方，只要你能把 `dev` push 到
+> 你的 fork、后端能从那个 Forge 读回来（提交时平台会自动把它的 checkout 快进到你的 push）。
+> 懒人版：`bash scripts/quickstart.sh --content-dir ../seckill-lab`。
 
 A′ 引擎无关切片已把「发卷 → 工作区 → 提交 → 本地阅卷 → 评审 → 确定性决策（解锁 / 返工）」做成
 **纯 REST 后端 + 学习者 SPA**，全程**不依赖任何 AI / 引擎**。开两个终端：
@@ -65,12 +66,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 298 passed, 14 skipped
+.venv/Scripts/python.exe -m pytest -q        # 315 passed, 14 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，103 passed
+npm test                                      # vitest + RTL，112 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 
@@ -261,7 +262,21 @@ python -m platform_api.serve --content-dir ../seckill-lab --forge gitea
 > `<learner>@localhost`——否则第一次 `git commit` 必然失败在 "Please tell me who you are"，
 > 而那跟这道题毫无关系。
 
-> 眼下这个 token 是**用户级**的（Gitea 的 `write:repository` 起）。收窄成 repo 级/更小 scope 的
+**代码可以写在任何机器上**（只要 push 到你的 fork、后端读得到）。后端手里那份 checkout 与远端的
+对账是显式的：
+
+| | 什么时候 | 做什么 |
+|---|---|---|
+| 提交前（自动） | `POST …/submit` | `fetch` 你的 `dev`，**在无损时**快进后端那份工作区，然后才阅卷 |
+| 「从远端同步」 | `POST …/sync` | 同一个动作的手动入口（想先自己看一眼时用） |
+| 看 diff 时 | `GET …/diff` | **只读**对账：报出"远端比你新 N 个提交"，绝不动分支 |
+
+"无损"= 工作树干净 + 本地不领先远端 + 当前就在 `dev` 上；任何一条不成立，平台**一个字都不动**，
+而是如实报出 `dirty` / `local_ahead` / `remote_ahead`（平台不替学员合并、不 stash、不 reset）。
+哪一版被阅了写进报告的 `provenance.host_env.revision`——"跑了但跑的是旧代码"是最难自查的一种结果，
+所以它必须可审计。
+
+> 眼下手里的 token 是**用户级**的（Gitea 的 `write:repository` 起）。收窄成 repo 级/更小 scope 的
 > 令牌是后续该做的事：那个文件里躺着的东西能推你名下所有仓库。
 
 ---
@@ -299,18 +314,22 @@ bagu-trainer/
 │   ├── acceptance.py       确定性验收门
 │   ├── admission.py        准入门 validate_track（schema / D1 / digest / trust_level）
 │   ├── content_loader.py   读 track.yaml 与 stages/*/ticket.yaml
-│   ├── service.py          用例编排      store.py  存储（当前 InMemory）
+│   ├── service.py          用例编排      store.py  存储缝（sqlite / postgres / memory）
 │   ├── grading.py          GradingRunner 缝     forge.py   ForgeClient 缝
 │   ├── ai_review.py        ReviewEngine 缝      review_diff.py  diff 预处理
 │   └── stubs.py            三个"诚实占位"桩
 ├── platform_api/           ★ 组合根：FastAPI 纯 REST 控制面
 │   ├── app.py  deps.py  schemas.py  serve.py
+│   ├── store_sqlite.py  store_postgres.py     持久化后端（同一套测试参数化跑）
+│   ├── jobs.py             后台阅卷（单线程 + 落库的运行记录）  grading_docker.py  真阅卷
+│   ├── forge_gitea.py  gitea.py               真 Forge（fork / push 凭据 / PR）
 │   ├── demo_repo.py        内置 demo Track（会建一个真本地 git 仓库）
-│   └── routes/             track / progress / workspace
+│   └── routes/             track / progress / workspace（含 /sync）
 ├── frontend/               ★ 学习者 SPA（React + Vite + TS，从零写，Apache-2.0）
 ├── content/schema/         track.schema.json + ticket.schema.json —— 贡献契约（设计 §4.2/§4.3）
 ├── paper_cli/              脚手架 docstring（CLI 已降级为可选未来项，见设计 §7.2）
-├── docs/                   paper-platform-design.md（权威设计稿，v0.5）+ superpowers/（spec 与计划）
+├── scripts/quickstart.sh   一条命令起拓扑 A（建 venv → 装依赖 → 构建前端 → 起后端）
+├── docs/                   deployment.md（部署指引）+ paper-platform-design.md + superpowers/
 └── tests/                  pytest（后端全量）
 ```
 
@@ -329,9 +348,9 @@ bagu-trainer/
 | 学习者 SPA（`frontend/`） | ✅ 已实现（单测 + 真浏览器 e2e 绿） |
 | 内置 demo Track（可独立跑通全流程） | ✅ 已实现 |
 | **真实阅卷**（JDK17 + Maven 真跑 canonical 测试） | ✅ 已实现，用 `--grading docker` 开（§7.1）。**跑测试前会先重置 Track 的 compose 基础设施**（默认；见下方警告）。开发机若没有 JDK17/Maven，请在装了工具链的机器上跑 |
-| **真实 Forge**（Gitea fork / PR） | ⬜ 桩（真本地 clone + 真本地 git diff，PR 为占位） |
+| **真实 Forge**（Gitea fork / push / PR / diff） | ✅ 已实现，`--forge gitea` 开；凭据写进仓库外的 0600 文件，平台仍不代跑 git 写操作。已在真 Gitea 上端到端验过（真 fork、真 push、真 PR、工作区 diff） |
 | **AI 评审 / 口试** | ⬜ 桩；设计为**可选挂件**（`ReviewEngine` 缝），见设计 §11.2 / §12.2 |
-| PostgreSQL 存储 / 学习者画像 / 脚手架生成器 | ⬜ 后续切片，见设计 §14 路线图 |
+| 学习者画像 / 脚手架生成器 | ⬜ 后续切片，见设计 §14 路线图 |
 
 > **"模拟"徽标**：桩实现下，UI 会明确标注哪些环节是占位（`SimulatedBadge`）。
 > 注意 `Workspace.simulated` 说的是 **Forge**（clone/PR 仍是占位），而阅卷报告自带自己的

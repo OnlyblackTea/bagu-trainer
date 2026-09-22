@@ -1,0 +1,18 @@
+# 一律 LF，检出也是 LF。
+#
+# 为什么写死：这个仓的脚本是给 Linux 用的（`scripts/quickstart.sh`、部署与 e2e 脚本），而 Windows 上
+# `core.autocrlf=true` 会让**检出与 `git archive` 都变成 CRLF**。那时 bash 看到的是
+# `set -euo pipefail\r`，报的是「set: pipefail: invalid option name」——一句离真正原因很远的错
+# （真踩过：同一批文件里 `import urllib.error` 被一个 CRLF 清理命令啃成了 `import urllib.erro`）。
+* text=auto eol=lf
+
+# 二进制别当文本处理（少了这几行，将来加了图片/字体就会被"规范化"坏掉）。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary

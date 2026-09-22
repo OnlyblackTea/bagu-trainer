@@ -9,17 +9,19 @@
 就是唯一用户（`learner=deployer`）。**它默认没有任何认证**——谁能访问到端口，谁就能做题、
 看你的进度。所以"怎么对外暴露"是这个文档里最需要认真读的一节。
 
-**事实二：工作区、阅卷工具链、数据库，都必须在**同一台机器**上（也就是跑 `platform_api.serve`
-的那台）。** 这三样都有"路径"或"本机进程"的含义：
+**事实二：只有**阅卷工具链**和**数据库**必须在后端那台机器上；工作区**不必**。** 代码写在哪儿都行
+——家里笔记本、公司台式、后端那台服务器——**只要你的 `dev` 分支能 push 到你 fork 的 Gitea，而后端
+能从那个 Gitea 读回来**。这条链路成立，工作区在哪就不重要（§3 讲了机制）。
 
 | 东西 | 在哪 | 为什么 |
 |---|---|---|
-| **工作区**（你写代码的那份 clone） | 后端那台机器上 | `provision` 是后端在**本机**跑 `git clone`；diff 与阅卷也都读那条路径 |
+| **工作区**（你写代码的那份 clone） | **任何地方**。后端手里那份只是"要阅卷的那份 checkout" | diff 与阅卷都读后端手里那条路径，但它**能**是平台 clone 的、你在后端机器上登记的、或"你在别处 push 之后由后端 fetch 下来的"（提交时自动做） |
 | **阅卷工具链**（JDK / Maven / Docker） | 后端那台机器上 | `--grading docker` 在后端进程里跑 `mvn test`，并 `docker compose` 起 Track 的基础设施（D3：阅卷在"学员自己的机器"上——自托管时那台就是后端这台） |
 | **进度数据库**（SQLite 文件 / PostgreSQL） | 后端那台机器（或网络可达） | 默认就是后端工作目录下的一个文件 |
 
-于是"我想在自己电脑上用 IDE 写代码"这个需求，只有一个正确答案：**把后端跑在你自己电脑上**。
-"能否让平台去读我另一台机器上的目录"——不能，它不认得别的机器的文件系统（见 §3 的三种拓扑）。
+所以"我想在自己电脑上用 IDE 写代码、后端跑在服务器上"是**可以**的（拓扑 C），前提只是后端能读到
+你的 Gitea。做不到的只有一件事：**让后端去读你另一台机器上的目录**（它不认得别人的文件系统）——
+但那条路你根本不需要，push 就是那条路。
 
 ## 1. 三种拓扑，选一个
 
@@ -27,7 +29,7 @@
 
 ```
 你的机器
-├── platform_api.serve        ← 后端（工作区、阅卷、数据库都在这儿）
+├── platform_api.serve        ← 后端（要阅的那份 checkout、阅卷工具链、数据库都在这儿）
 ├── 浏览器 → 127.0.0.1:5173   ← 前端
 ├── JDK17 + Maven + Docker    ← 阅卷要用的工具链
 └── bagu.sqlite3              ← 做题进度
@@ -41,6 +43,11 @@ python -m platform_api.serve --content-dir ../seckill-lab
 cd frontend && npm install && npm run build
 python -m http.server 5173 --directory dist     # 或 nginx / caddy
 ```
+
+懒得抄这四行就 `bash scripts/quickstart.sh --content-dir ../seckill-lab`（建 venv、装依赖、构建前端、
+起后端，最后打印要打开的地址）。它需要 Python 3.11+；若发行版把 venv 拆成了单独的包，装一下
+（Debian/Ubuntu：`apt install python3-venv`），或装 [`uv`](https://docs.astral.sh/uv/)——脚本检测到
+`uv` 会自动用它建 venv（那条路不需要系统的 ensurepip）。
 
 **好处**：工作区就在你本机，IDE 直接打开；没有网络暴露面；阅卷最快。
 **代价**：这台机器要有 JDK17 + Maven（要真阅卷的话还要 Docker）。
@@ -63,13 +70,15 @@ python -m http.server 5173 --directory dist     # 或 nginx / caddy
 └── 浏览器 → http://10.x.x.x:8000
 ```
 
-**代价（必须先接受）**：工作区在**服务器**上，你在自己电脑上写的代码，后端看不见。两条可行路径：
+**代价（必须先接受）**：工作区**在后端手里**（后端要能读到你要阅的那份代码），而你在自己电脑上写的
+代码后端**看不见**。所以两条可行路径：
 
-1. **SSH 进服务器写**（`ssh` + 编辑器 / VS Code Remote-SSH），或
-2. **在自己机器上 clone，把路径登记给后端**——但只有在后端**能看见那个路径**时才成立，
-   也就是说这条只有在"后端与你在同一台机器"时才有意义（拓扑 A）。
+1. **在自己机器上写，push 到你的 fork**（推荐）：后端只要网络能到 Gitea 就行。你 push 完点提交，
+   后端**会自动**把它的 checkout 快进到你的 `dev`（工作树干净时无损；见 §3）；
+2. **SSH 进服务器写**（`ssh` + 编辑器 / VS Code Remote-SSH），或者把后端机器上任何可见的目录登记给
+   后端（`POST /instances/{id}/workspace`）——那时 diff 连你**还没 commit** 的改动都看得见。
 
-> 这就是为什么 §0 的事实二值得先读：**"让平台读我本地目录"不是配置问题，是架构边界。**
+> 工作区不是架构边界，**"后端能不能读到你的代码"才是**：能 push + 能读回 = 代码写在哪都行。
 
 ## 2. 存储：进度存在哪
 
@@ -94,20 +103,41 @@ python -m platform_api.serve --content-dir ../seckill-lab \
 
 ## 3. 工作区：谁 clone、在哪 clone
 
-默认（**平台替你准备**）：`POST /instances/{id}/provision` 在后端本机 clone 到
-`<forge-base>/<track>/<instance-id>/`，并配好 push 凭据（token 在仓库外的 0600 文件里）与 git 身份。
+工作区就是"后端要拿去阅卷的那份 checkout"。它有三种来源，**互不冲突**：
 
-**指引式**（在你的目录里做）：界面同时给出三行命令，你可以在**自己熟悉的地方**拉：
+### (a) 平台替你准备（默认）
+
+`POST /instances/{id}/provision` 在后端本机 clone 到 `<forge-base>/<track>/<instance-id>/`，并配好
+push 凭据（token 在仓库外的 0600 文件里）与 git 身份。
+
+### (b) 你在**另一台机器**上写（推荐，只要 push 得到）
+
+在这台机器上 clone、写、commit、push 到你的 fork；后端不需要知道你的路径。机制是**对账**：
+
+* 点「提交」时，后端先 `git fetch` 你的 `dev`，**在无损时自动快进**它的 checkout，然后才阅卷——
+  于是"我在笔记本上写完就提交"不需要任何额外动作；
+* 界面上的「从远端同步」是同一个动作的手动入口（想先自己看一眼时用）；
+* 看 diff 时后端只做**只读**对账（fetch + 报数，绝不动你的分支）。远端比你新时 diff 会直说
+  "你多半是在另一台机器上写的"，而不是显示"没有改动"让你以为自己的代码丢了。
+
+"无损"的判据只有三条**同时**成立：工作树干净（没有未提交/未跟踪改动）、本地不领先远端、当前就在
+`dev` 分支上。任何一条不成立，后端**一个字都不动**，而是如实报出状态（本地领先几个提交、远端领先
+几个提交、工作树脏），由你决定怎么办——平台**不替学员合并、不 stash、不 reset**。
+
+哪一版被阅了是**可审计**的：报告里 `provenance.host_env.revision` 是那次阅卷对着的 commit SHA。
+
+### (c) 你有一个目录就在后端机器上（指引式）
+
+界面给出三行可照抄的命令，你在后端机器上（或它的文件系统里）拉一份，再把路径登记回来
+（`POST /instances/{id}/workspace`），此后 diff 与阅卷都对着它跑；`{"path": null}` 撤销登记，
+回到平台准备的那份。好处是 diff 能看见你**还没 commit** 的改动；代价是路径必须是后端这台机器上能
+看到的目录，否则得到 `422 workspace_path_invalid`（`reason` 说清是"目录不存在"还是"不是 git 仓库"）。
 
 ```bash
 git clone http://<gitea>/<you>/<repo>.git ~/my-bagu-stage-01
 cd ~/my-bagu-stage-01
 git checkout -b dev origin/stage-01-product-query-index
 ```
-
-拉完把那个目录的路径登记回来（界面上的输入框 → `POST /instances/{id}/workspace`），此后 diff 与
-阅卷都对着它跑；`{"path": null}` 撤销登记，回到平台准备的目录。路径**必须是后端这台机器上能看到的
-目录**（§0 事实二），否则会得到 `422 workspace_path_invalid`。
 
 ## 4. 对外暴露：把它放到网络上（请认真读）
 
@@ -206,6 +236,15 @@ BAGU_INSTANCE_ID=host-a python -m platform_api.serve --store postgres --database
 * **备份**：SQLite 就复制那个文件（停服务后复制，或 `.backup` 命令）；PostgreSQL 用你惯用的方式。
 * **升级**：`git pull` → `pip install -e .` → `npm run build`（前端）→ 重启后端。数据库是幂等的
   建表（`CREATE TABLE IF NOT EXISTS` + 补列），不需要手工迁移。
+* **升级后一定要重启后端，并核对版本号**（前端与后端不是同一次部署是自托管下最常见的一种坏状态）：
+
+  ```bash
+  curl -s localhost:8000/meta | python -m json.tool   # 看 platform_version
+  ```
+
+  主页「这台服务」里会把**前端版本**和**后端版本**并排显示，不一致时给一条红框说明。症状通常是
+  「后端没有这个接口」（HTTP 404，`detail` 是 Starlette 自己的 `Not Found`，不在平台的短码表里）
+  或响应少一个字段——**遇到这种报错先看版本行**，不要从代码里找 bug。
 * **重置**：删掉 SQLite 文件（或 `TRUNCATE`）就回到"没入过学"的状态。**注意**：Track 的工作区
   目录与 Gitea 上的 fork/dev 分支不会被清掉，按需自己处理。
 
@@ -213,6 +252,7 @@ BAGU_INSTANCE_ID=host-a python -m platform_api.serve --store postgres --database
 
 ```bash
 # 最小可用（本机、桩阅卷、进度存 ./bagu.sqlite3）
+bash scripts/quickstart.sh --content-dir ../seckill-lab      # 等价于下面这条 + 建 venv/装依赖/构建前端
 python -m platform_api.serve --content-dir ../seckill-lab
 
 # 真阅卷 + 真 PR + 进度存指定文件
