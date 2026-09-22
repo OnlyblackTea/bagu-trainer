@@ -70,7 +70,7 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，101 passed
+npm test                                      # vitest + RTL，103 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 
