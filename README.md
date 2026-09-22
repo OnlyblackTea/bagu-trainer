@@ -60,12 +60,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 278 passed, 14 skipped
+.venv/Scripts/python.exe -m pytest -q        # 285 passed, 14 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，84 passed
+npm test                                      # vitest + RTL，90 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 
@@ -222,9 +222,10 @@ BAGU_TEST_POSTGRES_DSN='postgresql://postgres:bagu@127.0.0.1:5432/bagu_test' \
 > [!WARNING]
 > 那个 DSN 的库会被 **`TRUNCATE`**。指一个专门用来跑测试的库，别指向真实进度库。
 
-### 真 Forge（Gitea）
+### 真 Forge（Gitea）：真 fork / 真 push / 真 PR / 真 diff
 
-默认 `--forge stub`：`provision` 就是本地 clone、`create_pr` 返回一个占位 URL。要真 fork、真开 PR：
+默认 `--forge stub`：`provision` 只是本地 clone、`create_pr` 返回占位 URL，而且 **diff 比对的是内容
+预置的解法 ref**（桩"假装学员已经做对了"）。要真 fork、真 push、真 PR，换一个后端：
 
 ```bash
 export BAGU_GITEA_URL=http://<gitea-host>:3000
@@ -236,13 +237,27 @@ python -m platform_api.serve --content-dir ../seckill-lab --forge gitea
 
 | | `stub` | `gitea` |
 |---|---|---|
-| `provision` | 本地 clone 源仓 | 先经 API 确保 **fork** 存在，再 clone 你的 fork，并建好 `dev` 分支 |
-| 基线 | 不记 | 把阶段分支的 SHA 记进 `bagu.baseRef`（阅卷物证据此比出**已提交**的改动） |
+| `provision` | 本地 clone 源仓，**不建 `dev`** | 经 API 确保 **fork** 存在，clone 你的 fork，建好 `dev`，配好 push 凭据与 git 身份 |
+| `dev` 的起点 | —— | **本地已有 > 远端已有 > 从阶段分支新建**（学员那条 `dev` 是跨阶段累积的，不该被平台清掉——重建会让下一次 `git push` 被拒） |
+| diff 比什么 | `origin/<stage>` ↔ `origin/<stage>-sol`（预置解法，`simulated=true`） | `origin/<stage>` ↔ **你的工作区**（**含未提交改动**，`simulated=false`） |
 | `create_pr` | 占位 URL | 真开 PR（`<owner>:dev` → 阶段分支），返回可点的 `html_url` |
 | 报错 | — | Gitea 连不上/认证失败 → **503 `forge_unavailable`**；你还没 push `dev` → **409 `remote_branch_missing`**（带上分支名） |
 
-> token 只用于那一次 clone，随后 remote 会被改回干净 URL——不会留在 `.git/config` 里。
-> 私有 fork 若要长期免密 push，仍需在**你的**机器上配好 git 凭据（平台不代跑 git 写操作）。
+**push 凭据怎么给的**（不违反"平台不跑 git 写操作"）：`provision` 把 token 写进**仓库外**的
+`<workspace-root>/.git-credentials`（权限 `0600`），仓库里只留一条指向它的
+`credential.helper = store --file=…`。于是
+
+* `.git/config` 里**没有秘密**；
+* `git add -A` **永远不可能**把它提交进去（它根本不在仓库目录里）；
+* 学员在自己的工作区里一句 `git push -u origin dev` 就能推（命令里不含 token），
+  界面会把这条命令直接给出来；**平台自己仍然不跑任何 git 写操作**。
+
+> 工作区解析不到 git 身份（`user.email`）时，`provision` 会补一个仓库本地的
+> `<learner>@localhost`——否则第一次 `git commit` 必然失败在 "Please tell me who you are"，
+> 而那跟这道题毫无关系。
+
+> 眼下这个 token 是**用户级**的（Gitea 的 `write:repository` 起）。收窄成 repo 级/更小 scope 的
+> 令牌是后续该做的事：那个文件里躺着的东西能推你名下所有仓库。
 
 ---
 
