@@ -163,6 +163,31 @@ describe('HomeView（屏幕 0 · 主页）', () => {
     expect(card).toHaveTextContent('真 Gitea')
   })
 
+  it('前后端版本不一致时明说"旧后端没有新接口"，而不是让人对着 404 猜', async () => {
+    // 真发生过：VM 上的后端是旧代码，没有 /attempts，主页只显示「未识别的错误：Not Found」。
+    const stale = { ...META, platform_version: 'a-prime-0.0.9' }
+    const fn = vi.fn(async (url: string) => {
+      if (url.startsWith('/attempts')) {
+        return { ok: true, status: 200, json: async () => ({ learner: 'deployer', attempts: [] }) }
+      }
+      if (url === '/meta') return { ok: true, status: 200, json: async () => stale }
+      return { ok: false, status: 404, json: async () => ({ detail: 'not_found' }) }
+    })
+    vi.stubGlobal('fetch', fn)
+    renderHome()
+
+    const warning = await screen.findByTestId('version-skew')
+    expect(warning).toHaveTextContent('a-prime-0.0.9')
+    expect(warning).toHaveTextContent('重新部署并重启后端')
+  })
+
+  it('版本一致时不吓唬人（同一份部署不该出现红框）', async () => {
+    stubFetch([])
+    renderHome()
+    await screen.findByTestId('home-meta')
+    expect(screen.queryByTestId('version-skew')).not.toBeInTheDocument()
+  })
+
   it('refreshKey 变化会重拉最近练习（提交/判定之后首页要跟着变）', async () => {
     const fetchMock = stubFetch([attempt()])
     const props = {

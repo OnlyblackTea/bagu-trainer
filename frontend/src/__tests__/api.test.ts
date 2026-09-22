@@ -91,9 +91,22 @@ describe('api: 错误短码翻人话（Plan 2 §4 铁律）', () => {
     }
   })
 
-  it('未识别短码也要给出一句可读的话', async () => {
+  it('未识别短码也要给出一句可读的话（不再是一句"未识别的错误"就完事）', async () => {
     stubFetch(async () => jsonResponse({ detail: 'brand_new_code' }, 500))
-    await expect(api.listTracks()).rejects.toThrowError(/未识别的错误：brand_new_code/)
+    // 500 + 非已知短码 ⇒ 去日志看堆栈；短码本身仍带出来（部署者要用它查）
+    await expect(api.listTracks()).rejects.toThrowError(/brand_new_code.*日志|日志.*brand_new_code/)
+  })
+
+  it('4xx 的非已知短码指向"前后端版本不一致"并带上路径', async () => {
+    stubFetch(async () => jsonResponse({ detail: 'brand_new_code' }, 422))
+    try {
+      await api.listTracks()
+      throw new Error('should have thrown')
+    } catch (e) {
+      const err = e as ApiError
+      expect(err.message).toContain('/tracks')
+      expect(err.message).toContain('版本不一致')
+    }
   })
 
   it('非 JSON 错误体退化成 http_<status>', async () => {
@@ -187,5 +200,34 @@ describe('humanize', () => {
 
   it('真未知的短码仍然报短码（那是给部署者拿去查的）', () => {
     expect(humanize('brand_new_code')).toContain('brand_new_code')
+  })
+
+  it('后端比前端旧（404 + 不是我们的短码）⇒ 指向版本倾斜，而不是死胡同', () => {
+    // 真发生过：VM 上的后端是旧代码，没有 /attempts，Starlette 回它自己的 {"detail":"Not Found"}。
+    // 当时主页只显示「后端返回了未识别的错误：Not Found」——一句既没解释也没出路的话。
+    const text = humanize('Not Found', { status: 404, path: '/attempts' })
+    expect(text).toContain('/attempts')
+    expect(text).toMatch(/后端比前端旧|重新部署/)
+    expect(text).toContain('代理')
+    expect(text).not.toContain('未识别的错误：Not Found')
+  })
+
+  it('405 与 5xx 各有各的下一步（不是一个笼统的"出错了"）', () => {
+    expect(humanize('Method Not Allowed', { status: 405, path: '/meta' })).toContain('版本不一致')
+    expect(humanize('Bad Gateway', { status: 502, path: '/meta' })).toContain('platform_api')
+    expect(humanize('Boom', { status: 500, path: '/tracks' })).toContain('日志')
+  })
+
+  it('request 把状态码与路径一并交给兜底文案（学员才能复现）', async () => {
+    stubFetch(async () => jsonResponse({ detail: 'Not Found' }, 404))
+    try {
+      await api.meta()
+      throw new Error('should have thrown')
+    } catch (e) {
+      const err = e as ApiError
+      expect(err.detail).toBe('Not Found')
+      expect(err.message).toContain('/meta')
+      expect(err.message).toMatch(/旧|重新部署/)
+    }
   })
 })

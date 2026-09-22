@@ -27,6 +27,7 @@ import type {
   TrackDetail,
   TrackSummary,
   WorkspaceOut,
+  WorkspaceSyncOut,
 } from './types'
 
 /**
@@ -86,7 +87,16 @@ export class ApiError extends Error {
 /** 短码 → 人话。每条都要说清"发生了什么 + 我该做什么"。 */
 export function humanize(
   detail: string,
-  extra?: { ref?: string | null; available?: string[]; reason?: string; branch?: string },
+  extra?: {
+    ref?: string | null
+    available?: string[]
+    reason?: string
+    branch?: string
+    /** HTTP 状态码。给兜底分支用：**未识别的短码**下，状态码是唯一可靠的线索。 */
+    status?: number
+    /** 出错的接口路径。兜底分支把它带给学员，否则那句报错没法复现。 */
+    path?: string
+  },
 ): string {
   switch (detail) {
     case 'not_found':
@@ -148,8 +158,40 @@ export function humanize(
     case 'internal_error':
       return '后端出了个没预期的错（平台不知道原因，所以没编一个）。请把服务端日志里的堆栈拿出来看。'
     default:
-      return `后端返回了未识别的错误：${detail}`
+      return unrecognized(detail, extra)
   }
+}
+
+/**
+ * 兜底：短码不在上面的表里时说什么。
+ *
+ * 原来的兜底是一句「后端返回了未识别的错误：X」——**死胡同**，学员和部署者都无从下手。而它真发生
+ * 过两次：一次是后端多了个新短码而前端没跟上（已由 `tests/test_error_codes.py` 钉住），一次是
+ * **后端比前端旧**——旧后端根本没有 `/attempts` 这个路由，Starlette 回它自己的
+ * `{"detail":"Not Found"}`，那不是我们的短码表里的任何东西。
+ *
+ * 所以这里按**状态码**给出可执行的下一步。第一件要分清的事：这到底是"后端不认这个接口"（版本
+ * 倾斜/代理配错）还是"后端认了但内部炸了"——两者的处置完全不同。
+ */
+function unrecognized(
+  detail: string,
+  extra?: { status?: number; path?: string },
+): string {
+  const where = extra?.path ? `（${extra.path}）` : ''
+  const status = extra?.status
+  if (status === 404) {
+    return `后端没有这个接口${where}。多半是**后端比前端旧**（拉了新前端但没重启/重新部署后端），或反向代理没把这个前缀转给后端。核对主页「这台服务」里的版本号。`
+  }
+  if (status === 405) {
+    return `后端不认这个请求方法${where}：前后端版本不一致（旧后端没有这个端点）。重新部署后端。`
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return `后端（或它前面的代理）暂时不可用（HTTP ${status}）${where}：确认 platform_api 还在跑。`
+  }
+  if (status !== undefined && status >= 500) {
+    return `后端内部错误（HTTP ${status}）${where}：「${detail}」不是平台已知的短码，去服务端日志里看堆栈。`
+  }
+  return `后端返回了未识别的错误：${detail}${where}。这多半是前后端版本不一致（重新部署后端），或契约漂了——把这句话和路径报给部署者。`
 }
 
 /**
@@ -204,6 +246,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         available: body.available,
         reason: body.reason,
         branch: body.branch,
+        status: res.status,
+        path,
       }),
       ref: body.ref,
       available: body.available,
@@ -269,6 +313,17 @@ export const api = {
     ),
   diff: (instanceId: string) =>
     request<DiffOut>(`/instances/${encodeURIComponent(instanceId)}/diff`),
+  /**
+   * 把工作区与远端 `dev` 对一次账（fetch，且**只在无损时**快进）。
+   *
+   * 代码写在**另一台机器**上时用这个：那边 push 完，这边点一下就把最新代码拉进工作树。
+   * 提交时平台会自动做同一件事，所以这是"我想先自己看一眼"的入口。
+   */
+  syncWorkspace: (instanceId: string) =>
+    request<WorkspaceOut & { sync: WorkspaceSyncOut | null }>(
+      `/instances/${encodeURIComponent(instanceId)}/sync`,
+      { method: 'POST' },
+    ),
   createPr: (instanceId: string) =>
     request<PullRequestOut>(`/instances/${encodeURIComponent(instanceId)}/pr`, { method: 'POST' }),
 

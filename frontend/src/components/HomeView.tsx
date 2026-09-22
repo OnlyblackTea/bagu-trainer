@@ -9,6 +9,7 @@ import type {
   StageEntry,
   TrackDetail,
 } from '../types'
+import { EXPECTED_PLATFORM_VERSION } from '../version'
 
 interface Props {
   track: TrackDetail
@@ -254,7 +255,21 @@ export function HomeView({
       {meta && (
         <section className="card meta-card" data-testid="home-meta">
           <h2 className="card__title">这台服务</h2>
+          {meta.platform_version !== EXPECTED_PLATFORM_VERSION && (
+            <div className="alert alert--error" data-testid="version-skew">
+              前端是 <code>{EXPECTED_PLATFORM_VERSION}</code>，后端自述是{' '}
+              <code>{meta.platform_version}</code>：两边不是同一次部署。旧后端没有新接口，症状就是
+              「后端没有这个接口」（HTTP 404）。请拉最新代码后重新部署并重启后端，再刷新本页。
+            </div>
+          )}
           <dl className="kv kv--tight">
+            <dt>版本</dt>
+            <dd>
+              <span className="badge">前端 {EXPECTED_PLATFORM_VERSION}</span>
+              <span className={`badge${meta.platform_version === EXPECTED_PLATFORM_VERSION ? '' : ' badge--failed'}`}>
+                后端 {meta.platform_version}
+              </span>
+            </dd>
             <dt>进度存在</dt>
             <dd>
               <code>{meta.store_target}</code>
