@@ -33,9 +33,14 @@ export type ErrorCode =
   | 'git_command_failed'
   | 'workspace_ref_missing'
   | 'report_not_found'
+  | 'report_not_ready'
   | 'grading_unavailable'
   | 'forge_unavailable'
   | 'remote_branch_missing'
+  | 'track_not_found'
+  | 'track_not_deployed'
+  | 'enroll_needs_track'
+  | 'ticket_id_ambiguous'
   | 'internal_error'
 
 export class ApiError extends Error {
@@ -83,6 +88,16 @@ export function humanize(
     }
     case 'report_not_found':
       return '还没有阅卷报告：先「提交」才会产生报告，报告是随提交一起生成的。'
+    case 'report_not_ready':
+      return '阅卷还在跑：报告没生成完。稍等片刻（进度条会动），跑完这里就会出报告。'
+    case 'track_not_found':
+      return '找不到这个 Track：它可能没部署，或者 track.yaml 的 id 与你请求的不一致。'
+    case 'track_not_deployed':
+      return '这个实例属于一个**已经不在部署里**的 Track（内容换过了）。它的历史还在，但没法再对它做操作——请让部署者把这个 Track 重新部署上，或改用新发的实例。'
+    case 'enroll_needs_track':
+      return '部署了多个 Track，报名时必须指定报哪一个。'
+    case 'ticket_id_ambiguous':
+      return '这个工单号在多个 Track 里都存在（工单号只在 Track 内唯一）。请指明 Track 后再取卷。'
     case 'grading_unavailable': {
       const why = extra?.reason ? `（${extra.reason}）` : ''
       return `阅卷跑不起来${why}。这是**平台/环境**问题，不是你代码的问题：本机需要 JDK17 + Maven，以及 Track 声明的基础设施。`
@@ -162,13 +177,19 @@ export const api = {
   getTrack: (trackId: string) => request<TrackDetail>(`/tracks/${encodeURIComponent(trackId)}`),
   /** 必须用 `identity.id`；用 stage 目录名会 404（Plan 1 Task 0）。 */
   getTicket: (ticketId: string) => request<Ticket>(`/tickets/${encodeURIComponent(ticketId)}`),
+  /** 多 Track 下的**权威**取卷地址：ticket id 只在 Track 内唯一，扁平路径会撞名 409。 */
+  getTrackTicket: (trackId: string, ticketId: string) =>
+    request<Ticket>(
+      `/tracks/${encodeURIComponent(trackId)}/tickets/${encodeURIComponent(ticketId)}`,
+    ),
 
-  enroll: (learner: string) =>
+  enroll: (learner: string, track?: string) =>
     request<EnrollmentOut>('/enrollments', {
       method: 'POST',
-      body: JSON.stringify({ learner }),
+      body: JSON.stringify(track ? { learner, track } : { learner }),
     }),
-  listInstances: (learner: string) => request<InstanceOut[]>(`/instances${query({ learner })}`),
+  listInstances: (learner: string, track?: string) =>
+    request<InstanceOut[]>(`/instances${query({ learner, track })}`),
   getInstance: (instanceId: string) =>
     request<InstanceOut>(`/instances/${encodeURIComponent(instanceId)}`),
 

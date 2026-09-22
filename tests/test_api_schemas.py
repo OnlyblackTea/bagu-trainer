@@ -13,6 +13,7 @@ def _inst(state: InstanceState) -> TicketInstance:
     return TicketInstance(
         id="ti-1",
         learner="deployer",
+        track="database-bagu",
         ticket_id="db-stage-00",
         ticket_version=1,
         engine_version="a-prime-0.1.0",

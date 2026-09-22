@@ -134,6 +134,7 @@ def _instance(ticket: TicketSpec) -> TicketInstance:
     return TicketInstance(
         id="ti-1",
         learner="deployer",
+        track="database-bagu",
         ticket_id=ticket.identity.id,
         ticket_version=ticket.identity.ticket_version,
         engine_version="a-prime-0.1.0",

@@ -43,6 +43,7 @@ def _instance(ticket_id: str) -> TicketInstance:
     return TicketInstance(
         id="ti-1",
         learner="deployer",
+        track="database-bagu",
         ticket_id=ticket_id,
         ticket_version=1,
         engine_version="a-prime-0.1.0",

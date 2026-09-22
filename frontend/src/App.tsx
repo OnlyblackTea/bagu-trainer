@@ -6,6 +6,7 @@ import { ReviewView } from './components/ReviewView'
 import { SimulatedBadge } from './components/SimulatedBadge'
 import { StageBoard } from './components/StageBoard'
 import { TicketView } from './components/TicketView'
+import { TrackSwitcher } from './components/TrackSwitcher'
 import { WorkspaceView } from './components/WorkspaceView'
 import type {
   DecisionOut,
@@ -16,12 +17,14 @@ import type {
   StageEntry,
   SubmissionOut,
   TrackDetail,
+  TrackSummary,
 } from './types'
 
 /** 自托管演练所的唯一用户（部署者本人）。 */
 const LEARNER = 'deployer'
 
 export default function App() {
+  const [tracks, setTracks] = useState<TrackSummary[]>([])
   const [track, setTrack] = useState<TrackDetail | null>(null)
   const [instances, setInstances] = useState<InstanceOut[]>([])
   const [selected, setSelected] = useState<StageEntry | null>(null)
@@ -51,16 +54,20 @@ export default function App() {
     }
   }
 
-  const refreshInstances = () => api.listInstances(LEARNER).then(setInstances)
+  // 实例按 Track 过滤：两个 Track 可以有同名 ticket id，不过滤就会把 A 的进度画进 B 的看板。
+  const refreshInstances = (trackId: string) =>
+    api.listInstances(LEARNER, trackId).then(setInstances)
 
   useEffect(() => {
     let cancelled = false
     void run(async () => {
       const list = await api.listTracks()
-      const details = await Promise.all(list.map((t) => api.getTrack(t.id)))
+      const first = list[0]
       if (cancelled) return
-      setTrack(details[0] ?? null)
-      setInstances(await api.listInstances(LEARNER))
+      setTracks(list)
+      if (!first) return
+      setTrack(await api.getTrack(first.id))
+      if (!cancelled) setInstances(await api.listInstances(LEARNER, first.id))
     })
     return () => {
       cancelled = true
@@ -69,7 +76,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function selectStage(stage: StageEntry) {
+  function selectTrack(trackId: string) {
+    if (track?.id === trackId) return
+    void run(async () => {
+      // 切 Track 必须清空选中项与整条产物链：两个 Track 的同名 stage / 同名 ticket id
+      // 会让"看板是 A、题目是 B"这种错悄悄发生。
+      selectStage(null)
+      setInstances([])
+      setTrack(await api.getTrack(trackId))
+      await refreshInstances(trackId)
+    })
+  }
+
+  function selectStage(stage: StageEntry | null) {
     setSelected(stage)
     setSubmission(null)
     setReview(null)
@@ -80,56 +99,34 @@ export default function App() {
 
   const current = selected ? instanceOf(selected) : undefined
 
-  return (
-    <div className="app">
-      <header className="app__header">
-        <h1 className="app__title">八股实战演练所</h1>
-        <p className="app__tagline">
-          内容（Track）+ git + 本地阅卷 + 确定性门。平台只 <strong>gate + 指示</strong>
-          ；被评分的代码由你在本地亲手写。
-        </p>
-        <p className="app__meta">
-          部署者即唯一用户 · <SimulatedBadge />
-          阅卷 / AI 评审 / Forge 三处均为占位后端
-        </p>
-      </header>
-
-      {error && (
-        <div className="alert alert--error" role="alert" style={{ marginBottom: 16 }}>
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="alert alert--info" style={{ marginBottom: 16 }}>
-          {notice}
-        </div>
-      )}
-
-      <main className="app__main">
-        {track ? (
-          <StageBoard
-            track={track}
-            stateOf={instanceOf}
-            selectedStage={selected?.stage ?? null}
-            onSelect={selectStage}
-            onEnroll={() =>
-              run(async () => {
-                const res = await api.enroll(LEARNER)
-                setInstances(res.instances)
-                setNotice('已入学：根阶段可开始，其后阶段保持未解锁。')
-              })
-            }
-            busy={busy}
-          />
-        ) : (
-          <section className="card">
-            <p className="muted">加载 Track…</p>
-          </section>
-        )}
+  /**
+   * 已加载 Track 的整屏内容。
+   *
+   * 收成一个**参数非空**的函数而不是直接内联：里面的每个动作都在异步闭包里用到 `track.id`，
+   * 而 TS 不会把 JSX 条件表达式里的非空收窄带进这些闭包——于是要么处处 `!`（把"真可能为空"
+   * 压掉），要么把非空这件事在类型上一次性说清。这里选后者。
+   */
+  function pane(t: TrackDetail) {
+    return (
+      <>
+        <StageBoard
+          track={t}
+          stateOf={instanceOf}
+          selectedStage={selected?.stage ?? null}
+          onSelect={selectStage}
+          onEnroll={() =>
+            run(async () => {
+              const res = await api.enroll(LEARNER, t.id)
+              setInstances(res.instances)
+              setNotice('已入学：根阶段可开始，其后阶段保持未解锁。')
+            })
+          }
+          busy={busy}
+        />
 
         {selected && (
           <div className="panel-stack">
-            <TicketView stage={selected} />
+            <TicketView stage={selected} trackId={t.id} />
 
             {current ? (
               <>
@@ -139,7 +136,7 @@ export default function App() {
                   onStart={() =>
                     run(async () => {
                       await api.start(current.id)
-                      await refreshInstances()
+                      await refreshInstances(t.id)
                     })
                   }
                 />
@@ -154,7 +151,7 @@ export default function App() {
                       setSubmission(await api.submit(current.id, { scenario }))
                       setReview(null)
                       setDecision(null)
-                      await refreshInstances()
+                      await refreshInstances(t.id)
                       setNotice('已提交并跑完阅卷桩。接下来发起评审。')
                     })
                   }
@@ -163,7 +160,7 @@ export default function App() {
                       const reviewOut = await api.review(submission!.id, { scenario })
                       setReview(reviewOut)
                       setDecision(null)
-                      await refreshInstances()
+                      await refreshInstances(t.id)
                       setNotice('评审完成（占位后端）。可以取确定性结论了。')
                     })
                   }
@@ -179,8 +176,8 @@ export default function App() {
                     run(async () => {
                       const out = await api.decide(submission!.id)
                       setDecision(out)
-                      // 决策响应带全量实例：直接用它刷新看板，不再多发一轮请求。
-                      setInstances(out.instances)
+                      // 决策响应带"这个 learner 的全部实例"：按当前 Track 过滤后再刷新看板。
+                      setInstances(out.instances.filter((i) => i.track === t.id))
                       setNotice(
                         out.decision.verdict === 'pass'
                           ? '通过：下一阶段已解锁。'
@@ -194,7 +191,7 @@ export default function App() {
                       setSubmission(null)
                       setReview(null)
                       setDecision(null)
-                      await refreshInstances()
+                      await refreshInstances(t.id)
                       setNotice('已回到「开发中」，可再走一遍提交 → 评审 → 决策。')
                     })
                   }
@@ -202,12 +199,54 @@ export default function App() {
               </>
             ) : (
               <section className="card">
-                <p className="muted">
-                  这个阶段还没有实例——先「入学」。
-                </p>
+                <p className="muted">这个阶段还没有实例——先「入学」。</p>
               </section>
             )}
           </div>
+        )}
+      </>
+    )
+  }
+
+  return (
+    <div className="app">
+      <header className="app__header">
+        <h1 className="app__title">八股实战演练所</h1>
+        <p className="app__tagline">
+          内容（Track）+ git + 本地阅卷 + 确定性门。平台只 <strong>gate + 指示</strong>
+          ；被评分的代码由你在本地亲手写。
+        </p>
+        <p className="app__meta">
+          部署者即唯一用户 · <SimulatedBadge />
+          阅卷 / AI 评审 / Forge 三处均为占位后端
+        </p>
+      </header>
+
+      <TrackSwitcher
+        tracks={tracks}
+        currentId={track?.id ?? ''}
+        onSelect={selectTrack}
+        busy={busy}
+      />
+
+      {error && (
+        <div className="alert alert--error" role="alert" style={{ marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="alert alert--info" style={{ marginBottom: 16 }}>
+          {notice}
+        </div>
+      )}
+
+      <main className="app__main">
+        {track ? (
+          pane(track)
+        ) : (
+          <section className="card">
+            <p className="muted">加载 Track…</p>
+          </section>
         )}
       </main>
     </div>

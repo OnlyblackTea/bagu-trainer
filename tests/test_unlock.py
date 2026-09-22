@@ -18,6 +18,7 @@ def _instance(
     return TicketInstance(
         id=f"ti-{ticket_id}",
         learner=learner,
+        track="database-bagu",
         ticket_id=ticket_id,
         ticket_version=1,
         engine_version="v0.1.0",

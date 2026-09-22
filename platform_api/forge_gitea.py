@@ -69,9 +69,9 @@ class GiteaForgeClient:
             )
         stage = stage_branch_for(instance.ticket_id, self._stage_refs)
         base_ref = f"origin/{stage}"
-        dest = self.workspace_path(instance)
-        prepare_workspace(
-            dest=dest,
+        # 用 prepare_workspace 返回的路径（绝对），见其 docstring。
+        dest = prepare_workspace(
+            dest=self.workspace_path(instance),
             # 带 token clone，**随后立刻把 remote 改回干净 URL**——别让 token 落进 .git/config。
             clone_url=self._api.authenticated_clone_url(clone_url),
             base_ref=base_ref,

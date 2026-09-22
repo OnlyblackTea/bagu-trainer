@@ -33,10 +33,18 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from platform_service.content_loader import load_tickets, load_track
+from platform_service.content_loader import (
+    load_stage_refs,
+    load_ticket_dirs,
+    load_tickets,
+    load_track,
+)
+from platform_service.forge import ForgeClient
 from platform_service.grading import GradingRunner
 from platform_service.models import TicketSpec, TrackManifest
 from platform_service.service import PlatformService
@@ -44,6 +52,7 @@ from platform_service.store import InMemoryStore, Store
 from platform_service.stubs import StubGradingRunner, StubReviewEngine
 
 from .grading_docker import DockerGradingRunner
+from .stubs_wiring import ForgeBackend, build_forge
 
 PLATFORM_VERSION = "a-prime-0.1.0"
 
@@ -118,11 +127,30 @@ def resolve_grading_reset(explicit: bool | None = None) -> bool:
     raise ValueError(f"{GRADING_RESET_ENV} must be 'auto' or 'never', got {raw!r}")
 
 
+@dataclass(frozen=True)
+class TrackBundle:
+    """一个已部署 Track 的**运行时装配**：内容 + 它自己的 service 与 forge。
+
+    每个 Track 一个 :class:`~platform_service.forge.ForgeClient`：stage 分支名、上游仓库、
+    本地工作区都是这个 Track 自己的（§C.5），共用会把两个 Track 的工作区串在一起。
+    :class:`~platform_service.store.Store` 反而是**全局**的——实例靠 ``TicketInstance.track``
+    归属，不靠给每个 Track 分一个库（那样"我这一届都干了啥"就得跨库拼）。
+    """
+
+    track: TrackManifest
+    tickets: dict[str, TicketSpec]
+    #: 看板按 stage 目录名书写，ticket 按 ``identity.id`` 标识，故发卷路由需要这份索引。
+    stage_tickets: dict[str, TicketSpec]
+    service: PlatformService
+    forge: ForgeClient
+    content_dir: Path
+
+
 def build_service(
     content_dir: Path,
     store: Store | None = None,
 ) -> tuple[Store, TrackManifest, dict[str, TicketSpec], PlatformService]:
-    """加载 ``content_dir`` 的 track + 全部 ticket，装配服务。
+    """加载 ``content_dir`` 的 track + 全部 ticket，装配服务（单 Track 便捷入口）。
 
     ``store`` 缺省是 :class:`InMemoryStore`；传一个（例如 :class:`PostgresStore`）就用它——
     ``PlatformService`` 只认缝，换后端不改它一行。
@@ -137,6 +165,50 @@ def build_service(
     store = store if store is not None else InMemoryStore()
     service = PlatformService(store, track, tickets, engine_version=PLATFORM_VERSION)
     return store, track, tickets, service
+
+
+def build_tracks(
+    content_dirs: Sequence[Path],
+    store: Store,
+    *,
+    forge_source: Path | None = None,
+    forge_base: Path | None = None,
+    forge: ForgeBackend | None = None,
+) -> dict[str, TrackBundle]:
+    """把每个内容目录装配成一个 :class:`TrackBundle`，按 ``track.id`` 索引。
+
+    ``forge_source`` 只对**单 Track** 有意义（"内容在 A、git 上游在 B"的对照场景）；多 Track
+    时每个 Track 的 git 上游就是它自己的内容目录，硬套一个 source 会让所有 Track 都去 fork
+    同一个仓库。
+    """
+    if not content_dirs:
+        raise ValueError("至少需要一个 Track 内容目录")
+    if forge_source is not None and len(content_dirs) > 1:
+        raise ValueError("forge_source 只能配一个 Track（多 Track 时各自用内容目录当上游）")
+
+    bundles: dict[str, TrackBundle] = {}
+    for content_dir in content_dirs:
+        track = load_track(content_dir / "track.yaml")
+        if track.id in bundles:
+            raise ValueError(f"重复的 track.id: {track.id!r}（来自 {content_dir}）")
+        tickets = load_tickets(content_dir)
+        service = PlatformService(store, track, tickets, engine_version=PLATFORM_VERSION)
+        base = forge_base or (content_dir.parent / "_workspaces")
+        bundles[track.id] = TrackBundle(
+            track=track,
+            tickets=tickets,
+            stage_tickets=load_ticket_dirs(content_dir),
+            service=service,
+            # 工作区再按 track.id 分一层：同名 stage 分支在两个 Track 里是两个仓库。
+            forge=build_forge(
+                source_repo=forge_source or content_dir,
+                base_dir=base / track.id,
+                stage_refs=load_stage_refs(content_dir),
+                backend=forge,
+            ),
+            content_dir=content_dir,
+        )
+    return bundles
 
 
 def grading_runner(

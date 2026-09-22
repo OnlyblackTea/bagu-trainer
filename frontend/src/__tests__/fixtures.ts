@@ -1,8 +1,10 @@
-import type { InstanceOut, ReviewOut, Ticket, TrackDetail } from '../types'
+import type { InstanceOut, ReviewOut, Ticket, TrackDetail, TrackSummary } from '../types'
+
+export const trackId = 'database-bagu'
 
 /** 与 Plan 1 的 demo Track 同形：目录名描述式、身份另起、含一个只上榜不出卷的阶段。 */
 export const track: TrackDetail = {
-  id: 'database-bagu',
+  id: trackId,
   name: '数据库八股实战',
   language: 'zh-CN',
   trust_level: 'self',
@@ -38,6 +40,7 @@ export function makeInstance(over: Partial<InstanceOut> = {}): InstanceOut {
   return {
     id: 'ti-1',
     learner: 'deployer',
+    track: trackId,
     ticket_id: 'db-stage-00',
     ticket_version: 1,
     engine_version: 'a-prime-0.1.0',
@@ -47,6 +50,17 @@ export function makeInstance(over: Partial<InstanceOut> = {}): InstanceOut {
     gate: '可开始：start 本实例，再 provision 拉取本地工作区。',
     ...over,
   }
+}
+
+/** `GET /tracks` 的一条（比 `TrackDetail` 少了逐阶段条目，多了两个计数）。 */
+export const trackSummary: TrackSummary = {
+  id: trackId,
+  name: track.name,
+  language: track.language,
+  trust_level: track.trust_level,
+  stages: track.stages.map((s) => s.stage),
+  assessed_stages: 2,
+  board_only_stages: 1,
 }
 
 export const ticket: Ticket = {

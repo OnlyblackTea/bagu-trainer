@@ -38,6 +38,21 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 .venv/Scripts/python.exe -m platform_api.serve --content-dir ../seckill-lab
 ```
 
+**`--content-dir` 可以重复**，一次部署多个 Track：
+
+```bash
+.venv/Scripts/python.exe -m platform_api.serve \
+    --content-dir ../seckill-lab --content-dir ../cache-bagu
+```
+
+`GET /tracks` 列出全部，前端在部署了多个时出现「选方向」切换条。多 Track 的三条硬规矩：
+
+| 规矩 | 为什么 |
+|---|---|
+| 报名必须指定 Track（`POST /enrollments {"learner":…,"track":…}`）；多 Track 下省略 ⇒ 400 `enroll_needs_track` | 猜错就把学员报进了**另一个** Track 的 DAG，而 DAG 决定谁 locked——报错了人自己看不出来 |
+| 取卷用 `GET /tracks/{track_id}/tickets/{ticket_id}` | ticket id 只在 Track 内唯一：两个 Track 都可以有 `db-stage-01`。扁平的 `GET /tickets/{id}` 保留给单 Track 部署与旧客户端，一旦撞名回 409 `ticket_id_ambiguous`，**不猜** |
+| 实例自带 `track` 戳（`TicketInstance.track`），每个 Track 一个 Forge + 一层工作区目录 | 解锁、看板、provision 都必须按 Track 走；否则 A 通过会把 B 的同名后继阶段一起解锁，两个 Track 的 clone 也会互相顶掉 |
+
 > 但 seckill-lab **尚未**按「一阶段一 ref」改造（它现在只有 `main` + `solutions` 两条分支，见设计 §8.1）。
 > 所以对着它点「起工作区」会如实返回短码 `workspace_ref_missing`，并列出仓库里实际可用的 ref——
 > 这是**预期内**行为，不是 bug（对接现状见设计附录 B）。
@@ -45,12 +60,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 234 passed, 12 skipped
+.venv/Scripts/python.exe -m pytest -q        # 250 passed, 12 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，41 passed
+npm test                                      # vitest + RTL，46 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 

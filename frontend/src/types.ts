@@ -26,6 +26,9 @@ export interface TrackSummary {
   language: string | null
   trust_level: TrustLevel
   stages: string[]
+  /** 有工单的阶段数；`board_only` 另计（看板清单允许"只上榜、不出卷"）。 */
+  assessed_stages: number
+  board_only_stages: number
 }
 
 export interface StageEntry {
@@ -68,11 +71,15 @@ export interface Ticket {
   files_to_change: string[]
   hints: Hint[]
   grader: GraderView
+  /** 取卷时用的 Track；多 Track 部署下 ticket id 会撞名，故回带归属。 */
+  track?: string
 }
 
 export interface InstanceOut {
   id: string
   learner: string
+  /** 实例**属于哪个 Track**。ticket id 只在 Track 内唯一，看板/取卷都必须先认这个。 */
+  track: string
   ticket_id: string
   ticket_version: number
   engine_version: string

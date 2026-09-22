@@ -20,7 +20,11 @@ class _Strict(BaseModel):
 
 
 class EnrollRequest(_Strict):
+    """报名。``track`` 可省略——只有一个已部署 Track 时那是唯一的答案；有多个又不说，
+    路由回 400 ``enroll_needs_track``（猜错就把学员报进了另一个 Track 的 DAG）。"""
+
     learner: str = Field(min_length=1)
+    track: str | None = None
 
 
 class SubmitRequest(_Strict):

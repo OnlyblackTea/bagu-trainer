@@ -12,7 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from platform_service.forge import ForgeClient, Workspace, WorkspaceRefMissingError
+from platform_service.forge import (
+    ForgeClient,
+    Workspace,
+    WorkspaceRefMissingError,
+    _absolute_clone_url,
+)
 from platform_service.models import TicketInstance
 from platform_service.review_diff import generate_diff
 from platform_service.stubs import StubForgeClient
@@ -58,6 +63,7 @@ def _instance(ticket_id: str = _SKELETON) -> TicketInstance:
     return TicketInstance(
         id=f"ti-{ticket_id}",
         learner="deployer",
+        track="database-bagu",
         ticket_id=ticket_id,
         ticket_version=1,
         engine_version="a-prime-0.1.0",
@@ -123,3 +129,48 @@ def test_ticket_without_a_declared_stage_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(WorkspaceRefMissingError) as exc:
         forge.provision(_instance("db-stage-09"))
     assert "db-stage-09" in str(exc.value)
+
+
+# --- 相对路径：只在"第一次 clone"时发作的那一类 ---------------------------------
+
+
+def test_provision_works_with_relative_source_and_dest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """相对源 + 相对目标：``git clone`` 的 cwd 是 ``dest.parent``，相对源会相对**那里**解析。
+
+    于是 ``git clone src ws/deep/ti-x`` 从 ``ws/deep`` 出发去找 ``ws/deep/src``，128。
+    这个缺陷只在**第一次** clone 时发作——工作区一旦留在磁盘上就永远走"已存在 ⇒ 跳过"，
+    所以上面所有用绝对 ``tmp_path`` 的用例都照不出它来（e2e 里是"给每个 Track 分一层
+    base_dir"把它翻出来的）。这里刻意 chdir 到 tmp_path 并给一个全新的深层 dest。
+    """
+    monkeypatch.chdir(tmp_path)
+    _source_repo(tmp_path / "src")
+    forge = StubForgeClient(
+        source_repo=Path("src"),
+        base_dir=Path("ws/nested/one-more-level"),
+        stage_refs={_SKELETON: _SKELETON},
+    )
+
+    ws = forge.provision(_instance())
+
+    assert (ws.path / "f.txt").exists()
+    assert ws.path.is_absolute()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gitea.example/owner/repo.git",
+        "ssh://git@gitea.example:2222/owner/repo.git",
+        "git@gitea.example:owner/repo.git",
+    ],
+)
+def test_remote_clone_urls_are_not_rewritten(url: str) -> None:
+    """URL / scp 形式不是本地路径：硬套 ``Path.resolve()`` 会把它变成一个毫无意义的本地路径。"""
+    assert _absolute_clone_url(url) == url
+
+
+def test_local_clone_source_is_resolved_to_absolute(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _absolute_clone_url("src") == str((tmp_path / "src").resolve())

@@ -47,13 +47,19 @@ function fakeBackend() {
           language: track.language,
           trust_level: track.trust_level,
           stages: track.stages.map((s) => s.stage),
+          assessed_stages: 2,
+          board_only_stages: 1,
         },
       ])
     }
     if (url === `/tracks/${track.id}`) return json(track)
 
-    if (url.startsWith('/tickets/')) {
-      return url.slice('/tickets/'.length) === ticket.id ? json(ticket) : json({ detail: 'not_found' }, 404)
+    // 取卷走**带 Track** 的权威地址：ticket id 只在 Track 内唯一（多 Track 会撞名）。
+    const scoped = url.match(/^\/tracks\/([^/]+)\/tickets\/([^/]+)$/)
+    if (scoped) {
+      return scoped[1] === track.id && scoped[2] === ticket.id
+        ? json(ticket)
+        : json({ detail: 'not_found' }, 404)
     }
 
     if (url === '/enrollments' && method === 'POST') {
@@ -222,7 +228,7 @@ describe('App 装配：跑通整条自习闭环', () => {
 
     expect(screen.queryByTestId('ticket-view')).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
-      '/tickets/stage-03-deadlock-optional',
+      `/tracks/${track.id}/tickets/stage-03-deadlock-optional`,
     )
   })
 })

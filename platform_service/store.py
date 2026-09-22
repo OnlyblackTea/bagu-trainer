@@ -63,7 +63,11 @@ class Store(Protocol):
         ...
 
     def list_instances(
-        self, *, learner: str | None = None, ticket_id: str | None = None
+        self,
+        *,
+        learner: str | None = None,
+        ticket_id: str | None = None,
+        track: str | None = None,
     ) -> list[TicketInstance]:
         ...
 
@@ -136,13 +140,19 @@ class InMemoryStore(Store):
         return self._instances.get(instance_id)
 
     def list_instances(
-        self, *, learner: str | None = None, ticket_id: str | None = None
+        self,
+        *,
+        learner: str | None = None,
+        ticket_id: str | None = None,
+        track: str | None = None,
     ) -> list[TicketInstance]:
         matches: list[TicketInstance] = []
         for instance in self._instances.values():
             if learner is not None and instance.learner != learner:
                 continue
             if ticket_id is not None and instance.ticket_id != ticket_id:
+                continue
+            if track is not None and instance.track != track:
                 continue
             matches.append(instance)
         return matches

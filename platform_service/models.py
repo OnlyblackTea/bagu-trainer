@@ -214,10 +214,17 @@ class Enrollment(_Strict):
 
 class TicketInstance(_Strict):
     """Version-frozen assessment (§9.1): the 5-tuple anchor answers 'which version
-    is this PR/report based on'. NO ``fixture_seed`` — parametric removed in v0.4."""
+    is this PR/report based on'. NO ``fixture_seed`` — parametric removed in v0.4.
+
+    ``track`` is part of the identity because ticket ids are only unique **within** a
+    track: two deployed tracks may both declare ``db-stage-01``. Without it an instance
+    cannot be attributed to a track, so the board could not be filtered per track and
+    every route would have to guess which track's tickets/forge/stage-refs to use.
+    """
 
     id: str
     learner: str
+    track: str
     ticket_id: str
     ticket_version: int = Field(ge=1)
     engine_version: str

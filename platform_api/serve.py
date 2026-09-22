@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -52,6 +53,7 @@ def _demo_is_still_valid(demo: Path) -> bool:
 def build_server(
     content_dir: Path | None = None,
     *,
+    content_dirs: Sequence[Path] | None = None,
     forge_base: Path | None = None,
     workspace_root: Path | None = None,
     rebuild_demo: bool = False,
@@ -61,12 +63,12 @@ def build_server(
     store: StoreBackend | None = None,
     database_url: str | None = None,
 ) -> FastAPI:
-    """按内容目录装配 app；``content_dir=None`` 时用 demo track-repo。
+    """按内容目录装配 app；一个都不给时用 demo track-repo（``content_dirs`` 可给多个）。
 
     demo 仓库**幂等复用**：已存在就不重建——重建会在"内容没变"时让 ``git commit`` 无话可提交
     而报错，重启开发服务器就崩。但复用前会用当前 schema 验一次，不通过就重建（见上）。
     """
-    if content_dir is None:
+    if content_dir is None and not content_dirs:
         root = workspace_root or DEFAULT_WORKSPACE_ROOT
         demo = root / "demo"
         if rebuild_demo or not (demo / ".git").exists() or not _demo_is_still_valid(demo):
@@ -77,6 +79,7 @@ def build_server(
         forge_base = forge_base or root / "ws"
     return create_app(
         content_dir=content_dir,
+        content_dirs=content_dirs,
         forge_base=forge_base,
         grading=grading,
         grading_reset=grading_reset,
@@ -91,8 +94,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--content-dir",
         type=Path,
+        action="append",
         default=None,
-        help="Track 内容目录（含 track.yaml 与 stages/*/ticket.yaml）；省略则用 demo Track",
+        help="Track 内容目录（含 track.yaml 与 stages/*/ticket.yaml）；**可重复**以部署多个 "
+        "Track（--content-dir A --content-dir B）；省略则用 demo Track",
     )
     parser.add_argument("--forge-base", type=Path, default=None, help="本地工作区根目录")
     parser.add_argument(
@@ -139,9 +144,11 @@ def main(argv: list[str] | None = None) -> None:
         "postgresql://bagu:bagu@127.0.0.1:5432/bagu（也可用 BAGU_DATABASE_URL）",
     )
     args = parser.parse_args(argv)
+    dirs = args.content_dir or []
 
     app = build_server(
-        args.content_dir,
+        dirs[0] if len(dirs) == 1 else None,
+        content_dirs=dirs if len(dirs) > 1 else None,
         forge_base=args.forge_base,
         workspace_root=args.workspace_root,
         grading=args.grading,
@@ -153,6 +160,7 @@ def main(argv: list[str] | None = None) -> None:
     import uvicorn
 
     print(f"A′ 后端: http://{args.host}:{args.port}  (docs: /docs)")
+    print(f"已部署 Track: {', '.join(app.state.tracks)}")
     print(
         f"阅卷后端: {app.state.grading_backend}  环境重置: {app.state.grading_reset}"
         f"  Forge: {app.state.forge_backend}  存储: {app.state.store_backend}"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -21,9 +22,10 @@ def _app(tmp_path: Path) -> FastAPI:
 
 def test_create_app_wires_state(tmp_path: Path) -> None:
     app = _app(tmp_path)
-    assert app.state.track.id == "database-bagu"
-    assert set(app.state.tickets) == {"db-stage-00", "db-stage-01", "db-stage-02"}
-    assert app.state.service is not None and app.state.forge is not None
+    bundle = app.state.tracks["database-bagu"]
+    assert bundle.track.id == "database-bagu"
+    assert set(bundle.tickets) == {"db-stage-00", "db-stage-01", "db-stage-02"}
+    assert bundle.service is not None and bundle.forge is not None
 
 
 def test_meta_reports_each_backend_honestly(tmp_path: Path) -> None:
@@ -88,7 +90,8 @@ def test_missing_remote_branch_is_409_with_the_branch_name(tmp_path: Path) -> No
         def create_pr(self, instance, *, base, head):
             raise RemoteBranchMissingError(repo="deployer/track", branch="dev")
 
-    app.state.forge = _NoBranchForge(app.state.forge)
+    bundle = app.state.tracks["database-bagu"]
+    app.state.tracks["database-bagu"] = replace(bundle, forge=_NoBranchForge(bundle.forge))
 
     r = client.post(f"/instances/{iid}/pr")
 
@@ -100,7 +103,8 @@ def test_missing_remote_branch_is_409_with_the_branch_name(tmp_path: Path) -> No
 def test_create_app_exposes_stage_dir_index(tmp_path: Path) -> None:
     """看板按目录名书写，故需要目录名 → ticket 的索引（目录名不是身份）。"""
     app = _app(tmp_path)
-    assert app.state.stage_tickets["stage-01-product-query-index"].identity.id == "db-stage-01"
+    stages = app.state.tracks["database-bagu"].stage_tickets
+    assert stages["stage-01-product-query-index"].identity.id == "db-stage-01"
 
 
 def test_illegal_transition_maps_409(tmp_path: Path) -> None:

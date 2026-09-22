@@ -19,6 +19,7 @@ def _instance(state: InstanceState = InstanceState.LOCKED) -> TicketInstance:
     return TicketInstance(
         id="ti-1",
         learner="deployer",
+        track="database-bagu",
         ticket_id="db-stage-01",
         ticket_version=1,
         engine_version="v0.1.0",

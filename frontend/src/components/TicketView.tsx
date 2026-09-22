@@ -5,6 +5,8 @@ import type { StageEntry, Ticket } from '../types'
 
 interface Props {
   stage: StageEntry
+  /** 取卷必须带 Track：ticket id 只在 Track 内唯一，多 Track 下扁平路径会撞名 409。 */
+  trackId: string
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * grader），**绝不展示解法 ref、分支内容或任何 `-sol` 文本**。解法只在工作区 diff 里、
  * 且仅对已 provision 的实例可达。
  */
-export function TicketView({ stage }: Props) {
+export function TicketView({ stage, trackId }: Props) {
   const [ticket, setTicket] = useState<Ticket | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,7 +30,7 @@ export function TicketView({ stage }: Props) {
     }
     let cancelled = false
     api
-      .getTicket(stage.ticket_id)
+      .getTrackTicket(trackId, stage.ticket_id)
       .then((t) => {
         if (!cancelled) setTicket(t)
       })
@@ -38,7 +40,7 @@ export function TicketView({ stage }: Props) {
     return () => {
       cancelled = true
     }
-  }, [stage.kind, stage.ticket_id])
+  }, [trackId, stage.kind, stage.ticket_id])
 
   if (stage.kind === 'board_only') {
     return (

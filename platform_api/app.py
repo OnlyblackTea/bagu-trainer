@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from platform_service.ai_review import ReviewDiffTooLargeError
-from platform_service.content_loader import load_stage_refs, load_ticket_dirs
 from platform_service.errors import GateNotReadyError, NotFoundError
 from platform_service.forge import (
     ForgeUnavailableError,
@@ -31,8 +31,8 @@ from .deps import (
     PLATFORM_VERSION,
     GradingBackend,
     StoreBackend,
-    build_service,
     build_store,
+    build_tracks,
     grading_runner,
     resolve_grading_backend,
     resolve_grading_reset,
@@ -40,7 +40,7 @@ from .deps import (
     store_backend_name,
 )
 from .grading_docker import GradingUnavailableError
-from .stubs_wiring import ForgeBackend, build_forge, forge_backend_name
+from .stubs_wiring import ForgeBackend, forge_backend_name
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
@@ -149,7 +149,8 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 def create_app(
     *,
-    content_dir: Path,
+    content_dir: Path | None = None,
+    content_dirs: Sequence[Path] | None = None,
     forge_source: Path | None = None,
     forge_base: Path | None = None,
     grading: GradingBackend | None = None,
@@ -159,17 +160,26 @@ def create_app(
     store_backend: StoreBackend | None = None,
     database_url: str | None = None,
 ) -> FastAPI:
+    """组装 app。``content_dir``（单个）与 ``content_dirs``（多个）二选一。
+
+    多 Track 支持的形状是"一个 store + 每 Track 一个 :class:`TrackBundle`"（见
+    :func:`~platform_api.deps.build_tracks`）：报名时指定 track，实例上盖 ``track`` 戳，
+    此后每个请求都能从实例反查出该用哪个 Track 的 ticket / forge / stage refs。
+    """
     app = FastAPI(title="bagu-trainer A′", version=PLATFORM_VERSION)
+    roots = list(content_dirs) if content_dirs is not None else [content_dir]
+    if content_dir is not None and content_dirs is not None:
+        raise ValueError("content_dir 与 content_dirs 只能给一个")
+    if any(root is None for root in roots):
+        raise ValueError("至少要给一个 Track 内容目录（content_dir 或 content_dirs）")
     # store 可以先建好传进来（测试常用），也可以只给 backend/dsn 让这里建。
     store = store if store is not None else build_store(store_backend, dsn=database_url)
-    store, track, tickets, service = build_service(content_dir, store)
-    base = forge_base or (content_dir.parent / "_workspaces")
-    # ref 布局来自内容：stage 分支按阶段命名，不拿 ticket id 当分支名（§C.5）。
-    forge = build_forge(
-        source_repo=forge_source or content_dir,
-        base_dir=base,
-        stage_refs=load_stage_refs(content_dir),
-        backend=forge,
+    tracks = build_tracks(
+        [root for root in roots if root is not None],
+        store,
+        forge_source=forge_source,
+        forge_base=forge_base,
+        forge=forge,
     )
     # 后端在**启动时**定下来（配错了立刻炸），而不是每个请求再解析一次环境变量。
     backend = resolve_grading_backend(grading)
@@ -177,19 +187,18 @@ def create_app(
 
     app.state.store = store
     app.state.store_backend = store_backend_name(store)
-    app.state.track = track
-    app.state.tickets = tickets
-    # 看板按 stage 目录名书写而 ticket 按 identity.id 标识，故发卷路由需要这份索引。
-    app.state.stage_tickets = load_ticket_dirs(content_dir)
-    app.state.service = service
-    app.state.forge = forge
-    app.state.forge_backend = forge_backend_name(forge)
+    app.state.tracks = tracks
     app.state.grading_runner = lambda scenario: grading_runner(
         scenario, backend=backend, reset_infra=reset_infra
     )
     app.state.grading_backend = backend
     app.state.grading_reset = reset_infra
     app.state.review_engine = review_engine
+    # 多 Track 时逐个上报；单 Track 就是一个元素的 map。Forge 后端是**一个**开关，
+    # 所以名字取自任一 bundle——但"这个 Track 的 forge 到底是不是真的"仍逐项可查。
+    app.state.forge_backend = (
+        forge_backend_name(next(iter(tracks.values())).forge) if tracks else "stub"
+    )
 
     @app.get("/meta")
     def meta() -> dict[str, object]:

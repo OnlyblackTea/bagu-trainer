@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -157,18 +158,41 @@ def must_have_ref(repo: Path, ref: str, *, reason: str) -> None:
         )
 
 
+def _absolute_clone_url(clone_url: str) -> str:
+    """本地 clone 源必须转成**绝对**路径；URL / scp 形式原样返回。
+
+    起因是一个真实的 500：``git clone`` 的 ``cwd`` 被设成 ``dest.parent``，于是相对的源路径会
+    相对**那个**目录解析——``git clone scratch/_e2e/demo scratch/_e2e/ws/ti-1`` 从
+    ``scratch/_e2e/ws`` 出发找的是 ``scratch/_e2e/ws/scratch/_e2e/demo``，必然 128。
+
+    这个缺陷长期藏着，是因为它只在**第一次** clone 时发作：工作区一旦留在磁盘上就永远走
+    "已存在 ⇒ 跳过 clone"那条路（幂等）。任何让工作区换目录的改动（例如给每个 Track 分一层
+    base_dir）都会把它翻出来。
+    """
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", clone_url) or re.match(
+        r"^[^/\\]+@[^/\\]+:", clone_url
+    ):
+        return clone_url
+    return str(Path(clone_url).resolve())
+
+
 def prepare_workspace(
     *, dest: Path, clone_url: str, base_ref: str, make_dev_branch: bool
-) -> None:
+) -> Path:
     """把工作区准备到"学员可以开始写"的状态（两个 Forge 共用，幂等）。
 
     做三件事：clone（已存在就跳过）、校验阶段分支存在、把**基线 ref 解析成 SHA 记进本地
     git config**（``bagu.baseRef``）——阅卷据此比出"学员改了什么"，**已提交**的改动也算数；
     记 ``HEAD`` 会随学员的提交一起前移，等于永远比不出东西（这个坑测试里踩过）。
+
+    返回**绝对**路径（调用方必须拿它去建 :class:`Workspace`）：工作区的后续 git 操作都把
+    ``cwd`` 设成这个路径，一个相对路径会在进程 cwd 换个地方之后指到别处去。
     """
+    dest = dest.resolve()
     if not (dest / ".git").is_dir():
+        # 先落成绝对路径再 clone：下面把 cwd 换成了 dest.parent（见 _absolute_clone_url）。
         dest.parent.mkdir(parents=True, exist_ok=True)
-        git(dest.parent, "clone", "-q", clone_url, str(dest))
+        git(dest.parent, "clone", "-q", _absolute_clone_url(clone_url), str(dest))
     must_have_ref(
         dest,
         base_ref,
@@ -179,3 +203,4 @@ def prepare_workspace(
         git(dest, "checkout", "-q", "-b", DEV_BRANCH, base_ref)
     if not git(dest, "config", "--get", "bagu.baseRef", check=False).stdout.strip():
         git(dest, "config", "bagu.baseRef", git(dest, "rev-parse", base_ref).stdout.strip())
+    return dest

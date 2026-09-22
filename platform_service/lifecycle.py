@@ -81,6 +81,7 @@ def reissue(
     fresh = TicketInstance(
         id=new_id,
         learner=instance.learner,
+        track=instance.track,
         ticket_id=instance.ticket_id,
         ticket_version=ticket_version,
         engine_version=engine_version,

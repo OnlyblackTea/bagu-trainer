@@ -114,6 +114,8 @@ class PlatformService:
 
         Each instance starts at its DAG-derived :func:`initial_state` (root tickets
         ``available``, the rest ``locked``) and is anchored to the current versions.
+        ``track`` is stamped on every instance: ticket ids repeat across tracks, so
+        this is what lets the board and every route attribute an instance to its track.
         """
         enrollment = Enrollment(
             id=self._next_id("en"), learner=learner, track=self._track.id
@@ -123,6 +125,7 @@ class PlatformService:
             instance = TicketInstance(
                 id=self._next_id("ti"),
                 learner=learner,
+                track=self._track.id,
                 ticket_id=ticket_id,
                 ticket_version=ticket.identity.ticket_version,
                 engine_version=self._engine_version,
@@ -232,10 +235,12 @@ class PlatformService:
         self._store.save_decision(decision)
 
         if verdict is Verdict.PASS:
+            # Scoped to the instance's OWN track: ticket ids repeat across tracks, so an
+            # unfiltered list could "unlock" a same-named ticket in someone else's track.
             for unlocked in unlock_dependents(
                 instance.ticket_id,
                 self._prereq_graph,
-                self._store.list_instances(learner=instance.learner),
+                self._store.list_instances(learner=instance.learner, track=instance.track),
             ):
                 self._store.save_instance(unlocked)
         return decision
@@ -268,7 +273,9 @@ class PlatformService:
         """
         live = [
             inst
-            for inst in self._store.list_instances(learner=learner, ticket_id=ticket_id)
+            for inst in self._store.list_instances(
+                learner=learner, ticket_id=ticket_id, track=self._track.id
+            )
             if inst.state is not InstanceState.STALE
         ]
         if not live:

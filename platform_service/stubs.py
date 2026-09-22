@@ -183,7 +183,8 @@ class StubForgeClient:
         base_ref = f"origin/{stage}"
         head_ref = f"{base_ref}{self.SOLUTION_REF_SUFFIX}"
         # 桩**不**建 dev 分支：没有人真的写代码，diff 两端都是内容预置的 ref。
-        prepare_workspace(
+        # 用 prepare_workspace 返回的路径（绝对）建 Workspace，见其 docstring。
+        dest = prepare_workspace(
             dest=dest, clone_url=str(self._source), base_ref=base_ref, make_dev_branch=False
         )
         must_have_ref(

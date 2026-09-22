@@ -377,9 +377,9 @@ paper new-track --topic "JVM 八股" --concepts "GC,类加载,内存模型,JIT"
 
 | 步 | 学员做 / 看到 | 平台做什么（REST） | 算力 |
 |----|-------------|------------------|------|
-| **1 选方向** | 浏览已部署的 Track 与其 stage 看板 | `GET /tracks` · `GET /tracks/{id}`（board 含 `board_only` 阶段，不取卷） | 平台 |
-| **2 报名 + 接工单** | 看 stage 看板（🔒/🟥/✅，沿用 seckill-lab TASKS 看板语义），点"接取" | `POST /enrollments` 建 Enrollment 并**批量发卷**（按 `progression.prerequisites` 算 DAG 初始状态：无前置 ⇒ `available`，否则 `locked`）；`GET /instances` 出看板 | 平台 |
-| **3 发卷** | 读工单：线上问题 / 考点 / `files_to_change` / 阶梯提示 | `GET /tickets/{ticket_id}`（**只给题面**；答案与参考解**不 surfaced**，§8）；`POST /instances/{id}/start` → `in_progress` | 平台 |
+| **1 选方向** | 浏览已部署的 Track 与其 stage 看板（可部署多个，前端出切换条） | `GET /tracks` · `GET /tracks/{id}`（board 含 `board_only` 阶段，不取卷） | 平台 |
+| **2 报名 + 接工单** | 看 stage 看板（🔒/🟥/✅，沿用 seckill-lab TASKS 看板语义），点"接取" | `POST /enrollments`（**带 track**；多 Track 下省略 ⇒ 400 `enroll_needs_track`）建 Enrollment 并**批量发卷**（按 `progression.prerequisites` 算 DAG 初始状态：无前置 ⇒ `available`，否则 `locked`）；实例盖 `track` 戳；`GET /instances?learner=&track=` 出看板 | 平台 |
+| **3 发卷** | 读工单：线上问题 / 考点 / `files_to_change` / 阶梯提示 | `GET /tracks/{track_id}/tickets/{ticket_id}`（权威地址：ticket id 只在 Track 内唯一；**只给题面**，答案与参考解**不 surfaced**，§8）；`POST /instances/{id}/start` → `in_progress` | 平台 |
 | **4 起工作区** | 在本地 IDE 写代码；需要时 `docker compose up` 起 runtime 依赖 | `POST /instances/{id}/provision`：clone 骨架仓、checkout 本阶段 `base_ref`，落到 `head_ref` 开发分支 | 平台（指示）+ **学员设备** |
 | **5 开发** | 在 `head_ref` 上提交；随时看平台给出的 diff 概览 | 平台**不跑** git 写操作，只指示（§8）；`GET /instances/{id}/diff` 出 base↔head diff（真本地 git） | **学员设备** |
 | **6 本地阅卷** | 跑 canonical 测试 / EXPLAIN / 并发 sim，产出**结构化阅卷报告** | 收报告（`GradingRunner` 缝）。**报告是不可信证据**：自带 `provenance` + `runner_trust`（§7.4） | **学员设备** |
@@ -812,7 +812,7 @@ AcceptanceDecision = f(
 | 阶段 | 目标 | 交付 | 状态 |
 |------|------|------|------|
 | **A′ 引擎无关切片** | 单 Track + 单机跑通完整闭环，**不依赖任何引擎** | `platform_api/`（纯 REST 控制面）+ `frontend/`（学习者 SPA）+ 三个 Protocol 缝与"诚实占位"桩 + 内置 demo Track；`content/schema/` + `admission.validate_track` | ✅ **已完成**（后端全量测试 + ruff 绿；前端单测 + 真浏览器 e2e 绿） |
-| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ **真 Forge**（`GiteaForgeClient` + `--forge gitea`：真 fork + 真 PR，VM 端到端实测过）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）、✅ **判定面硬门**（§11.3）、✅ **PostgreSQL `Store`**（`--store postgres`：真库上跑一致性套件，并起两次 uvicorn 证明重启后进度还在、取号接着走）；⬜ 多 Track 切换、⬜ 提交进度反馈、⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
+| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ **真 Forge**（`GiteaForgeClient` + `--forge gitea`：真 fork + 真 PR，VM 端到端实测过）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`）、✅ **判定面硬门**（§11.3）、✅ **PostgreSQL `Store`**（`--store postgres`：真库上跑一致性套件，并起两次 uvicorn 证明重启后进度还在、取号接着走）、✅ **多 Track 部署**（`--content-dir` 可重复：`GET /tracks` 列全部、enroll 指定 track、实例带 `track` 戳、每 Track 各自的 forge 与工作区）；⬜ 提交进度反馈、⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
 | **P2 教学增强** | 让"刷题"更像"带教" | 学习者画像（§10）、过程回放视图（§11.4）、（可选）AI 评审 / 口试挂件（§11.2 / §12.2） | ⬜ |
 | **P3 社区可贡献**（开源命脉） | 让别人也能出题 | `paper new-track` 脚手架生成器、`paper validate-track` CLI + CI 接线、贡献工作流与文档；第二个 Track（JVM / 并发）打样 | ⬜ |
 

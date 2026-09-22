@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS bagu_documents (
     kind        text        NOT NULL,
     id          text        NOT NULL,
     learner     text,
+    track       text,
     ticket_id   text,
     instance_id text,
     state       text,
@@ -61,10 +62,14 @@ CREATE TABLE IF NOT EXISTS bagu_documents (
     payload     jsonb       NOT NULL,
     PRIMARY KEY (kind, id)
 );
+-- 已存在的库补列（`CREATE TABLE IF NOT EXISTS` 不会加列）。
+ALTER TABLE bagu_documents ADD COLUMN IF NOT EXISTS track text;
 CREATE INDEX IF NOT EXISTS bagu_documents_learner_idx
     ON bagu_documents (kind, learner);
+CREATE INDEX IF NOT EXISTS bagu_documents_track_idx
+    ON bagu_documents (kind, learner, track);
 CREATE INDEX IF NOT EXISTS bagu_documents_ticket_idx
-    ON bagu_documents (kind, ticket_id);
+    ON bagu_documents (kind, track, ticket_id);
 CREATE INDEX IF NOT EXISTS bagu_documents_instance_idx
     ON bagu_documents (kind, instance_id, seq);
 
@@ -91,10 +96,11 @@ ON CONFLICT (prefix) DO NOTHING;
 
 _SAVE_SQL = """
 INSERT INTO bagu_documents
-    (kind, id, learner, ticket_id, instance_id, state, seq, created_at, payload)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    (kind, id, learner, track, ticket_id, instance_id, state, seq, created_at, payload)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (kind, id) DO UPDATE SET
     learner     = EXCLUDED.learner,
+    track       = EXCLUDED.track,
     ticket_id   = EXCLUDED.ticket_id,
     instance_id = EXCLUDED.instance_id,
     state       = EXCLUDED.state,
@@ -177,6 +183,7 @@ class PostgresStore(Store):
                 kind,
                 key or payload["id"],
                 columns.get("learner"),
+                columns.get("track"),
                 columns.get("ticket_id"),
                 columns.get("instance_id"),
                 columns.get("state"),
@@ -203,7 +210,7 @@ class PostgresStore(Store):
     ) -> list[Any]:
         where = ["kind = %s"]
         params: list[Any] = [kind]
-        for column in ("learner", "ticket_id", "instance_id"):
+        for column in ("learner", "track", "ticket_id", "instance_id"):
             value = filters.get(column)
             if value is not None:
                 where.append(f"{column} = %s")
@@ -243,6 +250,7 @@ class PostgresStore(Store):
             "instances",
             instance,
             learner=instance.learner,
+            track=instance.track,
             ticket_id=instance.ticket_id,
             state=instance.state.value,
         )
@@ -251,9 +259,19 @@ class PostgresStore(Store):
         return self._get("instances", instance_id, TicketInstance)
 
     def list_instances(
-        self, *, learner: str | None = None, ticket_id: str | None = None
+        self,
+        *,
+        learner: str | None = None,
+        ticket_id: str | None = None,
+        track: str | None = None,
     ) -> list[TicketInstance]:
-        return self._list("instances", TicketInstance, learner=learner, ticket_id=ticket_id)
+        return self._list(
+            "instances",
+            TicketInstance,
+            learner=learner,
+            ticket_id=ticket_id,
+            track=track,
+        )
 
     def save_submission(self, submission: Submission) -> None:
         self._save(
