@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from platform_service.errors import GateNotReadyError
 from platform_service.lifecycle import IllegalTransitionError
 from platform_service.models import (
     GradingReport,
@@ -212,7 +213,7 @@ def test_decide_requires_both_report_and_review(env: Any) -> None:
     report = GradingReport.model_validate(env.report(passed=True))
     submission = env.service.submit(inst.id, grading_report=report)  # review missing
 
-    with pytest.raises(ValueError):
+    with pytest.raises(GateNotReadyError):
         env.service.decide(submission.id)
 
 

@@ -36,6 +36,7 @@ export type ErrorCode =
   | 'grading_unavailable'
   | 'forge_unavailable'
   | 'remote_branch_missing'
+  | 'internal_error'
 
 export class ApiError extends Error {
   readonly status: number
@@ -92,6 +93,8 @@ export function humanize(
     }
     case 'remote_branch_missing':
       return `远端还没有 ${extra?.branch ?? 'dev'} 分支，所以开不了 PR。先在工作区里把改动 push 到该分支（平台不代你跑 git 写操作），再回来开单。`
+    case 'internal_error':
+      return '后端出了个没预期的错（平台不知道原因，所以没编一个）。请把服务端日志里的堆栈拿出来看。'
     default:
       return `后端返回了未识别的错误：${detail}`
   }

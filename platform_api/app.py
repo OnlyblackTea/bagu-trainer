@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from platform_service.ai_review import ReviewDiffTooLargeError
 from platform_service.content_loader import load_stage_refs, load_ticket_dirs
+from platform_service.errors import GateNotReadyError, NotFoundError
 from platform_service.forge import (
     ForgeUnavailableError,
     RemoteBranchMissingError,
@@ -42,15 +43,30 @@ def _register_exception_handlers(app: FastAPI) -> None:
     async def _illegal(request: Request, exc: IllegalTransitionError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": "illegal_transition"})
 
-    @app.exception_handler(KeyError)
-    async def _key(request: Request, exc: KeyError) -> JSONResponse:
+    @app.exception_handler(NotFoundError)
+    async def _missing(request: Request, exc: NotFoundError) -> JSONResponse:
+        """实例 / 提交 / 工单不存在 → 404 ``not_found``。
+
+        **只认这一种类型**：以前这里挂的是 ``KeyError``，于是任何一处打错字的 KeyError 都会被
+        说成"资源不存在"（§C.8 要短码是为了让人看懂，不是为了让所有错看起来一样）。
+        """
         return JSONResponse(status_code=404, content={"detail": "not_found"})
 
-    @app.exception_handler(ValueError)
-    async def _value(request: Request, exc: ValueError) -> JSONResponse:
+    @app.exception_handler(GateNotReadyError)
+    async def _gate_not_ready(request: Request, exc: GateNotReadyError) -> JSONResponse:
+        """验收门前置未齐（缺阅卷报告或评审）→ 409 ``decide_needs_report_and_review``。"""
         return JSONResponse(
             status_code=409, content={"detail": "decide_needs_report_and_review"}
         )
+
+    @app.exception_handler(Exception)
+    async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
+        """没被识别的异常 → 500 ``internal_error``。
+
+        仍然给短码（§C.8：错误一律 ``{"detail": "<短码>"}``），但**不假装知道原因**——
+        以前它会被 ValueError 的兜底映射伪装成"你还没评审"，学员照着做也过不去。
+        """
+        return JSONResponse(status_code=500, content={"detail": "internal_error"})
 
     @app.exception_handler(ReviewDiffTooLargeError)
     async def _too_large(request: Request, exc: ReviewDiffTooLargeError) -> JSONResponse:

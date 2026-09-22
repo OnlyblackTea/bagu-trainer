@@ -113,26 +113,41 @@ def test_illegal_transition_maps_409(tmp_path: Path) -> None:
     assert TestClient(app, raise_server_exceptions=False).get("/_boom_illegal").status_code == 409
 
 
-def test_value_error_maps_409(tmp_path: Path) -> None:
+def test_unexpected_value_error_is_500_not_a_fake_hint(tmp_path: Path) -> None:
+    """裸 ValueError 不再伪装成"你还没评审"。
+
+    以前 ValueError 被兜底映射成 ``decide_needs_report_and_review``：一个真正的编程错误会被
+    说成"前置没齐"，学员照着提示做完还是过不去。现在它落成 500 ``internal_error``——
+    仍然给短码，但**不假装知道原因**。
+    """
+    from platform_service.errors import GateNotReadyError, NotFoundError
+
     app = _app(tmp_path)
 
     @app.get("/_boom_value")
     def _boom() -> None:
-        raise ValueError("needs both")
-
-    r = TestClient(app, raise_server_exceptions=False).get("/_boom_value")
-    assert r.status_code == 409 and r.json()["detail"] == "decide_needs_report_and_review"
-
-
-def test_key_error_maps_404(tmp_path: Path) -> None:
-    app = _app(tmp_path)
+        raise ValueError("some internal invariant broke")
 
     @app.get("/_boom_key")
-    def _boom() -> None:
-        raise KeyError("nope")
+    def _boom_key() -> None:
+        raise KeyError("typo somewhere")  # 打错字的 KeyError 不再等于"资源不存在"
 
-    r = TestClient(app, raise_server_exceptions=False).get("/_boom_key")
-    assert r.status_code == 404 and r.json()["detail"] == "not_found"
+    @app.get("/_boom_not_found")
+    def _boom_nf() -> None:
+        raise NotFoundError("no such instance")
+
+    @app.get("/_boom_gate")
+    def _boom_gate() -> None:
+        raise GateNotReadyError("needs report + review")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    assert client.get("/_boom_value").status_code == 500
+    assert client.get("/_boom_value").json()["detail"] == "internal_error"
+    assert client.get("/_boom_key").status_code == 500
+    assert client.get("/_boom_not_found").status_code == 404
+    assert client.get("/_boom_not_found").json()["detail"] == "not_found"
+    assert client.get("/_boom_gate").status_code == 409
+    assert client.get("/_boom_gate").json()["detail"] == "decide_needs_report_and_review"
 
 
 def test_diff_too_large_maps_422(tmp_path: Path) -> None:

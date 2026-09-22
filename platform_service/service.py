@@ -18,6 +18,7 @@ from __future__ import annotations
 import itertools
 
 from .acceptance import decide_acceptance, find_tampering
+from .errors import GateNotReadyError, NotFoundError
 from .lifecycle import record_submission, transition
 from .lifecycle import reissue as reissue_instance
 from .models import (
@@ -94,13 +95,13 @@ class PlatformService:
     def _must_get_instance(self, instance_id: str) -> TicketInstance:
         instance = self._store.get_instance(instance_id)
         if instance is None:
-            raise KeyError(f"unknown instance: {instance_id}")
+            raise NotFoundError(f"unknown instance: {instance_id}")
         return instance
 
     def _must_get_submission(self, submission_id: str) -> Submission:
         submission = self._store.get_submission(submission_id)
         if submission is None:
-            raise KeyError(f"unknown submission: {submission_id}")
+            raise NotFoundError(f"unknown submission: {submission_id}")
         return submission
 
     # --- lifecycle operations ------------------------------------------------
@@ -195,7 +196,7 @@ class PlatformService:
         report = self._store.get_report(submission_id)
         review = self._store.get_review(submission_id)
         if report is None or review is None:
-            raise ValueError(
+            raise GateNotReadyError(
                 f"submission {submission_id} needs both a grading report and a review"
             )
 
@@ -268,7 +269,7 @@ class PlatformService:
             if inst.state is not InstanceState.STALE
         ]
         if not live:
-            raise ValueError(f"no live instance for learner {learner} ticket {ticket_id}")
+            raise NotFoundError(f"no live instance for learner {learner} ticket {ticket_id}")
         old, fresh = reissue_instance(
             live[-1],
             new_id=self._next_id("ti"),
