@@ -150,162 +150,212 @@ export default function App() {
   function pane(t: TrackDetail) {
     return (
       <>
-        <StageBoard
-          track={t}
-          stateOf={instanceOf}
-          selectedStage={selected?.stage ?? null}
-          onSelect={selectStage}
-          onEnroll={() =>
-            run(async () => {
-              const res = await api.enroll(LEARNER, t.id)
-              setInstances(res.instances)
-              setNotice('已入学：根阶段可开始，其后阶段保持未解锁。')
-            })
-          }
-          busy={busy}
-        />
+        {/* 左栏：去哪（导航）。窄、紧凑、一屏看完整条解锁链。 */}
+        <aside className="rail rail--nav">
+          <StageBoard
+            track={t}
+            stateOf={instanceOf}
+            selectedStage={selected?.stage ?? null}
+            onSelect={selectStage}
+            onEnroll={() =>
+              run(async () => {
+                const res = await api.enroll(LEARNER, t.id)
+                setInstances(res.instances)
+                setNotice('已入学：根阶段可开始，其后阶段保持未解锁。')
+              })
+            }
+            busy={busy}
+          />
+        </aside>
 
-        {selected && (
-          <div className="panel-stack">
-            <TicketView stage={selected} trackId={t.id} />
+        {/* 中栏：做什么 + 结果（读题、git、提交、阅卷、决策都在这一列按流程往下排）。 */}
+        <main className="work">
+          {selected ? (
+            <>
+              <TicketView stage={selected} trackId={t.id} />
 
-            {current ? (
-              <>
-                <WorkspaceView
-                  instance={current}
-                  busy={busy}
-                  onStart={() =>
-                    run(async () => {
-                      await api.start(current.id)
-                      await refreshInstances(t.id)
-                    })
-                  }
-                />
-
-                <ReviewView
-                  instance={current}
-                  submission={submission}
-                  review={review}
-                  busy={busy}
-                  onSubmit={(scenario: GradingScenario) =>
-                    run(async () => {
-                      // 提交是异步的（202）：先把 submission 与进度画出来，再等轮询。
-                      const accepted = await api.submit(current.id, { scenario })
-                      pollGeneration.current += 1
-                      const generation = pollGeneration.current
-                      setSubmission(accepted.submission)
-                      setProgress(accepted.progress)
-                      setReport(null)
-                      setReview(null)
-                      setDecision(null)
-                      await refreshInstances(t.id)
-                      setNotice('已受理：阅卷在后台跑，进度见下。')
-                      setHistoryKey((n) => n + 1)
-                      // 不 await：轮询自己会更新进度，界面不该被它挂住。
-                      void pollGrading(accepted.submission.id, generation).catch((e: unknown) => {
-                        if (pollGeneration.current === generation) {
-                          setError(e instanceof Error ? e.message : String(e))
-                        }
+              {current ? (
+                <>
+                  <WorkspaceView
+                    instance={current}
+                    busy={busy}
+                    onStart={() =>
+                      run(async () => {
+                        await api.start(current.id)
+                        await refreshInstances(t.id)
                       })
-                    })
-                  }
-                  onReview={(scenario: ReviewScenario) =>
-                    run(async () => {
-                      const reviewOut = await api.review(submission!.id, { scenario })
-                      setReview(reviewOut)
-                      setDecision(null)
-                      await refreshInstances(t.id)
-                      setNotice('评审完成（占位后端）。可以取确定性结论了。')
-                    })
-                  }
-                />
+                    }
+                  />
 
-                <GradingView submission={submission} progress={progress} report={report} />
+                  <ReviewView
+                    instance={current}
+                    submission={submission}
+                    review={review}
+                    busy={busy}
+                    onSubmit={(scenario: GradingScenario) =>
+                      run(async () => {
+                        // 提交是异步的（202）：先把 submission 与进度画出来，再等轮询。
+                        const accepted = await api.submit(current.id, { scenario })
+                        pollGeneration.current += 1
+                        const generation = pollGeneration.current
+                        setSubmission(accepted.submission)
+                        setProgress(accepted.progress)
+                        setReport(null)
+                        setReview(null)
+                        setDecision(null)
+                        await refreshInstances(t.id)
+                        setNotice('已受理：阅卷在后台跑，进度见下。')
+                        setHistoryKey((n) => n + 1)
+                        // 不 await：轮询自己会更新进度，界面不该被它挂住。
+                        void pollGrading(accepted.submission.id, generation).catch(
+                          (e: unknown) => {
+                            if (pollGeneration.current === generation) {
+                              setError(e instanceof Error ? e.message : String(e))
+                            }
+                          },
+                        )
+                      })
+                    }
+                    onReview={(scenario: ReviewScenario) =>
+                      run(async () => {
+                        const reviewOut = await api.review(submission!.id, { scenario })
+                        setReview(reviewOut)
+                        setDecision(null)
+                        await refreshInstances(t.id)
+                        setNotice('评审完成（占位后端）。可以取确定性结论了。')
+                      })
+                    }
+                  />
 
-                <HistoryView instanceId={current.id} refreshKey={historyKey} />
+                  <GradingView submission={submission} progress={progress} report={report} />
 
-                <DecisionView
-                  instance={current}
-                  submission={submission}
-                  review={review}
-                  decision={decision}
-                  busy={busy}
-                  onDecide={() =>
-                    run(async () => {
-                      const out = await api.decide(submission!.id)
-                      setDecision(out)
-                      // 决策响应带"这个 learner 的全部实例"：按当前 Track 过滤后再刷新看板。
-                      setInstances(out.instances.filter((i) => i.track === t.id))
-                      setHistoryKey((n) => n + 1)
-                      setNotice(
-                        out.decision.verdict === 'pass'
-                          ? '通过：下一阶段已解锁。'
-                          : '未通过：可按评审批注返工后重来。',
-                      )
-                    })
-                  }
-                  onRetry={() =>
-                    run(async () => {
-                      await api.retry(current.id)
-                      clearChain()
-                      await refreshInstances(t.id)
-                      setNotice('已回到「开发中」，可再走一遍提交 → 评审 → 决策。')
-                    })
-                  }
-                />
-              </>
-            ) : (
-              <section className="card">
-                <p className="muted">这个阶段还没有实例——先「入学」。</p>
-              </section>
-            )}
-          </div>
-        )}
+                  <DecisionView
+                    instance={current}
+                    submission={submission}
+                    review={review}
+                    decision={decision}
+                    busy={busy}
+                    onDecide={() =>
+                      run(async () => {
+                        const out = await api.decide(submission!.id)
+                        setDecision(out)
+                        // 决策响应带"这个 learner 的全部实例"：按当前 Track 过滤后再刷新看板。
+                        setInstances(out.instances.filter((i) => i.track === t.id))
+                        setHistoryKey((n) => n + 1)
+                        setNotice(
+                          out.decision.verdict === 'pass'
+                            ? '通过：下一阶段已解锁。'
+                            : '未通过：可按评审批注返工后重来。',
+                        )
+                      })
+                    }
+                    onRetry={() =>
+                      run(async () => {
+                        await api.retry(current.id)
+                        clearChain()
+                        await refreshInstances(t.id)
+                        setNotice('已回到「开发中」，可再走一遍提交 → 评审 → 决策。')
+                      })
+                    }
+                  />
+                </>
+              ) : (
+                <section className="card">
+                  <p className="muted">这个阶段还没有实例——先在左侧「入学」。</p>
+                </section>
+              )}
+            </>
+          ) : (
+            <section className="card empty">
+              <h2 className="card__title">选一个阶段开始</h2>
+              <p className="muted">
+                左边是这条 Track 的解锁链。点一个<strong>已出卷</strong>阶段，题面会出现在这里。
+              </p>
+            </section>
+          )}
+        </main>
+
+        {/* 右栏：判到哪了 + 记录（窄栏，扫一眼就够；宽内容留在中栏）。 */}
+        <aside className="rail rail--state">
+          {current && (
+            <section className="card status-card" data-testid="instance-status">
+              <h2 className="card__title">当前实例</h2>
+              <dl className="kv kv--tight">
+                <dt>工单</dt>
+                <dd>
+                  <code>{current.ticket_id}</code>
+                </dd>
+                <dt>实例</dt>
+                <dd>
+                  <code>{current.id}</code>
+                </dd>
+              </dl>
+              <p className="muted">
+                工单 v{current.ticket_version} · 测试 v{current.test_version} · 引擎锚{' '}
+                {current.engine_version}
+              </p>
+            </section>
+          )}
+
+          {current && <HistoryView instanceId={current.id} refreshKey={historyKey} />}
+
+          {!current && (
+            <section className="card">
+              <h2 className="card__title">历史尝试</h2>
+              <p className="muted">选中一个阶段后，这里显示它的每一次提交与阅卷记录。</p>
+            </section>
+          )}
+        </aside>
       </>
     )
   }
 
   return (
-    <div className="app">
-      <header className="app__header">
-        <h1 className="app__title">八股实战演练所</h1>
-        <p className="app__tagline">
-          内容（Track）+ git + 本地阅卷 + 确定性门。平台只 <strong>gate + 指示</strong>
-          ；被评分的代码由你在本地亲手写。
-        </p>
-        <p className="app__meta">
-          部署者即唯一用户 · <SimulatedBadge />
-          阅卷 / AI 评审 / Forge 三处均为占位后端
-        </p>
+    <div className={`app${track ? '' : ' app--boot'}`}>
+      <header className="topbar">
+        <div className="topbar__brand">
+          <h1 className="topbar__title">八股实战演练所</h1>
+          <p className="topbar__tagline">
+            内容（Track）+ git + 本地阅卷 + 确定性门。平台只 <strong>gate + 指示</strong>
+            ；被评分的代码由你在本地亲手写。
+          </p>
+        </div>
+        <div className="topbar__side">
+          <TrackSwitcher
+            tracks={tracks}
+            currentId={track?.id ?? ''}
+            onSelect={selectTrack}
+            busy={busy}
+          />
+          <p className="topbar__meta">
+            部署者即唯一用户 · <SimulatedBadge />
+            {/* 不再笼统说"三处均为占位后端"：真假**逐项**看每处的「模拟」徽标
+                （真阅卷的报告带 simulated:false，不盖这个章）。 */}
+            各环节真假如实标注：见每处的「模拟」徽标
+          </p>
+        </div>
       </header>
 
-      <TrackSwitcher
-        tracks={tracks}
-        currentId={track?.id ?? ''}
-        onSelect={selectTrack}
-        busy={busy}
-      />
-
-      {error && (
-        <div className="alert alert--error" role="alert" style={{ marginBottom: 16 }}>
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="alert alert--info" style={{ marginBottom: 16 }}>
-          {notice}
+      {(error || notice) && (
+        <div className="app__flash">
+          {error && (
+            <div className="alert alert--error" role="alert">
+              {error}
+            </div>
+          )}
+          {notice && <div className="alert alert--info">{notice}</div>}
         </div>
       )}
 
-      <main className="app__main">
-        {track ? (
-          pane(track)
-        ) : (
+      {track ? (
+        pane(track)
+      ) : (
+        <main className="work">
           <section className="card">
             <p className="muted">加载 Track…</p>
           </section>
-        )}
-      </main>
+        </main>
+      )}
     </div>
   )
 }

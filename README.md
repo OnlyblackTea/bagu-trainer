@@ -65,8 +65,33 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，61 passed
+npm test                                      # vitest + RTL，80 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
+```
+
+### 界面（学习者 SPA）
+
+三栏，按**用途**分而不是一路往下堆：左栏是导航（阶段看板 + 通关进度，sticky 常驻），中栏是
+**读题与干活**（题面 → 工作区 → 提交 → 阅卷 → 决策，按流程往下排），右栏是**当前实例与历史记录**。
+窄屏（≤1279px）收成两栏，≤899px 收成一栏。
+
+题面按 **Markdown** 渲染（`marked`）+ **TeX**（KaTeX）：Track 作者本来就是按 Markdown 写
+`brief.problem` 的（`**加粗**`、`` `内联代码` ``、`1) 2)` 列表、缩进代码块），当纯文本直出时记号
+原样露出、换行被折叠，整段糊成一坨。渲染前还做一次**CJK 排版规范化**：中文题面常用单换行做有意
+义的分行（`①②`），又常为了在 YAML 里好看而在句中硬换行——纯 Markdown 只能二选一（全接起来丢
+结构，或全断开把句子劈成两半），所以按标点判断该接的接、该断的断，并把缩进的类代码块明确围栏
+起来（否则列表项里的 SQL 会散成普通段落）。内容可能来自**社区贡献的 Track**，所以渲染结果一律
+经 DOMPurify 消毒（`marked` 也已关掉原始 HTML）。
+
+> 代价：这三个依赖（marked / katex / dompurify）让前端 JS 产物从 ~250 KB 涨到 ~575 KB
+> （gzip 183 KB）。自托管单用户场景下不值一提，介意的话可以按需拆包。
+
+想看改版后的样子（两个栈各截几张，含 1:1 局部）：
+
+```bash
+cd frontend
+npm run ui:shots      # 整页；REAL_URL=... REAL_SUBMIT=1 可连真后端跑一次真阅卷
+npm run ui:clips      # 1:1 局部（题面 / 判据 / 提示 / 历史），判断排版质量用这个
 ```
 
 ### 真跑一次阅卷（不是桩）

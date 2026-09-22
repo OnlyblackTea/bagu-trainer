@@ -11,9 +11,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "ui:shots": "node e2e/ui-shots.mjs",
+    "ui:clips": "node e2e/ui-clips.mjs"
   },
   "dependencies": {
+    "dompurify": "^3.4.15",
+    "katex": "^0.18.7",
+    "marked": "^18.0.14",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

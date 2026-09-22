@@ -16,6 +16,8 @@
   --sim-soft: #f3ecff;
   --radius: 10px;
   --gap: 16px;
+  /* 正文的阅读宽度。超过约 70 个字符，眼睛回行就会丢行——中文题面尤其明显。 */
+  --measure: 68ch;
 }
 
 * {
@@ -36,43 +38,141 @@ body {
   line-height: 1.6;
 }
 
+/**
+ * 整体分区（左：去哪 / 中：做什么 / 右：判到哪了）。
+ *
+ * 以前是一条 `max-width: 1080px` 的竖列：宽屏上左右各空一大片，而题目、git 操作、阅卷、决策
+ * 全挤在同一条线里，读者的眼睛只能一路往下扫。现在按**用途**分三栏：导航常驻左侧（sticky），
+ * 阅读与操作的宽内容放中栏，状态与历史放右侧窄栏——横向空间被真正用起来，注意力也有了主次。
+ */
 .app {
-  max-width: 1080px;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr) 372px;
+  grid-template-areas:
+    'top top top'
+    'nav work state';
+  align-items: start;
+  gap: 20px var(--gap);
+  max-width: 1560px;
   margin: 0 auto;
-  padding: 32px 20px 64px;
+  padding: 0 24px 72px;
 }
 
-.app__header {
+.app--boot {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'top' 'work';
+}
+
+.rail--nav {
+  grid-area: nav;
+  /* 看板要一直看得见：读长题面时"我在第几关"不该滚出屏幕。 */
+  position: sticky;
+  top: 84px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.work {
+  grid-area: work;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+.rail--state {
+  grid-area: state;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+.topbar {
+  grid-area: top;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 20px;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 14px 0 12px;
+  margin-bottom: 4px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
-  padding-bottom: 16px;
-  margin-bottom: 24px;
 }
 
-.app__title {
-  margin: 0 0 6px;
-  font-size: 26px;
+.topbar__title {
+  margin: 0 0 2px;
+  font-size: 22px;
   letter-spacing: 0.01em;
 }
 
-.app__tagline {
+.topbar__tagline {
   margin: 0;
   color: var(--muted);
+  font-size: 13px;
+  max-width: 62ch;
 }
 
-.app__meta {
-  margin: 8px 0 0;
+.topbar__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.topbar__meta {
+  margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-.app__main {
+.app__flash {
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
-  gap: var(--gap);
+  gap: 8px;
+}
+
+/* 窄屏：右栏挪到中栏下面；再窄就整成一列。 */
+@media (max-width: 1279px) {
+  .app {
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-areas:
+      'top top'
+      'nav work'
+      'nav state';
+  }
+  .rail--nav {
+    position: sticky;
+  }
+}
+
+@media (max-width: 899px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'top' 'nav' 'work' 'state';
+    padding: 0 14px 56px;
+  }
+  .rail--nav {
+    position: static;
+  }
+  .topbar__side {
+    align-items: flex-start;
+  }
+  .topbar__meta {
+    justify-content: flex-start;
+  }
 }
 
 /* --- 通用块 --- */
@@ -82,6 +182,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px 18px;
+  min-width: 0;
 }
 
 .card__title {
@@ -93,15 +194,16 @@ body {
   flex-wrap: wrap;
 }
 
-.panel-stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap);
+.card.empty {
+  padding: 28px 22px;
 }
 
 .muted {
   color: var(--muted);
   font-size: 13px;
+  /* 真阅卷的报错文本里全是 `com.devteam.seckill.mapper.ProductMapper.searchProducts` 这种长标识，
+     窄栏里不给断行就会溢出被裁掉。 */
+  overflow-wrap: anywhere;
 }
 
 .row {
@@ -144,13 +246,23 @@ button.primary:hover:not(:disabled) {
   color: #fff;
 }
 
+/* 主行动要一眼看出来：同一行里给它更多体量与留白。 */
+button.primary {
+  padding: 9px 18px;
+  font-weight: 600;
+}
+
+button.block {
+  width: 100%;
+}
+
 /* --- 选方向（多 Track）--- */
 
 .track-switcher {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 0 0 16px;
+  justify-content: flex-end;
 }
 
 /* 只在部署了多个 Track 时出现（单 Track 时组件直接不渲染）。 */
@@ -301,50 +413,397 @@ button.primary:hover:not(:disabled) {
   font-weight: 600;
 }
 
-/* --- 看板 --- */
+/* --- 看板（左栏 · 导航）--- */
+
+.board-card {
+  padding: 14px 14px 10px;
+}
+
+.board-card__head {
+  margin-bottom: 10px;
+}
+
+.board-card__title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.board-card__meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.board-card__enroll {
+  margin: 4px 0 12px;
+}
+
+.board-card__enroll p {
+  margin: 6px 0 0;
+}
+
+.board-progress {
+  margin: 0 0 12px;
+}
+
+.board-progress__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.board-progress__bar span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+  transition: width 0.25s ease;
+}
 
 .board {
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }
 
 .stage {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px 12px;
-  align-items: center;
+  display: block;
+  width: 100%;
   text-align: left;
-  padding: 12px 14px;
+  padding: 9px 11px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 8px;
   background: var(--surface);
   cursor: pointer;
+  line-height: 1.45;
 }
 
 .stage--selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  background: var(--accent-soft);
 }
 
 .stage--board_only {
   border-style: dashed;
   cursor: default;
+  opacity: 0.85;
+}
+
+.stage__line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .stage__name {
   font-weight: 600;
+  font-size: 13.5px;
 }
 
 .stage__dir {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
 }
 
 .stage__prereq {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* "下一步"提示：学员最常问的就是"我现在该做哪个"。 */
+.badge--next {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: #ffd9a8;
+  font-weight: 600;
+}
+
+.stage .badge {
+  font-size: 11px;
+  padding: 1px 7px;
+}
+
+/* --- 题目：按文档排版，而不是一坨文字 --- */
+
+.ticket {
+  padding: 20px 24px 22px;
+}
+
+.ticket__head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ticket__kicker {
   font-size: 12px;
   color: var(--muted);
-  grid-column: 1 / -1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ticket__title {
+  margin: 6px 0 8px;
+  font-size: 23px;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+}
+
+.ticket__concepts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ticket__toc {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+}
+
+.ticket__toc a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--border);
+}
+
+.ticket__toc a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.ticket__section {
+  margin-top: 18px;
+  /* 锚点跳转时给 sticky 顶栏留出空间，否则标题会被压在栏下面。 */
+  scroll-margin-top: 88px;
+}
+
+.ticket__label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+
+.ticket__expect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.files li {
+  padding: 5px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.hints {
+  display: grid;
+  gap: 6px;
+}
+
+.hint {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+}
+
+.hint summary {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.hint__first {
+  font-size: 13.5px;
+}
+
+.hint[open] summary {
+  margin-bottom: 6px;
+}
+
+/* --- 正文排版（Markdown 渲染结果）--- */
+
+.prose {
+  max-width: var(--measure);
+  font-size: 15px;
+  line-height: 1.8;
+  overflow-wrap: break-word;
+}
+
+.prose > *:first-child {
+  margin-top: 0;
+}
+
+.prose > *:last-child {
+  margin-bottom: 0;
+}
+
+.prose p {
+  margin: 0 0 12px;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  margin: 20px 0 8px;
+  line-height: 1.35;
+}
+
+.prose h1 {
+  font-size: 19px;
+}
+.prose h2 {
+  font-size: 17px;
+}
+.prose h3 {
+  font-size: 15.5px;
+}
+.prose h4 {
+  font-size: 14.5px;
+  color: var(--muted);
+}
+
+.prose ul,
+.prose ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.prose li {
+  margin-bottom: 4px;
+}
+
+.prose li > p {
+  margin-bottom: 6px;
+}
+
+.prose a {
+  color: var(--accent);
+}
+
+.prose blockquote {
+  margin: 0 0 12px;
+  padding: 6px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+.prose code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 0.88em;
+  overflow-wrap: anywhere;
+}
+
+.prose pre {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 代码块里的 code 不要再套一层底色，否则深色底上出现浅色小块。 */
+.prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+  font-size: 13.5px;
+}
+
+.prose th,
+.prose td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.prose th {
+  background: var(--bg);
+}
+
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 18px 0;
+}
+
+.prose strong {
+  color: #0f172a;
+}
+
+/* KaTeX 块级公式可能比栏宽还宽：让它自己滚，不把整栏撑破。 */
+.prose .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+.prose--compact {
+  font-size: 13.5px;
+  line-height: 1.7;
+  max-width: none;
+}
+
+.prose--compact p {
+  margin: 0 0 6px;
+}
+
+/* --- 当前实例（右栏摘要）--- */
+
+.status-card {
+  padding: 14px 16px;
+}
+
+.status-card .card__title {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.kv--tight {
+  gap: 2px 10px;
+  font-size: 13px;
 }
 
 /* --- 结构列表 --- */
@@ -378,6 +837,12 @@ ul.tight li {
 code,
 pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* 测试类名/文件路径很长（`com.devteam.seckill.stage01.ProductQueryIndexAcceptanceTest`），
+   在窄栏里必须能断行，否则直接溢出卡片右侧被裁掉。pre 例外：它自己横向滚动。 */
+code {
+  overflow-wrap: anywhere;
 }
 
 pre.diff {
