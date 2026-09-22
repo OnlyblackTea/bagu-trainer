@@ -14,9 +14,14 @@ interface Props {
 /**
  * 屏幕 3：工作区 / 进度（spec §C.6 + §C.5）。
  *
- * 这里要讲清"平台只 gate + 指示、**不替学员跑 git 写操作**"：provision 是只读拉取（占位
- * 用本地 clone），diff 是只读 `git diff`，而 commit / merge / cherry-pick 都得学员在自己
- * 机器上做。所以 gate 文案紧跟在状态后面，且写明"下一步该做什么 git 动作"。
+ * 这里要讲清"平台只 gate + 指示、**不替学员跑 git 写操作**"：provision 是只读拉取，diff 是只读
+ * `git diff`，而 commit / push / PR 都得学员自己驱动。所以：
+ *
+ * * gate 文案紧跟在状态后面，写明"下一步该做什么 git 动作"；
+ * * 真 Forge 下给出**可以直接照抄**的 git 命令（凭据由工作区的 credential helper 提供，命令里
+ *   不含 token）；
+ * * **`模拟` 徽标逐项跟着端点的真实 `simulated` 走**——真 fork / 真 diff / 真 PR 上盖"模拟"章会
+ *   把真结果说成假的（§15 风险 5），反过来桩产出没有徽标就是骗人。
  */
 export function WorkspaceView({ instance, busy, onStart }: Props) {
   const [workspace, setWorkspace] = useState<WorkspaceOut | null>(null)
@@ -59,8 +64,7 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
         {instance.gate}
       </div>
       <p className="muted">
-        平台只 <strong>gate + 指示</strong>，不替你跑 git 写操作；commit / merge /
-        cherry-pick 都在你自己的机器上做。
+        平台只 <strong>gate + 指示</strong>，不替你跑 git 写操作；commit / push / 开 PR 都由你驱动。
       </p>
 
       <div className="row">
@@ -83,8 +87,11 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
         >
           查看 diff
         </button>
-        <button onClick={() => run(async () => setPr(await api.createPr(instance.id)))} disabled={disabled}>
-          提 PR（占位）
+        <button
+          onClick={() => run(async () => setPr(await api.createPr(instance.id)))}
+          disabled={disabled}
+        >
+          开 PR
         </button>
       </div>
 
@@ -97,52 +104,81 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
       {workspace && (
         <div style={{ marginTop: 14 }} data-testid="workspace-info">
           <h3 className="card__title">
-            工作区 <SimulatedBadge what="Forge" />
+            工作区
+            {workspace.simulated ? <SimulatedBadge what="Forge" /> : <span className="badge">真 Gitea</span>}
           </h3>
           <dl className="kv">
             <dt>路径</dt>
             <dd>
               <code>{workspace.path}</code>
             </dd>
-            <dt>分支</dt>
+            <dt>你的分支</dt>
             <dd>
               <code>{workspace.branch}</code>
             </dd>
-            <dt>diff 两端</dt>
+            <dt>骨架</dt>
             <dd>
-              <code>
-                {workspace.base_ref} ↔ {workspace.head_ref}
-              </code>
+              <code>{workspace.base_ref}</code>
             </dd>
           </dl>
-          <p className="muted">
-            占位 Forge 用「本地 clone + 内容预置的解法 ref」冒充你的开发成果；
-            真实 Gitea fork 会在未来切片接入。
-          </p>
+
+          {workspace.push_hint && (
+            <div className="hint-block" data-testid="push-hint">
+              <p className="muted">
+                在这个目录里自己提交并推送（凭据已经配好了，命令里不含 token）：
+              </p>
+              <pre className="cmd">{workspace.push_hint}</pre>
+              <p className="muted">推完再点「开 PR」，平台会从你的分支向上游的阶段分支开单。</p>
+            </div>
+          )}
+          {workspace.simulated && (
+            <p className="muted">
+              占位 Forge 用「本地 clone + 内容预置的解法 ref」冒充你的开发成果；
+              换 `--forge gitea` 就是真 fork、真 push、真 PR。
+            </p>
+          )}
         </div>
       )}
 
       {pr && (
         <div style={{ marginTop: 14 }} data-testid="pr-info">
           <h3 className="card__title">
-            PR <SimulatedBadge what="Forge" />
+            PR
+            {pr.simulated ? <SimulatedBadge what="Forge" /> : <span className="badge">真 Gitea</span>}
           </h3>
-          <p>
-            <code>{pr.pr_url}</code>
-          </p>
+          {pr.simulated ? (
+            <p>
+              <code>{pr.pr_url}</code>
+            </p>
+          ) : (
+            <p>
+              <a href={pr.pr_url} target="_blank" rel="noreferrer" data-testid="pr-link">
+                {pr.pr_url}
+              </a>
+            </p>
+          )}
         </div>
       )}
 
       {diff && (
         <div style={{ marginTop: 14 }} data-testid="diff-info">
           <h3 className="card__title">
-            改动预览 <SimulatedBadge what="diff 来源" />
+            改动预览
+            {diff.simulated ? <SimulatedBadge what="diff 来源" /> : null}
+            <span className="badge">{diff.total_chars} 字符</span>
           </h3>
           <p className="muted">
-            {diff.base_ref} ↔ {diff.head_ref} · {diff.total_chars} 字符
+            {diff.base_ref} ↔ {diff.diff_head_ref ?? '工作区（含未提交改动）'}
+            {diff.worktree && ' ⇐ 你现在看到的包含还没 commit 的改动'}
             {diff.truncated_files.length > 0 && ` · 被截断：${diff.truncated_files.join('、')}`}
           </p>
-          <pre className="diff">{diff.diff}</pre>
+          {diff.diff.trim() === '' ? (
+            <div className="alert alert--info" data-testid="diff-empty">
+              工作区里还没有改动——去 <code>src/</code> 下把这一题写完，再回来看。
+            </div>
+          ) : (
+            <pre className="diff">{diff.diff}</pre>
+          )}
         </div>
       )}
     </section>

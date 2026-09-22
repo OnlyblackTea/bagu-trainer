@@ -17,6 +17,7 @@ from platform_service.forge import (
     Workspace,
     WorkspaceRefMissingError,
     _absolute_clone_url,
+    git,
 )
 from platform_service.models import TicketInstance
 from platform_service.review_diff import generate_diff
@@ -92,6 +93,19 @@ def test_provision_is_idempotent(tmp_path: Path) -> None:
     first = forge.provision(_instance())
     second = forge.provision(_instance())
     assert first.path == second.path  # 不重复 clone
+
+
+def test_stub_has_no_dev_branch_and_no_push_path(tmp_path: Path) -> None:
+    """桩**故意**不建 ``dev``、也不给 push 命令：它没有人真的写代码，没有可推的远端。
+
+    （`dev` 的"从远端继续"逻辑因此归真 Forge 测——那才是学员真的会走的那条路。）
+    """
+    forge = _forge(tmp_path)
+    ws = forge.provision(_instance())
+
+    branches = git(ws.path, "for-each-ref", "--format=%(refname:short)", "refs/heads").stdout
+    assert "dev" not in branches.split()
+    assert ws.push_hint is None
 
 
 def test_create_pr_returns_placeholder(tmp_path: Path) -> None:

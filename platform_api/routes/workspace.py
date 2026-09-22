@@ -29,13 +29,23 @@ def provision(instance_id: str, request: Request) -> dict[str, Any]:
 
 @router.get("/instances/{instance_id}/diff")
 def diff(instance_id: str, request: Request) -> dict[str, Any]:
+    """base ↔ **学员的东西**的 diff（真本地 git）。
+
+    比的是 ``ws.diff_head_ref``，不是 ``head_ref``：真 Forge 下它是 ``None`` = **工作区**，也就是
+    "包含你还没 commit 的改动"。学员改完文件第一件事就是想看 diff，这时拿 ``dev``（只含已提交）去
+    比会显示"没有改动"——那比不给看更糟。桩的 ``diff_head_ref`` 是内容预置的解法 ref（它没有人真的
+    写代码），所以 ``simulated`` 照旧为真。
+    """
     instance = must_instance(request, instance_id)
     ws = bundle_for_instance(request, instance).forge.provision(instance)  # 幂等：确保已 clone
-    text = generate_diff(ws.path, base=ws.base_ref, head=ws.head_ref)
+    text = generate_diff(ws.path, base=ws.base_ref, head=ws.diff_head_ref)
     volume = preflight_diff_volume(text)
     return {
         "base_ref": ws.base_ref,
         "head_ref": ws.head_ref,
+        "diff_head_ref": ws.diff_head_ref,
+        # head 为 None ⇒ 和工作区比。前端据此把"比较的是什么"说清楚，而不是笼统写 base ↔ head。
+        "worktree": ws.diff_head_ref is None,
         "diff": text,
         "total_chars": volume.total_chars,
         "truncated_files": list(volume.truncated_files),

@@ -6,10 +6,15 @@
 而不是把基础设施故障说成"你的代码没过"。
 
 **token 不进工作区**：clone 时用带 token 的临时 URL，clone 完把 remote 改回干净 URL
-（见 :meth:`authenticated_clone_url` 的用法），免得 token 落进 `.git/config`。
+（见 :meth:`authenticated_clone_url` 的用法），免得 token 落进 `.git/config`。要让学员能
+``git push``，token 会写进**仓库外**的一个 0600 凭据文件，仓库里只留指向它的
+``credential.helper`` 路径（见 :meth:`credential_line`、``GiteaForgeClient`` 里的
+``_install_push_credentials``）。
 """
 
 from __future__ import annotations
+
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -58,6 +63,18 @@ class GiteaApi:
         if parsed.scheme not in ("http", "https"):
             return url  # ssh 等：交给调用方的凭据配置
         return str(parsed.copy_with(username=self._token, password=None))
+
+    def credential_line(self, url: str) -> str | None:
+        """给 ``git credential-store`` 的一行：``<scheme>://<token>:<token>@<host>``。
+
+        用户名与密码**都填 token**：Gitea 的基本认证两条路都认（把 token 当用户名、或把 token
+        当密码），两边都填就不用赌它走哪条。ssh/scp 形态返回 ``None``——那种情况该用学员自己的
+        ssh key，平台不该把 token 塞进去。
+        """
+        parsed = urlsplit(url)
+        if parsed.scheme not in ("http", "https"):
+            return None
+        return f"{parsed.scheme}://{self._token}:{self._token}@{parsed.netloc}/"
 
     # -- 动作 ------------------------------------------------------------------
 

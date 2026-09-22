@@ -69,6 +69,9 @@ def workspace_out(ws: Workspace) -> dict[str, Any]:
         "branch": ws.branch,
         "base_ref": ws.base_ref,
         "head_ref": ws.head_ref,
+        # 预览/评审拿什么和 base 比：null = 工作区（含未提交）。见 Workspace 的 docstring。
+        "diff_head_ref": ws.diff_head_ref,
+        "push_hint": ws.push_hint,
         "simulated": ws.simulated,
     }
 

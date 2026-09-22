@@ -35,8 +35,16 @@ DEV_BRANCH = "dev"
 class Workspace:
     """一个实例的本地工作区。
 
-    ``base_ref`` 是所属 stage 的分支（骨架）；``head_ref`` 是学员的开发 ref。占位 Forge
-    没有人真的写代码，故用一条**内容预置的解法 ref** 冒充学员成果。``simulated`` 供 UI 标"模拟"。
+    ``base_ref`` 是所属 stage 的分支（骨架）；``head_ref`` 是学员的开发 ref（真 Forge 下就是
+    ``dev``，PR 从它开）。``simulated`` 供 UI 标"模拟"。
+
+    ``diff_head_ref`` 是**预览/评审时拿什么和 base 比**，与 ``head_ref`` 分开是因为两者的正确
+    答案不同：
+
+    * 真 Forge：``None`` = **工作区**（含未提交改动）。学员刚改完还没 commit 就想看 diff 是最
+      正常的动作；拿 ``dev``（只含已提交）去比会显示"没有改动"，把人吓一跳。
+    * 桩：内容预置的解法 ref（``origin/<stage>-sol``）。桩没有人真的写代码，没有"工作区改动"
+      可看——那正是它 ``simulated=True`` 的意思。
     """
 
     path: Path
@@ -44,6 +52,10 @@ class Workspace:
     base_ref: str
     head_ref: str
     simulated: bool = True
+    diff_head_ref: str | None = None
+    #: 学员要把改动推上去时跑的 git 命令（真 Forge 才有意义）。**不含任何凭据**：平台的 token
+    #: 放在仓库外的凭据文件里，由 repo-local credential.helper 指过去。
+    push_hint: str | None = None
 
 
 class WorkspaceRefMissingError(Exception):
@@ -181,9 +193,15 @@ def prepare_workspace(
 ) -> Path:
     """把工作区准备到"学员可以开始写"的状态（两个 Forge 共用，幂等）。
 
-    做三件事：clone（已存在就跳过）、校验阶段分支存在、把**基线 ref 解析成 SHA 记进本地
-    git config**（``bagu.baseRef``）——阅卷据此比出"学员改了什么"，**已提交**的改动也算数；
+    做四件事：clone（已存在就跳过）、校验阶段分支存在、把 ``dev`` 准备好、把**基线 ref 解析成 SHA
+    记进本地 git config**（``bagu.baseRef``）——阅卷据此比出"学员改了什么"，**已提交**的改动也算数；
     记 ``HEAD`` 会随学员的提交一起前移，等于永远比不出东西（这个坑测试里踩过）。
+
+    ``dev`` 的优先级是**本地已有 > 远端已有 > 从阶段分支新建**。第二条是必须的：学员的 ``dev``
+    是跨阶段累积的那条线（§C.5：通过一关后从下一阶段分支 cherry-pick/提 PR 合入 dev）。若每次都
+    从阶段分支重建，学员第二次 ``provision`` 就会得到一个**落后于自己远端**的本地分支，``git push``
+    直接被拒（"tip of your current branch is behind its remote counterpart"）——而那跟他这题写得
+    对不对毫无关系。本地已有就 checkout 它（重复 provision 不该把学员切到别处去）。
 
     返回**绝对**路径（调用方必须拿它去建 :class:`Workspace`）：工作区的后续 git 操作都把
     ``cwd`` 设成这个路径，一个相对路径会在进程 cwd 换个地方之后指到别处去。
@@ -199,8 +217,14 @@ def prepare_workspace(
         reason="track-repo lacks the stage branch this ticket is diffed against; "
         "§C.5 requires one branch per stage",
     )
-    if make_dev_branch and not ref_exists(dest, DEV_BRANCH):
-        git(dest, "checkout", "-q", "-b", DEV_BRANCH, base_ref)
+    if make_dev_branch:
+        remote_dev = f"origin/{DEV_BRANCH}"
+        if ref_exists(dest, DEV_BRANCH):
+            git(dest, "checkout", "-q", DEV_BRANCH)
+        elif ref_exists(dest, remote_dev):
+            git(dest, "checkout", "-q", "-b", DEV_BRANCH, remote_dev)
+        else:
+            git(dest, "checkout", "-q", "-b", DEV_BRANCH, base_ref)
     if not git(dest, "config", "--get", "bagu.baseRef", check=False).stdout.strip():
         git(dest, "config", "bagu.baseRef", git(dest, "rev-parse", base_ref).stdout.strip())
     return dest

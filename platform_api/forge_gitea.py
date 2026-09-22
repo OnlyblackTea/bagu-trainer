@@ -1,13 +1,19 @@
 """真 Forge：Gitea。
 
 * ``provision`` —— 确保 fork 存在 → clone fork 到工作区 → checkout 阶段分支 → 建 ``dev`` 分支 →
-  把基线 SHA 记进本地 git config。**它只准备场地**：``dev`` 是空的起点，代码与 push 都由学员
-  自己做（§C.5：平台不代跑 git 写操作）。
+  把基线 SHA 记进本地 git config → 装好 push 凭据。**它只准备场地**：``dev`` 是空的起点，代码与
+  push 都由学员自己做（§C.5：平台不代跑 git 写操作）。
 * ``create_pr`` —— 调 Gitea API，从 ``<fork_owner>:dev`` 到上游的阶段分支开一个真 PR，返回
   ``html_url``。
 
 与桩的分工差别也在这里：桩"假装学员已经做完了"（diff 两端都是内容预置的 ref，``simulated=True``），
-真 Forge 不会替学员产出任何东西，所以 ``Workspace.simulated=False``。
+真 Forge 不会替学员产出任何东西，所以 ``Workspace.simulated=False``，而且 **diff 比对的是学员自己
+的工作区**（含未提交改动）。
+
+**push 凭据**：学员要 ``git push origin dev`` 才能开 PR，所以工作区必须能推送。做法是
+:meth:`_install_push_credentials`——token 写进**仓库外**的 0600 文件，仓库里只留一条指向它的
+``credential.helper``。这样：``.git/config`` 里没有秘密；``git add -A`` 也永远不可能把它提交进去
+（它根本不在仓库目录里）。平台自己仍然不跑任何 git 写操作。
 """
 
 from __future__ import annotations
@@ -28,6 +34,9 @@ from platform_service.models import TicketInstance
 from .gitea import GiteaApi
 
 __all__ = ["GiteaForgeClient"]
+
+#: 工作区根下的凭据文件名（在每个 ``<instance.id>`` 工作区**之外**）。
+CREDENTIALS_FILE = ".git-credentials"
 
 
 class GiteaForgeClient:
@@ -78,13 +87,64 @@ class GiteaForgeClient:
             make_dev_branch=True,
         )
         git(dest, "remote", "set-url", "origin", clone_url)
+        self.install_push_credentials(dest, clone_url)
+        self.ensure_git_identity(dest, instance.learner)
         return Workspace(
             path=dest,
             branch=DEV_BRANCH,
             base_ref=base_ref,
             head_ref=DEV_BRANCH,
             simulated=self.SIMULATED,
+            # None = 与**工作区**比（含未提交改动）。学员改完还没 commit 就想看 diff 是最正常的
+            # 动作；拿 dev（只含已提交）去比会显示"没有改动"。
+            diff_head_ref=None,
+            push_hint=self.push_hint(),
         )
+
+    def ensure_git_identity(self, dest: Path, learner: str) -> bool:
+        """工作区解析不到 git 身份时，就地给一个——否则学员的**第一次 commit 必然失败**。
+
+        "Please tell me who you are" 是新手最容易被卡住的一步，而它跟本题考的东西毫无关系。这里
+        只在*真的*没有身份时补（``git config user.email`` 会把 global/system 一并解析进来），所以有
+        自己配置的机器不受影响。写入的是**仓库本地**配置，不碰学员的全局设置。
+        """
+        if git(dest, "config", "user.email", check=False).stdout.strip():
+            return False
+        git(dest, "config", "user.email", f"{learner}@localhost")
+        git(dest, "config", "user.name", learner)
+        return True
+
+    def push_hint(self) -> str:
+        """学员推代码要跑的命令。**不含凭据**——凭据由 credential.helper 提供。"""
+        return (
+            'git add -A && git commit -m "stage 完成" && git push -u origin ' + DEV_BRANCH
+        )
+
+    def install_push_credentials(self, dest: Path, clone_url: str) -> Path | None:
+        """让 ``git push`` 在这个工作区里开箱可用，且秘密不落在仓库内。
+
+        公开而不是私有：它是**一格可单独验证的行为**（"凭据写对了、位置对了、仓库里没有秘密"），
+        单测直接调它，不必为了验它去架一个真 http 远端。
+
+        ``ssh``/``scp`` 形态返回 ``None``：那种情况该用学员自己的 ssh key，平台不掺和。
+        """
+        line = self._api.credential_line(clone_url)
+        if line is None:
+            return None
+        creds = self._base_dir / CREDENTIALS_FILE
+        creds.parent.mkdir(parents=True, exist_ok=True)
+        creds.write_text(line + "\n", encoding="utf-8")
+        try:
+            creds.chmod(0o600)
+        except OSError:  # pragma: no cover - 某些文件系统不支持（例如部分 Windows 挂载）
+            pass
+        # 先清掉继承来的 helper（系统/全局可能挂着凭据管理器，会先弹窗或先失败），再只挂我们这一个。
+        # 第一条空值在 git 里表示"清空之前累积的列表"。
+        git(dest, "config", "--unset-all", "credential.helper", check=False)
+        git(dest, "config", "--add", "credential.helper", "")
+        git(dest, "config", "--add", "credential.helper", f"store --file={creds.as_posix()}")
+        return creds
+
 
     # -- PR --------------------------------------------------------------------
 

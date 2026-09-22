@@ -22,6 +22,10 @@ def test_provision_returns_workspace(client: Any) -> None:
     assert body["branch"] == "dev" and body["simulated"] is True
     # §C.5：base 是该 ticket 所属**阶段**的分支，不是 ticket id。
     assert body["base_ref"] == "origin/stage-00-onboarding"
+    # 桩没有人真的写代码 ⇒ "工作区改动"永远是空的，预览只能比对内容预置的解法 ref。
+    assert body["diff_head_ref"] == body["head_ref"]
+    # 桩没有可推的远端，所以不给 push 命令（给了会把人骗去跑一条注定失败的命令）。
+    assert body["push_hint"] is None
 
 
 def test_diff_is_real_local_git(client: Any) -> None:
@@ -31,6 +35,79 @@ def test_diff_is_real_local_git(client: Any) -> None:
     assert r.status_code == 200
     body = r.json()
     assert "diff --git" in body["diff"] and body["total_chars"] > 0
+    # 桩的 diff 是**装出来的**（比对预置解法 ref），所以如实标 simulated 且不是工作区比对。
+    assert body["simulated"] is True and body["worktree"] is False
+
+
+def test_real_forge_diff_compares_the_learners_worktree(tmp_path: Path) -> None:
+    """真 Forge 下 diff 比的是**工作区**（含未提交改动），而不是某条预置 ref。
+
+    这是"diff 不再只是模拟"的核心：学员改完文件还没 commit 就想看 diff，拿 ``dev``（只含已提交）
+    去比会显示"没有改动"——比不给看更糟。这条用假 Forge 把契约钉住（真 Gitea 的验证在 VM 上做）。
+    """
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+
+    from platform_api.app import create_app
+    from platform_api.demo_repo import build_demo_track_repo
+    from platform_service.forge import Workspace
+
+    repo = build_demo_track_repo(tmp_path / "demo")
+    app = create_app(content_dir=repo, forge_base=tmp_path / "ws")
+    client = TestClient(app)
+    iid = _enroll_start(client)
+    real_ws = Workspace(
+        path=tmp_path / "ws-real",
+        branch="dev",
+        base_ref="origin/stage-00-onboarding",
+        head_ref="dev",
+        simulated=False,
+        diff_head_ref=None,
+        push_hint="git add -A && git commit -m x && git push -u origin dev",
+    )
+
+    class _RealForge:
+        def provision(self, instance: Any) -> Workspace:
+            # 真的做一次 clone，这样 diff 有真东西可比（假 Forge，真 git）。
+            from platform_service.forge import prepare_workspace
+
+            return replace(
+                real_ws,
+                path=prepare_workspace(
+                    dest=tmp_path / "ws-real",
+                    clone_url=str(repo),
+                    base_ref=real_ws.base_ref,
+                    make_dev_branch=True,
+                ),
+            )
+
+        def create_pr(self, instance: Any, *, base: str, head: str) -> str:
+            return "http://gitea.local/trackowner/track/pulls/7"
+
+    bundle = app.state.tracks["database-bagu"]
+    app.state.tracks["database-bagu"] = replace(bundle, forge=_RealForge())
+
+    prov = client.post(f"/instances/{iid}/provision").json()
+    assert prov["simulated"] is False
+    assert prov["diff_head_ref"] is None
+    assert prov["head_ref"] == "dev"
+    assert "git push -u origin dev" in prov["push_hint"]
+
+    # 学员改了一个文件（未提交）——diff 必须看得见
+    target = tmp_path / "ws-real" / "src" / "db-stage-00" / "Solution.java"
+    target.write_text("// 学员手写的改动（未提交）\n", encoding="utf-8")
+
+    body = client.get(f"/instances/{iid}/diff").json()
+    assert body["worktree"] is True
+    assert body["diff_head_ref"] is None
+    assert body["simulated"] is False
+    assert "学员手写的改动" in body["diff"]
+
+    # PR 给的是真 URL，且不再标 simulated
+    pr = client.post(f"/instances/{iid}/pr").json()
+    assert pr["pr_url"] == "http://gitea.local/trackowner/track/pulls/7"
+    assert pr["simulated"] is False
 
 
 def test_pr_is_placeholder(client: Any) -> None:

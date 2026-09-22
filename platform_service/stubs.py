@@ -205,7 +205,15 @@ class StubForgeClient:
             head_ref,
             reason="content must ship a <stage>-sol ref for the stub diff to have two ends",
         )
-        return Workspace(path=dest, branch="dev", base_ref=base_ref, head_ref=head_ref)
+        return Workspace(
+            path=dest,
+            branch="dev",
+            base_ref=base_ref,
+            head_ref=head_ref,
+            # 桩没有人真的写代码，所以"工作区改动"永远是空的——预览只能比对内容预置的解法 ref。
+            # 这也是 simulated=True 的含义：这一段是装出来的。
+            diff_head_ref=head_ref,
+        )
 
     def create_pr(self, instance: TicketInstance, *, base: str, head: str) -> str:
         return f"https://gitea.local/{instance.learner}/simulated/pulls/{instance.id}"

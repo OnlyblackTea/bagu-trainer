@@ -100,12 +100,19 @@ export interface WorkspaceOut {
   branch: string
   base_ref: string
   head_ref: string
+  /** 预览/评审拿什么和 base 比：`null` = 工作区（含未提交改动）。 */
+  diff_head_ref: string | null
+  /** 学员要把改动推上去时跑的 git 命令（真 Forge 才有；不含任何凭据）。 */
+  push_hint: string | null
   simulated: boolean
 }
 
 export interface DiffOut {
   base_ref: string
   head_ref: string
+  diff_head_ref: string | null
+  /** `true` = 比的是工作区（含未提交改动），而不是某条 ref。 */
+  worktree: boolean
   diff: string
   total_chars: number
   truncated_files: string[]
