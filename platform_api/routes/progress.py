@@ -27,8 +27,9 @@ from ..schemas import (
     attempt_out,
     grading_run_out,
     instance_out,
+    sync_out,
 )
-from ._resolve import bundle_for_instance, bundle_for_track, must_instance
+from ._resolve import apply_sync, bundle_for_instance, bundle_for_track, must_instance
 
 router = APIRouter(tags=["progress"])
 
@@ -95,12 +96,19 @@ def submit(
 
     ``scenario`` 仍然在提交时选定：桩按它分叉，真阅卷不看它——这个差别对调用方是透明的，
     但**桩确实会立刻答完**，所以进度条在桩下是一闪而过的（不编造等待时间）。
+
+    **提交前先与远端对一次账**（``sync``）：代码可以写在任何机器上，只要 push 到后端读得到的
+    Forge；不做这一步就会拿一份落后的 checkout 去阅卷，而结论看起来像"你代码没过"。快进只在
+    无损时发生（工作树干净、本地不领先、就在 ``dev`` 上），其余情况一个字都不动，只如实报出来
+    （``sync.note`` / ``sync.remote_only_changes``）——"这次按哪份代码阅卷"必须由学员自己看见。
     """
     state = request.app.state
     instance = must_instance(request, instance_id)
     bundle = bundle_for_instance(request, instance)
     ticket = bundle.tickets[instance.ticket_id]
     workspace = bundle.forge.provision(instance)
+    # 阅卷看的是**这份** checkout，所以先确认它是不是学员最新推上去的那份（见 docstring）。
+    sync = apply_sync(workspace)
     submission = bundle.service.submit(
         instance_id, pr_url=body.pr_url, defense=body.defense
     )
@@ -116,6 +124,7 @@ def submit(
     return {
         "submission": submission.model_dump(mode="json"),
         "progress": grading_run_out(run, live=True),
+        "sync": sync_out(sync),
     }
 
 

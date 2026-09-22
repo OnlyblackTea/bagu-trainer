@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../api'
 import { stateLabel } from '../labels'
-import type { DiffOut, InstanceOut, PullRequestOut, WorkspaceOut } from '../types'
+import type {
+  DiffOut,
+  InstanceOut,
+  PullRequestOut,
+  WorkspaceOut,
+  WorkspaceSyncOut,
+} from '../types'
 import { SimulatedBadge } from './SimulatedBadge'
 
 interface Props {
@@ -31,6 +37,8 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
   const [path, setPath] = useState('')
   const [diff, setDiff] = useState<DiffOut | null>(null)
   const [pr, setPr] = useState<PullRequestOut | null>(null)
+  /** 与远端 `dev` 的对账结果：来自显式同步，或来自 diff 的只读探针。 */
+  const [sync, setSync] = useState<WorkspaceSyncOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
 
@@ -41,6 +49,7 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
     setPath('')
     setDiff(null)
     setPr(null)
+    setSync(null)
     setError(null)
   }, [instance.id])
 
@@ -88,10 +97,31 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
           拉取本地工作区
         </button>
         <button
-          onClick={() => run(async () => setDiff(await api.diff(instance.id)))}
+          onClick={() =>
+            run(async () => {
+              const body = await api.diff(instance.id)
+              setDiff(body)
+              setSync(body.sync)
+            })
+          }
           disabled={disabled}
         >
           查看 diff
+        </button>
+        <button
+          data-testid="sync-remote"
+          title="代码写在别的机器上时用它：fetch 远端 dev，且只在无损时快进"
+          onClick={() =>
+            run(async () => {
+              const body = await api.syncWorkspace(instance.id)
+              setWorkspace(body)
+              setSync(body.sync)
+              setDiff(null) // 同步之后旧的 diff 不作数了
+            })
+          }
+          disabled={disabled}
+        >
+          从远端同步
         </button>
         <button
           onClick={() => run(async () => setPr(await api.createPr(instance.id)))}
@@ -104,6 +134,31 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
       {error && (
         <div className="alert alert--error" style={{ marginTop: 12 }} role="alert">
           {error}
+        </div>
+      )}
+
+      {sync && (
+        <div
+          className={`alert ${sync.remote_only_changes ? 'alert--error' : 'alert--info'}`}
+          style={{ marginTop: 12 }}
+          data-testid="sync-info"
+        >
+          <div>
+            <strong>与远端对账：</strong>
+            {sync.note}
+          </div>
+          {sync.remote_only_changes && (
+            <div className="muted">
+              所以这次预览/阅卷看到的还是<strong>旧</strong>代码——点「从远端同步」，或直接提交
+              （提交前平台会在无损时自动快进）。
+            </div>
+          )}
+          {sync.revision && (
+            <div className="muted">
+              对着的版本：<code>{sync.revision.slice(0, 12)}</code>
+              {sync.local_ahead > 0 && ` · 本地领先远端 ${sync.local_ahead} 个提交（还没 push）`}
+            </div>
+          )}
         </div>
       )}
 
@@ -182,6 +237,17 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
             </div>
           )}
 
+          {workspace.clone_hint && (
+            <div className="hint-block" data-testid="remote-hint">
+              <p className="muted">
+                在<strong>另一台机器</strong>上写也完全可以：把改动 push 到你的 fork，再点
+                「从远端同步」（或直接提交——提交前平台会自动做同一件事）。这台机器只要能从 Gitea
+                读到那次 push 就行，你<strong>不需要</strong>把那个路径登记过来：登记只适用于
+                “路径就在后端这台机器上”的情况，好处是 diff 能看见你还没 commit 的改动。
+              </p>
+            </div>
+          )}
+
           {workspace.push_hint && (
             <div className="hint-block" data-testid="push-hint">
               <p className="muted">
@@ -233,9 +299,17 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
             {diff.truncated_files.length > 0 && ` · 被截断：${diff.truncated_files.join('、')}`}
           </p>
           {diff.diff.trim() === '' ? (
-            <div className="alert alert--info" data-testid="diff-empty">
-              工作区里还没有改动——去 <code>src/</code> 下把这一题写完，再回来看。
-            </div>
+            diff.sync?.remote_only_changes ? (
+              <div className="alert alert--error" data-testid="diff-behind">
+                远端 {diff.head_ref} 有 {diff.sync.remote_ahead} 个提交不在这份工作区里：你多半是在
+                <strong>另一台机器</strong>上写的（那边 push 了，后端这份 checkout 还是旧的）。
+                点「从远端同步」，或直接提交——提交前平台会在无损时自动快进。
+              </div>
+            ) : (
+              <div className="alert alert--info" data-testid="diff-empty">
+                工作区里还没有改动——去 <code>src/</code> 下把这一题写完，再回来看。
+              </div>
+            )
           ) : (
             <pre className="diff">{diff.diff}</pre>
           )}

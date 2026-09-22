@@ -162,6 +162,17 @@ def _git(workspace: Path, *args: str) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
+def _revision(workspace: Path) -> str | None:
+    """阅卷对着的那一版（``HEAD`` 的 SHA）。
+
+    写进报告的 ``host_env`` 是刻意的：代码可以写在别的机器上、由 ``sync`` 拉进来，也可能**没能**
+    拉进来（本地有未提交改动、两边分叉）。那时报告里留着"我看到的是哪个 SHA"，学员才能自己判断
+    这次结论算不算数，而不是靠猜。
+    """
+    out = _git(workspace, "rev-parse", "HEAD")
+    return (out or "").strip() or None
+
+
 def _changed_files(workspace: Path) -> list[str]:
     """学员在工作区里改了哪些文件（相对仓库根、正斜杠）。
 
@@ -370,6 +381,10 @@ class DockerGradingRunner:
                 host_env={
                     "simulated": False,
                     "cwd": str(workspace),
+                    # 阅卷对着哪一版：sync 把别处 push 上来的代码拉进来了没有，看这个字段。
+                    "revision": _revision(workspace),
+                    "branch": (_git(workspace, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+                    or None,
                     "command": " ".join(command),
                     "exit_code": exit_code,
                     "duration_s": round(duration_s, 3),

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { WorkspaceView } from '../components/WorkspaceView'
-import type { DiffOut, PullRequestOut, WorkspaceOut } from '../types'
+import type { DiffOut, PullRequestOut, WorkspaceOut, WorkspaceSyncOut } from '../types'
 import { makeInstance } from './fixtures'
 
 /**
@@ -45,6 +45,23 @@ function diffOut(over: Partial<DiffOut> = {}): DiffOut {
     total_chars: 64,
     truncated_files: [],
     simulated: false,
+    sync: null,
+    ...over,
+  }
+}
+
+/** 一次对账结果（`WorkspaceSyncOut`）。默认"与远端一致"，按需覆盖。 */
+function syncOut(over: Partial<WorkspaceSyncOut> = {}): WorkspaceSyncOut {
+  return {
+    fetched: true,
+    dirty: false,
+    local_ahead: 0,
+    remote_ahead: 0,
+    fast_forwarded: false,
+    revision: 'abcdef0123456789',
+    remote_branch: true,
+    remote_only_changes: false,
+    note: '工作区与远端 dev 一致。',
     ...over,
   }
 }
@@ -234,6 +251,63 @@ describe('桩 Forge（stub）', () => {
     expect(screen.queryByTestId('pr-link')).not.toBeInTheDocument()
     expect(screen.getByTestId('diff-info')).toHaveTextContent('origin/stage-00-onboarding-sol')
     expect(screen.getByTestId('diff-info')).not.toHaveTextContent('还没 commit')
+  })
+})
+
+describe('代码写在**另一台机器**上（与远端对账）', () => {
+  it('远端领先且工作区干净：diff 说"你多半在另一台机器上写的"，而不是"还没有改动"', async () => {
+    await openFlow({
+      '/instances/ti-1/provision': REAL_WS,
+      '/instances/ti-1/diff': diffOut({
+        diff: '',
+        total_chars: 0,
+        sync: syncOut({
+          remote_ahead: 2,
+          remote_only_changes: true,
+          note: '远端 dev 领先这份工作区 2 个提交：你多半是在另一台机器上写的。',
+        }),
+      }),
+      '/instances/ti-1/pr': prOut(false),
+    })
+
+    const behind = screen.getByTestId('diff-behind')
+    expect(behind).toHaveTextContent('另一台机器')
+    expect(behind).toHaveTextContent('从远端同步')
+    expect(screen.queryByTestId('diff-empty')).not.toBeInTheDocument()
+  })
+
+  it('「从远端同步」把快进结果说出来（对着哪一版也算清）', async () => {
+    const fetchMock = stubFetch({
+      '/instances/ti-1/provision': REAL_WS,
+      '/instances/ti-1/sync': {
+        ...REAL_WS,
+        sync: syncOut({
+          fast_forwarded: true,
+          revision: 'deadbeefcafe1234',
+          note: '已把工作区快进到远端的 dev——这次阅卷看的就是它。',
+        }),
+      },
+    })
+    const user = userEvent.setup()
+    render(
+      <WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />,
+    )
+    await user.click(screen.getByTestId('sync-remote'))
+
+    const info = await screen.findByTestId('sync-info')
+    expect(info).toHaveTextContent('快进')
+    expect(info).toHaveTextContent('deadbeefcafe') // 短的 SHA：够对照，又不占版面
+    const posted = fetchMock.calls.find((c) => c.url.endsWith('/instances/ti-1/sync'))
+    expect(posted?.init?.method).toBe('POST')
+  })
+
+  it('桩工作区没有远端 ⇒ 一个字都不提同步（不显示"已是最新"这种假状态）', async () => {
+    await openFlow({
+      '/instances/ti-1/provision': STUB_WS,
+      '/instances/ti-1/diff': diffOut({ simulated: true, worktree: false, sync: null }),
+      '/instances/ti-1/pr': prOut(true),
+    })
+    expect(screen.queryByTestId('sync-info')).not.toBeInTheDocument()
   })
 })
 

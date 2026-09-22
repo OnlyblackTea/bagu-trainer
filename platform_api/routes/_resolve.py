@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request
 
+from platform_service.forge import Workspace, WorkspaceSync, sync_workspace
 from platform_service.models import TicketInstance
 
 from ..deps import TrackBundle
@@ -42,3 +43,21 @@ def bundle_for_instance(request: Request, instance: TicketInstance) -> TrackBund
     if bundle is None:
         raise HTTPException(status_code=409, detail="track_not_deployed")
     return bundle
+
+
+def probe_sync(ws: Workspace) -> WorkspaceSync | None:
+    """只读对账：fetch + 报数，**绝不动**学员的分支（``GET diff`` 用）。
+
+    桩工作区（``simulated``）没有远端，返回 ``None``——界面据此不显示同步那一块，而不是显示一个
+    "已是最新"的假状态。
+    """
+    if ws.simulated:
+        return None
+    return sync_workspace(ws.path, branch=ws.branch, apply=False)
+
+
+def apply_sync(ws: Workspace) -> WorkspaceSync | None:
+    """对账并**在明确无损时**快进（``POST /sync``、``POST submit`` 用）。"""
+    if ws.simulated:
+        return None
+    return sync_workspace(ws.path, branch=ws.branch, apply=True)

@@ -207,7 +207,19 @@ export default function App() {
                         setReview(null)
                         setDecision(null)
                         await refreshInstances(t.id)
+                        // 提交前平台与远端对过一次账：学员在**别的机器**上写完 push 之后，这次阅卷
+                        // 到底看的是哪一版，必须当场说清——"跑了但跑的是旧代码"是最难自查的一种结果。
+                        const sync = accepted.sync
+                        if (sync?.remote_only_changes) {
+                          setError(
+                            `阅卷已受理，但它看的可能不是你最新的代码：${sync.note}` +
+                              '（工作树干净时平台会自动快进；这次没有，所以按本地内容走。）',
+                          )
+                        }
                         setNotice('已受理：阅卷在后台跑，进度见下。')
+                        if (sync?.fast_forwarded) {
+                          setNotice('已受理：这次阅卷看的是远端最新的 dev（提交前已自动同步）。')
+                        }
                         setHistoryKey((n) => n + 1)
                         // 不 await：轮询自己会更新进度，界面不该被它挂住。
                         void pollGrading(accepted.submission.id, generation).catch(

@@ -109,6 +109,29 @@ export interface WorkspaceOut {
   simulated: boolean
 }
 
+/**
+ * 工作区与**远端 dev** 的对账结果（后端 `WorkspaceSync`）。
+ *
+ * 它存在的理由是"代码写在别的机器上也可以"：学员在笔记本上 push 之后，后端那份 checkout 是旧的，
+ * 直接拿去阅卷会给出一个看起来像"你代码没过"的结论。`null`（桩工作区）表示压根没有远端。
+ */
+export interface WorkspaceSyncOut {
+  /** fetch 成不成功。失败 ⇒ **不知道**远端状态，界面不许说"已是最新"。 */
+  fetched: boolean
+  /** 工作树有未提交改动 ⇒ 学员是在**这台机器**上写代码。 */
+  dirty: boolean
+  local_ahead: number
+  remote_ahead: number
+  fast_forwarded: boolean
+  /** 对账后 `HEAD` 的 SHA——"这次对着哪一版"，可审计。 */
+  revision: string | null
+  remote_branch: boolean
+  /** 远端有新东西而这次没同步 ⇒ 即将被预览/阅卷的是**旧**代码。 */
+  remote_only_changes: boolean
+  /** 后端给学员的一句话说明（同步做了什么 / 为什么没做）。 */
+  note: string
+}
+
 export interface DiffOut {
   base_ref: string
   head_ref: string
@@ -119,6 +142,8 @@ export interface DiffOut {
   total_chars: number
   truncated_files: string[]
   simulated: boolean
+  /** 只读对账：远端比你新时如实报出来（否则"没有改动"会被误解成"我没写"）。 */
+  sync: WorkspaceSyncOut | null
 }
 
 export interface PullRequestOut {
@@ -206,6 +231,8 @@ export interface InstanceHistoryOut {
 export interface SubmitAcceptedOut {
   submission: SubmissionOut
   progress: GradingProgressOut
+  /** 提交前与远端的对账结果——"这次阅卷看的是哪一版"必须让学员看见。 */
+  sync: WorkspaceSyncOut | null
 }
 
 export interface SubmissionOut {

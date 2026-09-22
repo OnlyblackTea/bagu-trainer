@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from platform_service.forge import Workspace
+from platform_service.forge import Workspace, WorkspaceSync
 from platform_service.history import AttemptRecord
 from platform_service.models import (
     GradingRun,
@@ -85,6 +85,27 @@ def workspace_out(ws: Workspace) -> dict[str, Any]:
         # 学员想在自己的目录里拉取时照抄的命令（指引式 provision）。
         "clone_hint": ws.clone_hint,
         "simulated": ws.simulated,
+    }
+
+
+def sync_out(sync: WorkspaceSync | None) -> dict[str, Any] | None:
+    """工作区与远端 ``dev`` 的对账结果（``None`` = 桩工作区，压根没有远端）。
+
+    ``remote_only_changes`` 单独给出来，是因为界面要据此说一句**后果**："这次阅卷看的是旧代码"
+    ——那是学员唯一需要立刻知道的事，不该让他从两个数字里自己推。
+    """
+    if sync is None:
+        return None
+    return {
+        "fetched": sync.fetched,
+        "dirty": sync.dirty,
+        "local_ahead": sync.local_ahead,
+        "remote_ahead": sync.remote_ahead,
+        "fast_forwarded": sync.fast_forwarded,
+        "revision": sync.revision,
+        "remote_branch": sync.remote_branch,
+        "remote_only_changes": sync.remote_only_changes,
+        "note": sync.note,
     }
 
 

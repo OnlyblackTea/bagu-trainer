@@ -253,3 +253,145 @@ def prepare_workspace(
             git(dest, "checkout", "-q", "-b", DEV_BRANCH, base_ref)
     remember_baseline(dest, base_ref)
     return dest
+
+
+# --- 工作区与远端的对账（"代码写在别的机器上"这条路的支撑）-------------------------
+
+#: 默认远端名。学员自己 clone 的那份也是 ``origin``（clone 的原点），所以不需要配置。
+REMOTE_NAME = "origin"
+
+
+@dataclass(frozen=True)
+class WorkspaceSync:
+    """工作区与它远端 ``dev`` 的同步状态。
+
+    **为什么需要它**：代码完全可以写在**另一台机器**上——后端只要能从 Forge 读到那次 push 就行。
+    但那时后端这份 checkout 是落后的，而"拿一份落后的代码去阅卷"是最糟的一种失败：结论看起来
+    像学员的代码没过，其实平台压根没看他新写的代码。
+
+    三条纪律（``sync_workspace`` 的实现就是它们）：
+
+    * ``fetch`` 只动 remote-tracking ref——永远安全，任何情况下都做；
+    * **只有本地工作树干净、当前分支就是 ``branch``、且本地不领先远端时，才快进**：那正是
+      "他在别处写、这边没人动过"这一种情况，快进无损；
+    * 其余情况一律**不动他的分支**，如实报出 ``dirty`` / ``local_ahead`` / ``remote_ahead``，
+      让界面说清"这次按哪份代码阅卷"。
+    """
+
+    #: fetch 是否成功。失败不改任何判断，只是"对不了账"——界面据此别说"已是最新"。
+    fetched: bool
+    #: 工作树有未提交（含未跟踪）改动 ⇒ 学员是在**这台机器**上写代码，以工作区为准。
+    dirty: bool
+    #: 本地 ``branch`` 领先远端的提交数。
+    local_ahead: int
+    #: 远端 ``branch`` 领先本地的提交数。>0 且没快进 ⇒ 界面必须提醒。
+    remote_ahead: int
+    #: 是否真的把本地分支快进到了远端（``remote_ahead`` 随之归零）。
+    fast_forwarded: bool
+    #: 对完账后 ``HEAD`` 的 SHA——"阅卷/预览对着哪一版"，可审计。
+    revision: str | None
+    #: 远端起有没有 ``branch``。没有 ⇒ 学员还没 push 过，PR 也开不了。
+    remote_branch: bool
+    #: 一句话交代这次做了什么（面向学员，不是日志）。
+    note: str
+
+    @property
+    def remote_only_changes(self) -> bool:
+        """远端有新东西、而这次没同步进工作区 ⇒ 即将被阅卷/预览的是旧代码。"""
+        return self.remote_ahead > 0
+
+
+def _rev_count(repo: Path, left: str, right: str) -> tuple[int, int] | None:
+    """``git rev-list --left-right --count left...right`` → (left 独有, right 独有)。"""
+    proc = git(repo, "rev-list", "--left-right", "--count", f"{left}...{right}", check=False)
+    if proc.returncode != 0:
+        return None
+    parts = proc.stdout.split()
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def sync_workspace(
+    repo: Path, *, branch: str = DEV_BRANCH, remote: str = REMOTE_NAME, apply: bool = True
+) -> WorkspaceSync:
+    """:class:`WorkspaceSync` 的实现：fetch 之后**在明确无损时才**快进本地 ``branch``。
+
+    ``apply=False`` 是只读探针（``GET diff`` 用）：照样 fetch、照样报数，但绝不动分支——
+    读接口不该改学员的分支。``apply=True``（``POST /sync``、``POST submit``）才可能在
+    "干净 + 不领先 + 就在这条分支上"时快进。
+    """
+    repo = Path(repo)
+    remote_ref = f"{remote}/{branch}"
+    configured = remote in git(repo, "remote", check=False).stdout.split()
+    fetched = configured and git(repo, "fetch", "-q", remote, check=False).returncode == 0
+    dirty = bool(git(repo, "status", "--porcelain", check=False).stdout.strip())
+    current = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
+    has_remote = ref_exists(repo, remote_ref)
+
+    local_ahead = remote_ahead = 0
+    if has_remote and ref_exists(repo, branch):
+        counts = _rev_count(repo, branch, remote_ref)
+        if counts is not None:
+            local_ahead, remote_ahead = counts
+    elif has_remote:
+        # 本地还没有这条分支（还没 provision 过 dev）——远端有多少都算"领先"，但绝不在这里建分支：
+        # 建分支属于 prepare_workspace 的活，sync 只对账。
+        proc = git(repo, "rev-list", "--count", remote_ref, check=False)
+        remote_ahead = int(proc.stdout.strip() or 0) if proc.returncode == 0 else 0
+
+    fast_forwarded = False
+    note = ""
+    if remote_ahead and apply and not dirty and local_ahead == 0 and current == branch:
+        proc = git(repo, "merge", "--ff-only", "-q", remote_ref, check=False)
+        fast_forwarded = proc.returncode == 0
+        if fast_forwarded:
+            remote_ahead = 0
+
+    if not configured:
+        note = f"这个工作区没有名为 {remote} 的远端：对不了账，也 push 不了。"
+    elif not fetched:
+        # fetch 都失败了，"远端比你新多少"就是上一次的旧数——不能拿它当现状。
+        note = "fetch 失败（Forge 不可达或凭据失效）：无法确认远端状态，这次按本地内容走。"
+    elif not has_remote:
+        note = f"远端还没有 {branch} 分支：你还没 push 过。"
+    elif fast_forwarded:
+        note = f"已把工作区快进到远端的 {branch}——这次阅卷看的就是它。"
+    elif remote_ahead and dirty:
+        note = (
+            f"远端 {branch} 比你这边新（领先 {remote_ahead} 个提交），但工作区有未提交改动，"
+            "所以没有动你的分支：这次按工作区内容走。"
+        )
+    elif remote_ahead and local_ahead:
+        note = (
+            f"你本地和远端都有对方没有的提交（本地领先 {local_ahead}、远端领先 {remote_ahead}）："
+            "没有替你合并，这次按本地内容走。"
+        )
+    elif remote_ahead and apply:
+        note = f"远端 {branch} 领先 {remote_ahead} 个提交，这次没有同步（当前分支不是 {branch}）。"
+    elif remote_ahead:
+        # 只读探针（GET diff）走到这里：学员在**另一台机器**上写完 push 了，后端这份 checkout 还旧。
+        # 这一步不能只说"远端有新东西"，得说清"你该做什么、平台会做什么"。
+        note = (
+            f"远端 {branch} 领先这份工作区 {remote_ahead} 个提交：你多半是在另一台机器上写的。"
+            "提交时会自动同步（工作树干净时无损快进）；想现在就同步，用「从远端同步」。"
+        )
+    elif local_ahead:
+        note = f"本地领先远端 {local_ahead} 个提交（还没 push）：按本地内容走，开 PR 前要 push。"
+    else:
+        note = f"工作区与远端 {branch} 一致。"
+
+    revision = git(repo, "rev-parse", "HEAD", check=False).stdout.strip() or None
+    return WorkspaceSync(
+        fetched=fetched,
+        dirty=dirty,
+        local_ahead=local_ahead,
+        remote_ahead=remote_ahead,
+        fast_forwarded=fast_forwarded,
+        revision=revision,
+        remote_branch=has_remote,
+        note=note,
+    )

@@ -15,8 +15,8 @@ from fastapi import APIRouter, Request
 
 from platform_service.review_diff import generate_diff, preflight_diff_volume
 
-from ..schemas import WorkspaceRequest, workspace_out
-from ._resolve import bundle_for_instance, must_instance
+from ..schemas import WorkspaceRequest, sync_out, workspace_out
+from ._resolve import apply_sync, bundle_for_instance, must_instance, probe_sync
 
 router = APIRouter(tags=["workspace"])
 
@@ -36,8 +36,10 @@ def attach_workspace(
     平台给出 clone 命令（``clone_hint``），学员在**自己熟悉的地方**拉代码，再把那个路径登记回来；
     此后 ``diff`` 与阅卷都对着它跑（D3：阅卷在学员自己的机器上）。``path=null`` 撤销登记。
 
-    注意：路径必须是**后端这台机器**上能看到的目录——工作区永远在后端所在机器上（这也是为什么
-    "把后端跑在你自己的机器上"是最省事的部署方式，见 docs/deployment.md）。
+    注意：路径必须是**后端这台机器**上能看到的目录。**你不需要这条**——代码写在哪台机器上都行，
+    只要你能 push 到你 fork 的 ``dev``，后端提交时会自动把这份 checkout 快进到它（见
+    :func:`sync_workspace_now`）。登记路径是给"工作区就在后端这台机器上"的人用的：那时连 fetch
+    都省了，diff 直接看他正在编辑的文件。
     """
     instance = must_instance(request, instance_id)
     bundle = bundle_for_instance(request, instance)
@@ -45,6 +47,28 @@ def attach_workspace(
     return {
         **workspace_out(bundle.forge.provision(updated)),
         "workspace_path": updated.workspace_path,
+    }
+
+
+@router.post("/instances/{instance_id}/sync")
+def sync_workspace_now(instance_id: str, request: Request) -> dict[str, Any]:
+    """把手动把工作区与远端 ``dev`` 对一次账（fetch，且**只在无损时**快进）。
+
+    为什么需要这个显式入口：代码完全可以写在**另一台机器**上——后端只要能从 Forge 读到那次 push
+    就行。但那之后后端这份 checkout 是旧的，而"拿旧代码去阅卷"会给出一个看起来像"你代码没过"的
+    结论。提交时平台会自动做这件事（见 ``POST submit``），这个接口是给"我想先自己看一眼"的人用的，
+    也是提交被拦下（本地有未提交改动/两边分叉）之后的手动出路。
+
+    与 :func:`diff` 的分工：那个是只读探针，只报数不动分支；这个才可能在"干净 + 不领先 + 就在
+    ``dev`` 上"时快进。
+    """
+    instance = must_instance(request, instance_id)
+    bundle = bundle_for_instance(request, instance)
+    ws = bundle.forge.provision(instance)
+    sync = apply_sync(ws)
+    return {
+        **workspace_out(ws),
+        "sync": sync_out(sync),
     }
 
 
@@ -56,9 +80,15 @@ def diff(instance_id: str, request: Request) -> dict[str, Any]:
     "包含你还没 commit 的改动"。学员改完文件第一件事就是想看 diff，这时拿 ``dev``（只含已提交）去
     比会显示"没有改动"——那比不给看更糟。桩的 ``diff_head_ref`` 是内容预置的解法 ref（它没有人真的
     写代码），所以 ``simulated`` 照旧为真。
+
+    ``sync`` 是**只读**对账：远端若比你这边新，这里会如实报出来（``remote_only_changes``）——
+    否则学员在另一台机器上 push 完，回来看 diff 只会看到"没有改动"，而真实原因是这份工作区还没
+    拉下来。
     """
     instance = must_instance(request, instance_id)
-    ws = bundle_for_instance(request, instance).forge.provision(instance)  # 幂等：确保已 clone
+    bundle = bundle_for_instance(request, instance)
+    ws = bundle.forge.provision(instance)  # 幂等：确保已 clone
+    sync = probe_sync(ws)
     text = generate_diff(ws.path, base=ws.base_ref, head=ws.diff_head_ref)
     volume = preflight_diff_volume(text)
     return {
@@ -71,6 +101,7 @@ def diff(instance_id: str, request: Request) -> dict[str, Any]:
         "total_chars": volume.total_chars,
         "truncated_files": list(volume.truncated_files),
         "simulated": ws.simulated,
+        "sync": sync_out(sync),
     }
 
 
