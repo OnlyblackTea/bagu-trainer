@@ -18,6 +18,7 @@ import type {
   GradingScenario,
   InstanceHistoryOut,
   InstanceOut,
+  MetaOut,
   PullRequestOut,
   ReviewOut,
   ReviewScenario,
@@ -212,7 +213,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) {
     return undefined as T
   }
-  return (await res.json()) as T
+  try {
+    return (await res.json()) as T
+  } catch {
+    // 2xx 但不是 JSON ⇒ 请求压根**没到后端**（最典型：开发代理少配了一个前缀，于是拿到
+    // 前端自己的 index.html）。不把底层那句 `Unexpected token '<'` 抛给学员——它指向 Vite，
+    // 而问题在部署配置。
+    throw new ApiError({
+      status: res.status,
+      detail: 'unexpected_response',
+      message: `后端返回的不是 JSON（${path}）。多半是这个前缀没配到反向代理/开发代理上，请求打到了前端静态资源——部署者查一下代理配置。`,
+    })
+  }
 }
 
 function query(params: Record<string, string | undefined>): string {
@@ -221,6 +233,8 @@ function query(params: Record<string, string | undefined>): string {
 }
 
 export const api = {
+  /** 后端逐项自述（阅卷/Forge/存储各是什么）。前端据此说清"进度存哪、重启会不会丢"。 */
+  meta: () => request<MetaOut>('/meta'),
   listTracks: () => request<TrackSummary[]>('/tracks'),
   getTrack: (trackId: string) => request<TrackDetail>(`/tracks/${encodeURIComponent(trackId)}`),
   /** 必须用 `identity.id`；用 stage 目录名会 404（Plan 1 Task 0）。 */

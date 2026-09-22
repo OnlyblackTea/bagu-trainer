@@ -120,6 +120,28 @@ describe('api: 错误短码翻人话（Plan 2 §4 铁律）', () => {
     })
     await expect(api.listTracks()).rejects.toThrowError(/确认 platform_api 已启动/)
   })
+
+  it('2xx 但不是 JSON 时说"代理少配了前缀"，而不是抛底层那句 Unexpected token', async () => {
+    // 真发生过：新加的 /attempts 没进 Vite 代理，请求打到了前端自己、拿回 index.html。
+    stubFetch(async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new SyntaxError("Unexpected token '<', \"<!doctype \"... is not valid JSON")
+        },
+      } as unknown as Response
+    })
+    try {
+      await api.listTracks()
+      throw new Error('should have thrown')
+    } catch (e) {
+      const err = e as ApiError
+      expect(err.detail).toBe('unexpected_response')
+      expect(err.message).toContain('代理')
+      expect(err.message).not.toContain('Unexpected token')
+    }
+  })
 })
 
 describe('humanize', () => {

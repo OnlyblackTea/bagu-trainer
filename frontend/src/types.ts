@@ -319,5 +319,17 @@ export interface AttemptsOut {
   attempts: AttemptSummaryOut[]
 }
 
+/** `GET /meta`：各后端**逐项**如实上报（§15 风险 5：笼统的"模拟"徽标会把真的说成假的）。 */
+export interface MetaOut {
+  platform_version: string
+  grading_backend: 'stub' | 'docker'
+  grading_reset: boolean
+  forge_backend: 'stub' | 'gitea'
+  store_backend: 'sqlite' | 'postgres' | 'memory'
+  /** 存储落点：sqlite 是数据库文件的绝对路径。 */
+  store_target: string
+  instance_id: string
+}
+
 export type GradingScenario = 'pass' | 'fail'
 export type ReviewScenario = 'approve' | 'request_changes'

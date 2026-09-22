@@ -53,8 +53,9 @@ def test_frontend_does_not_invent_codes_the_backend_never_sends() -> None:
     """反向也查一次：前端列了后端从不发的码，说明契约漂了（或短码改了名而前端没跟上）。"""
     codes = _emitted_codes()
     spa = FRONTEND_API.read_text(encoding="utf-8")
-    # 前端自己的两条不是后端短码：网络层失败、以及非 JSON 错误体的兜底。
-    own = {"network_error", "http_422"}
+    # 前端自己造的码，不是后端短码：网络层失败、非 JSON 错误体的兜底、以及
+    # "2xx 但不是 JSON"（多半是代理少配了前缀）。
+    own = {"network_error", "http_422", "unexpected_response"}
     declared = set(re.findall(r"^\s*\|\s*'([a-z][a-z0-9_]*)'", spa, flags=re.MULTILINE))
     assert declared, "没能从前端 ErrorCode union 里解析出任何短码"
     unknown = sorted(declared - codes - own)

@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 
 import { api } from '../api'
 import { KIND_LABEL, stateLabel } from '../labels'
-import type { AttemptSummaryOut, InstanceOut, StageEntry, TrackDetail } from '../types'
+import type {
+  AttemptSummaryOut,
+  InstanceOut,
+  MetaOut,
+  StageEntry,
+  TrackDetail,
+} from '../types'
 
 interface Props {
   track: TrackDetail
@@ -70,6 +76,7 @@ export function HomeView({
   refreshKey,
 }: Props) {
   const [recent, setRecent] = useState<AttemptSummaryOut[] | null>(null)
+  const [meta, setMeta] = useState<MetaOut | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -84,6 +91,15 @@ export function HomeView({
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      })
+    // 后端自述：进度到底存哪、重启会不会丢——学员有权知道，而不是"应该保存了吧"。
+    api
+      .meta()
+      .then((m) => {
+        if (!cancelled) setMeta(m)
+      })
+      .catch(() => {
+        /* /meta 拿不到不影响做题；宁可少一句说明，也不要因此挡住主流程 */
       })
     return () => {
       cancelled = true
@@ -234,6 +250,42 @@ export function HomeView({
           </ul>
         )}
       </section>
+
+      {meta && (
+        <section className="card meta-card" data-testid="home-meta">
+          <h2 className="card__title">这台服务</h2>
+          <dl className="kv kv--tight">
+            <dt>进度存在</dt>
+            <dd>
+              <code>{meta.store_target}</code>
+            </dd>
+            <dt>存储后端</dt>
+            <dd>
+              <span className="badge">{meta.store_backend}</span>
+              <span className="muted">
+                {meta.store_backend === 'memory'
+                  ? '重启即失忆——只适合临时演示'
+                  : '重启后进度还在'}
+              </span>
+            </dd>
+            <dt>阅卷</dt>
+            <dd>
+              <span className="badge">{meta.grading_backend}</span>
+              <span className="muted">
+                {meta.grading_backend === 'stub' ? '桩：预置红绿' : '真跑 Track 的 canonical 测试'}
+              </span>
+            </dd>
+            <dt>Forge</dt>
+            <dd>
+              <span className="badge">{meta.forge_backend}</span>
+              <span className="muted">
+                {meta.forge_backend === 'stub' ? '桩：本地 clone + 占位 PR' : '真 Gitea：真 fork/PR'}
+              </span>
+            </dd>
+          </dl>
+          <p className="muted">部署指引见 <code>docs/deployment.md</code>。</p>
+        </section>
+      )}
     </div>
   )
 }

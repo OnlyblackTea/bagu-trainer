@@ -14,7 +14,6 @@ const BACKEND_PORT = 8100
 const FRONTEND_PORT = 5183
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`
 const FRONTEND_URL = `http://127.0.0.1:${FRONTEND_PORT}`
-const E2E_ROOT = 'scratch/_e2e'
 
 export default defineConfig({
   testDir: './e2e',
@@ -33,15 +32,12 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
-      // A′ 后端（默认用 demo Track；工作区与数据库都隔离在 scratch/_e2e）。
-      // 反斜杠是必要的：这条命令由 Windows 的 cmd.exe 执行，正斜杠路径会被当成命令名。
-      // 每次开跑先删掉上一轮的库：e2e 要验的是"从没入过学开始"的整条流程。
-      command:
-        `cmd /c "if exist ${E2E_ROOT}\\bagu.sqlite3 del /q ${E2E_ROOT}\\bagu.sqlite3*" && ` +
-        '.venv\\Scripts\\python.exe -m platform_api.serve ' +
-        `--port ${BACKEND_PORT} --workspace-root ${E2E_ROOT} ` +
-        `--store sqlite --database-url ${E2E_ROOT}/bagu.sqlite3`,
-      cwd: '..',
+      // A′ 后端（demo Track；工作区与数据库都隔离在 scratch/_e2e，且每次开跑前先删库）。
+      // 用 Node 启动器而不是在 command 里拼 shell：`cmd /c "if exist … del …"` 的引号与
+      // 通配符会被 Playwright 传参拆坏（"Invalid switch"），而且那也不是跨平台的写法。
+      command: 'node e2e/_serve-for-e2e.mjs',
+      cwd: '.',
+      env: { E2E_BACKEND_PORT: String(BACKEND_PORT) },
       url: `${BACKEND_URL}/tracks`,
       reuseExistingServer: false,
       timeout: 120_000,

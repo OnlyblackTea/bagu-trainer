@@ -31,10 +31,23 @@ function attempt(over: Partial<AttemptSummaryOut> = {}): AttemptSummaryOut {
   }
 }
 
+const META = {
+  platform_version: 'a-prime-0.1.0',
+  grading_backend: 'stub',
+  grading_reset: true,
+  forge_backend: 'gitea',
+  store_backend: 'sqlite',
+  store_target: '/srv/bagu/progress.sqlite3',
+  instance_id: 'default',
+}
+
 function stubFetch(attempts: AttemptSummaryOut[] = [], status = 200) {
   const fn = vi.fn(async (url: string) => {
     if (url.startsWith('/attempts')) {
       return { ok: status < 300, status, json: async () => ({ learner: 'deployer', attempts }) }
+    }
+    if (url === '/meta') {
+      return { ok: true, status: 200, json: async () => META }
     }
     return { ok: false, status: 404, json: async () => ({ detail: 'not_found' }) }
   })
@@ -139,6 +152,17 @@ describe('HomeView（屏幕 0 · 主页）', () => {
     )
   })
 
+  it('说清进度存在哪、重启会不会丢（后端逐项自述）', async () => {
+    stubFetch([])
+    renderHome()
+    const card = await screen.findByTestId('home-meta')
+    expect(card).toHaveTextContent('/srv/bagu/progress.sqlite3')
+    expect(card).toHaveTextContent('重启后进度还在')
+    // 真假逐项上报：这里是桩阅卷 + 真 Gitea，两句话必须分别对
+    expect(card).toHaveTextContent('桩：预置红绿')
+    expect(card).toHaveTextContent('真 Gitea')
+  })
+
   it('refreshKey 变化会重拉最近练习（提交/判定之后首页要跟着变）', async () => {
     const fetchMock = stubFetch([attempt()])
     const props = {
@@ -150,9 +174,11 @@ describe('HomeView（屏幕 0 · 主页）', () => {
       busy: false,
       refreshKey: 0,
     }
+    const attemptsCalls = () =>
+      fetchMock.mock.calls.filter((c) => String(c[0]).startsWith('/attempts')).length
     const { rerender } = render(<HomeView {...props} />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(attemptsCalls()).toBe(1))
     rerender(<HomeView {...props} refreshKey={1} />)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(attemptsCalls()).toBe(2))
   })
 })

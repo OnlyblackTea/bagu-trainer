@@ -13,10 +13,18 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     proxy: Object.fromEntries(
-      ['/tracks', '/tickets', '/enrollments', '/instances', '/submissions'].map((p) => [
-        p,
-        BACKEND,
-      ]),
+      // **每一个**后端前缀都要在这儿：漏一个，请求就会打到 Vite 自己、拿回 index.html，
+      // 前端随后在 JSON.parse 上炸出一句跟真实原因毫无关系的错（真发生过：新加的 /attempts
+      // 让"最近练习"显示 `Unexpected token '<'`）。后端有哪些前缀：看 /docs。
+      [
+        '/tracks',
+        '/tickets',
+        '/enrollments',
+        '/instances',
+        '/submissions',
+        '/attempts',
+        '/meta',
+      ].map((p) => [p, BACKEND]),
     ),
   },
   test: {
