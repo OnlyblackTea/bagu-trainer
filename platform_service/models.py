@@ -250,6 +250,10 @@ class TicketInstance(_Strict):
     engine_version: str
     test_version: int = Field(ge=1)
     state: InstanceState = InstanceState.LOCKED
+    #: 学员指定用自己的目录时记在这里（指引式 provision：平台给出 clone 命令，学员可以在自己熟悉
+    #: 的地方拉代码，再把路径登记回来）。``None`` = 用平台自己准备的那个工作区。可选字段，所以
+    #: 老记录读回来照样验证通过。
+    workspace_path: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
 

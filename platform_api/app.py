@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from platform_service.ai_review import ReviewDiffTooLargeError
-from platform_service.errors import GateNotReadyError, NotFoundError
+from platform_service.errors import GateNotReadyError, NotFoundError, WorkspacePathError
 from platform_service.forge import (
     ForgeUnavailableError,
     RemoteBranchMissingError,
@@ -75,6 +75,18 @@ def _register_exception_handlers(app: FastAPI) -> None:
         以前它会被 ValueError 的兜底映射伪装成"你还没评审"，学员照着做也过不去。
         """
         return JSONResponse(status_code=500, content={"detail": "internal_error"})
+
+    @app.exception_handler(WorkspacePathError)
+    async def _bad_workspace(request: Request, exc: WorkspacePathError) -> JSONResponse:
+        """学员登记的目录用不了 → 422 ``workspace_path_invalid``。
+
+        422 而不是 500：目录是他给的，问题在那一侧；也不是 404——**实例是好的**，只是那个路径不行。
+        ``reason`` 带上细分口径（``not_a_directory`` / ``not_a_repo``），前端据此说清该怎么办。
+        """
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "workspace_path_invalid", "reason": exc.reason},
+        )
 
     @app.exception_handler(ReviewDiffTooLargeError)
     async def _too_large(request: Request, exc: ReviewDiffTooLargeError) -> JSONResponse:

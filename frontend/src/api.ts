@@ -52,6 +52,7 @@ export type ErrorCode =
   | 'track_not_deployed'
   | 'enroll_needs_track'
   | 'ticket_id_ambiguous'
+  | 'workspace_path_invalid'
   | 'instance_not_found'
   | 'submission_not_found'
   | 'ticket_not_found'
@@ -114,6 +115,15 @@ export function humanize(
       return '部署了多个 Track，报名时必须指定报哪一个。'
     case 'ticket_id_ambiguous':
       return '这个工单号在多个 Track 里都存在（工单号只在 Track 内唯一）。请指明 Track 后再取卷。'
+    case 'workspace_path_invalid': {
+      const why =
+        extra?.reason === 'not_a_repo'
+          ? '那个目录不是 git 仓库'
+          : extra?.reason === 'not_a_directory'
+            ? '那个目录不存在'
+            : '那个路径用不了'
+      return `${why}。请用上面给的 clone 命令拉一份，再把**那个**目录登记回来（路径要是后端这台机器上能看到的）。`
+    }
     case 'instance_not_found':
       return '这个实例在后端不存在了——多半是后端重启过（`--store memory` 重启即失忆），或它来自一个已经被重置/重建的实例。刷新页面重新「入学」即可，历史记录不会因此丢。'
     case 'submission_not_found':
@@ -237,6 +247,12 @@ export const api = {
     request<WorkspaceOut>(`/instances/${encodeURIComponent(instanceId)}/provision`, {
       method: 'POST',
     }),
+  /** 登记（`path`）/ 撤销登记（`null`）学员自己的工作区目录——指引式 provision。 */
+  attachWorkspace: (instanceId: string, path: string | null) =>
+    request<WorkspaceOut & { workspace_path: string | null }>(
+      `/instances/${encodeURIComponent(instanceId)}/workspace`,
+      { method: 'POST', body: JSON.stringify({ path }) },
+    ),
   diff: (instanceId: string) =>
     request<DiffOut>(`/instances/${encodeURIComponent(instanceId)}/diff`),
   createPr: (instanceId: string) =>

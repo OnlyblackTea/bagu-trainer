@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-__all__ = ["PlatformError", "NotFoundError", "GateNotReadyError"]
+__all__ = ["PlatformError", "NotFoundError", "GateNotReadyError", "WorkspacePathError"]
 
 
 class PlatformError(Exception):
@@ -28,3 +28,15 @@ class NotFoundError(PlatformError):
 
 class GateNotReadyError(PlatformError):
     """验收门的前置条件还没齐（缺阅卷报告或缺评审）。→ 409 ``decide_needs_report_and_review``"""
+
+
+class WorkspacePathError(PlatformError):
+    """学员登记的目录用不了（不存在 / 不是 git 仓库）。→ 422 ``workspace_path_invalid``。
+
+    ``reason`` 是给前端的细分口径（``not_a_directory`` / ``not_a_repo``）；**不把它做成
+    ``OK``**：这不是"服务器出错了"，而是"你给的那个路径不能用来做这件事"。
+    """
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason

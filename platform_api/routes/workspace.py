@@ -15,7 +15,7 @@ from fastapi import APIRouter, Request
 
 from platform_service.review_diff import generate_diff, preflight_diff_volume
 
-from ..schemas import workspace_out
+from ..schemas import WorkspaceRequest, workspace_out
 from ._resolve import bundle_for_instance, must_instance
 
 router = APIRouter(tags=["workspace"])
@@ -25,6 +25,27 @@ router = APIRouter(tags=["workspace"])
 def provision(instance_id: str, request: Request) -> dict[str, Any]:
     instance = must_instance(request, instance_id)
     return workspace_out(bundle_for_instance(request, instance).forge.provision(instance))
+
+
+@router.post("/instances/{instance_id}/workspace")
+def attach_workspace(
+    instance_id: str, request: Request, body: WorkspaceRequest
+) -> dict[str, Any]:
+    """登记（或撤销）学员自己的工作区目录——**指引式 provision** 的落地。
+
+    平台给出 clone 命令（``clone_hint``），学员在**自己熟悉的地方**拉代码，再把那个路径登记回来；
+    此后 ``diff`` 与阅卷都对着它跑（D3：阅卷在学员自己的机器上）。``path=null`` 撤销登记。
+
+    注意：路径必须是**后端这台机器**上能看到的目录——工作区永远在后端所在机器上（这也是为什么
+    "把后端跑在你自己的机器上"是最省事的部署方式，见 docs/deployment.md）。
+    """
+    instance = must_instance(request, instance_id)
+    bundle = bundle_for_instance(request, instance)
+    updated = bundle.service.attach_workspace(instance_id, body.path)
+    return {
+        **workspace_out(bundle.forge.provision(updated)),
+        "workspace_path": updated.workspace_path,
+    }
 
 
 @router.get("/instances/{instance_id}/diff")

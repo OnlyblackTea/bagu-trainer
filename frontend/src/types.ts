@@ -104,6 +104,8 @@ export interface WorkspaceOut {
   diff_head_ref: string | null
   /** 学员要把改动推上去时跑的 git 命令（真 Forge 才有；不含任何凭据）。 */
   push_hint: string | null
+  /** 学员想在自己的目录里拉取时照抄的命令（指引式 provision）。 */
+  clone_hint: string | null
   simulated: boolean
 }
 

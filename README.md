@@ -18,11 +18,16 @@
 
 ## 本地跑起来
 
+> **部署到别的机器上？先读 [`docs/deployment.md`](docs/deployment.md)。**
+> 它会先讲清两件事实：平台**没有认证**（怎么对外暴露是部署者的事），以及**工作区 / 阅卷工具链 /
+> 数据库都在跑后端的那台机器上**——所以"我想在自己电脑上用 IDE 写代码"的正解是**把后端跑在自己
+> 电脑上**，而不是想办法让远端后端去读你本地的目录。
+
 A′ 引擎无关切片已把「发卷 → 工作区 → 提交 → 本地阅卷 → 评审 → 确定性决策（解锁 / 返工）」做成
 **纯 REST 后端 + 学习者 SPA**，全程**不依赖任何 AI / 引擎**。开两个终端：
 
 ```bash
-# 1) 后端（默认用内置 demo Track）
+# 1) 后端（默认用内置 demo Track；进度默认存 ./bagu.sqlite3，重启不失忆）
 .venv/Scripts/python.exe -m platform_api.serve            # http://127.0.0.1:8000
 
 # 2) 前端（Vite 开发服务器把 REST 前缀代理到后端）
@@ -60,12 +65,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 285 passed, 14 skipped
+.venv/Scripts/python.exe -m pytest -q        # 298 passed, 14 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，90 passed
+npm test                                      # vitest + RTL，101 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 

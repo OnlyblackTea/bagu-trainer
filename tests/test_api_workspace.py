@@ -121,6 +121,54 @@ def test_provision_unknown_instance_404(client: Any) -> None:
     assert client.post("/instances/nope/provision").status_code == 404
 
 
+# --- 指引式 provision：登记学员自己的目录 -------------------------------------
+
+
+def test_registering_your_own_workspace_changes_where_diff_runs(
+    client: Any, tmp_path: Path
+) -> None:
+    """学员在自己熟悉的地方 clone，把路径登记回来，此后 diff/阅卷都对着**那个**目录。
+
+    这是"拉取本地工作区"从"平台替你 clone"变成"平台给指引 + 你说是哪儿"的落点。
+    """
+    import subprocess
+
+    iid = _enroll_start(client)
+    own = tmp_path / "my-own-workspace"
+    own.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=own, check=True)
+    (own / "notes.md").write_text("我的工作区\n", encoding="utf-8")
+
+    r = client.post(f"/instances/{iid}/workspace", json={"path": str(own)})
+    assert r.status_code == 200
+    assert r.json()["workspace_path"] == str(own)
+
+    # 实例上记下来了（不是只活在这次响应里）
+    assert client.get(f"/instances/{iid}").json()["workspace_path"] == str(own)
+
+    # 撤销登记：回到平台准备的目录
+    r = client.post(f"/instances/{iid}/workspace", json={"path": None})
+    assert r.status_code == 200 and r.json()["workspace_path"] is None
+
+
+def test_registering_a_bad_path_is_422_with_a_reason(client: Any, tmp_path: Path) -> None:
+    """路径用不了要**说清是哪一种**：目录不存在 / 不是 git 仓库。两者要做的事不同。"""
+    iid = _enroll_start(client)
+
+    missing = client.post(
+        f"/instances/{iid}/workspace", json={"path": str(tmp_path / "nope")}
+    )
+    assert missing.status_code == 422
+    assert missing.json()["detail"] == "workspace_path_invalid"
+    assert missing.json()["reason"] == "not_a_directory"
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    not_repo = client.post(f"/instances/{iid}/workspace", json={"path": str(plain)})
+    assert not_repo.status_code == 422
+    assert not_repo.json()["reason"] == "not_a_repo"
+
+
 def test_diff_unknown_instance_404(client: Any) -> None:
     assert client.get("/instances/nope/diff").status_code == 404
 

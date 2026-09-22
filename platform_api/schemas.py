@@ -43,6 +43,16 @@ class ReviewRequest(_Strict):
     dimensions: list[str] | None = Field(default=None, min_length=1)
 
 
+class WorkspaceRequest(_Strict):
+    """登记学员自己的工作区目录（指引式 provision）。
+
+    ``path=None`` = 撤销登记，回到平台自己准备的那个 clone。路径**必须是后端这台机器上能看到的
+    目录**——工作区永远在后端所在机器上（部署指引 docs/deployment.md 讲了为什么）。
+    """
+
+    path: str | None = Field(default=None, max_length=4096)
+
+
 _GATE: dict[InstanceState, str] = {
     InstanceState.LOCKED: "未解锁：先通过全部前置阶段。",
     InstanceState.AVAILABLE: "可开始：start 本实例，再 provision 拉取本地工作区。",
@@ -72,6 +82,8 @@ def workspace_out(ws: Workspace) -> dict[str, Any]:
         # 预览/评审拿什么和 base 比：null = 工作区（含未提交）。见 Workspace 的 docstring。
         "diff_head_ref": ws.diff_head_ref,
         "push_hint": ws.push_hint,
+        # 学员想在自己的目录里拉取时照抄的命令（指引式 provision）。
+        "clone_hint": ws.clone_hint,
         "simulated": ws.simulated,
     }
 

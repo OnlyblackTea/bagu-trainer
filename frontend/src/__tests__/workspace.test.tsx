@@ -20,6 +20,8 @@ const REAL_WS: WorkspaceOut = {
   head_ref: 'dev',
   diff_head_ref: null,
   push_hint: 'git add -A && git commit -m "stage 完成" && git push -u origin dev',
+  clone_hint:
+    'git clone http://127.0.0.1:3000/deployer/seckill-lab.git ~/my-bagu-stage-01\ncd ~/my-bagu-stage-01\ngit checkout -b dev origin/stage-01-product-query-index',
   simulated: false,
 }
 
@@ -29,6 +31,7 @@ const STUB_WS: WorkspaceOut = {
   head_ref: 'origin/stage-00-onboarding-sol',
   diff_head_ref: 'origin/stage-00-onboarding-sol',
   push_hint: null,
+  clone_hint: null,
   simulated: true,
 }
 
@@ -56,17 +59,21 @@ function prOut(simulated: boolean): PullRequestOut {
 }
 
 function stubFetch(routes: Record<string, unknown>) {
-  const fn = vi.fn(async (url: string) => {
+  const seen: Array<{ url: string; init?: RequestInit }> = []
+  const fn = vi.fn(async (url: string, init?: RequestInit) => {
+    seen.push({ url, init })
     const key = Object.keys(routes).find((k) => url.startsWith(k))
     if (!key) return { ok: false, status: 404, json: async () => ({ detail: 'not_found' }) }
+    const body = routes[key] as { __status?: number }
+    if (body?.__status) return { ok: false, status: body.__status, json: async () => body }
     return { ok: true, status: 200, json: async () => routes[key] }
   })
   vi.stubGlobal('fetch', fn)
-  return fn
+  return { fn, calls: seen }
 }
 
 async function openFlow(routes: Record<string, unknown>) {
-  stubFetch(routes)
+  stubFetch(routes).fn
   const user = userEvent.setup()
   render(<WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />)
   await user.click(screen.getByRole('button', { name: '拉取本地工作区' }))
@@ -80,6 +87,83 @@ async function openFlow(routes: Record<string, unknown>) {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('指引式 provision（在**你自己**的目录里做这一题）', () => {
+  it('给出可照抄的 clone/checkout 命令，且不含任何凭据', async () => {
+    await openFlow({
+      '/instances/ti-1/provision': REAL_WS,
+      '/instances/ti-1/diff': diffOut(),
+      '/instances/ti-1/pr': prOut(false),
+    })
+    const hint = screen.getByTestId('clone-hint')
+    expect(hint).toHaveTextContent('git clone')
+    expect(hint).toHaveTextContent('git checkout -b dev origin/')
+    const cmd = hint.querySelector('pre')?.textContent ?? ''
+    expect(cmd).not.toMatch(/token|oauth/)
+  })
+
+  it('把路径登记回来之后，界面说清"现在用的是你自己的目录"', async () => {
+    const fetchMock = stubFetch({
+        '/instances/ti-1/workspace': {
+          ...REAL_WS,
+          path: '/home/lqz/my-bagu-stage-01',
+          workspace_path: '/home/lqz/my-bagu-stage-01',
+        },
+        '/instances/ti-1/provision': REAL_WS,
+        '/instances/ti-1/diff': diffOut(),
+      '/instances/ti-1/pr': prOut(false),
+    })
+
+    const user = userEvent.setup()
+    render(
+      <WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />,
+    )
+    await user.click(screen.getByRole('button', { name: '拉取本地工作区' }))
+    await screen.findByTestId('workspace-info')
+
+    await user.type(screen.getByTestId('workspace-path'), '/home/lqz/my-bagu-stage-01')
+    await user.click(screen.getByRole('button', { name: '用这个目录' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('clone-hint')).toHaveTextContent('你自己的目录'),
+    )
+    expect(screen.getByTestId('clone-hint')).toHaveTextContent('/home/lqz/my-bagu-stage-01')
+    const posted = fetchMock.calls.find((c) => c.url.endsWith('/instances/ti-1/workspace'))
+    expect(JSON.parse(String(posted?.init?.body))).toEqual({ path: '/home/lqz/my-bagu-stage-01' })
+  })
+
+  it('路径不能用时说清是"目录不存在"还是"不是 git 仓库"', async () => {
+    stubFetch({
+      '/instances/ti-1/workspace': {
+        __status: 422,
+        detail: 'workspace_path_invalid',
+        reason: 'not_a_repo',
+      },
+      '/instances/ti-1/provision': REAL_WS,
+    })
+    const user = userEvent.setup()
+    render(
+      <WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />,
+    )
+    await user.click(screen.getByRole('button', { name: '拉取本地工作区' }))
+    await screen.findByTestId('workspace-info')
+    await user.type(screen.getByTestId('workspace-path'), '/tmp/not-a-repo')
+    await user.click(screen.getByRole('button', { name: '用这个目录' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('不是 git 仓库')
+    expect(alert).not.toHaveTextContent('未识别')
+  })
+
+  it('桩没有可推的远端 ⇒ 不给 clone 指引（给了会把人骗去跑一条注定失败的命令）', async () => {
+    await openFlow({
+      '/instances/ti-1/provision': STUB_WS,
+      '/instances/ti-1/diff': diffOut({ simulated: true, worktree: false }),
+      '/instances/ti-1/pr': prOut(true),
+    })
+    expect(screen.queryByTestId('clone-hint')).not.toBeInTheDocument()
+  })
 })
 
 describe('真 Forge（gitea）', () => {

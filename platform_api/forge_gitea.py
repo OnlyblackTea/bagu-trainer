@@ -28,6 +28,7 @@ from platform_service.forge import (
     git,
     prepare_workspace,
     stage_branch_for,
+    taken_over_workspace,
 )
 from platform_service.models import TicketInstance
 
@@ -78,9 +79,14 @@ class GiteaForgeClient:
             )
         stage = stage_branch_for(instance.ticket_id, self._stage_refs)
         base_ref = f"origin/{stage}"
-        # 用 prepare_workspace 返回的路径（绝对），见其 docstring。
+        # 学员登记过自己的目录就用**他的**（指引式 provision），否则用平台自己准备的那个。
+        dest = taken_over_workspace(instance, self.workspace_path(instance))
+        if (dest / ".git").is_dir():
+            # 学员自己 clone 的那种：先把远端 ref 拉新，后面的 diff/PR 才看得见最新状态。
+            # `fetch` 是只读的（只动 remote-tracking ref，不碰他的工作树与提交）。
+            git(dest, "fetch", "-q", "origin", check=False)
         dest = prepare_workspace(
-            dest=self.workspace_path(instance),
+            dest=dest,
             # 带 token clone，**随后立刻把 remote 改回干净 URL**——别让 token 落进 .git/config。
             clone_url=self._api.authenticated_clone_url(clone_url),
             base_ref=base_ref,
@@ -99,6 +105,22 @@ class GiteaForgeClient:
             # 动作；拿 dev（只含已提交）去比会显示"没有改动"。
             diff_head_ref=None,
             push_hint=self.push_hint(),
+            clone_hint=self.clone_hint(clone_url, stage),
+        )
+
+    def clone_hint(self, clone_url: str, stage: str) -> str:
+        """让学员**在自己的目录里**拉取的命令（指引式 provision）。
+
+        用的是干净 clone URL（**不含 token**）：他自己的凭据他自己给——平台不去碰他机器上的 git
+        凭据配置。分支形状与平台自己那份一致（从阶段分支开出 ``dev``），所以后续 diff/PR 的语义
+        完全相同。
+        """
+        return "\n".join(
+            [
+                f"git clone {clone_url} ~/my-bagu-{stage}",
+                f"cd ~/my-bagu-{stage}",
+                f"git checkout -b {DEV_BRANCH} origin/{stage}",
+            ]
         )
 
     def ensure_git_identity(self, dest: Path, learner: str) -> bool:

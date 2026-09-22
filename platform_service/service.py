@@ -15,8 +15,10 @@ for this slice. No engine, no HTTP, no DB (D4).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .acceptance import decide_acceptance, find_tampering
-from .errors import GateNotReadyError, NotFoundError
+from .errors import GateNotReadyError, NotFoundError, WorkspacePathError
 from .history import AttemptRecord, AttemptSummary, attempt_delta, attempt_summary, elapsed_ms_of
 from .lifecycle import record_submission, transition
 from .lifecycle import reissue as reissue_instance
@@ -271,6 +273,35 @@ class PlatformService:
         """
         instance = self._must_get_instance(instance_id)
         transition(instance, InstanceState.IN_PROGRESS)
+        self._store.save_instance(instance)
+        return instance
+
+    def attach_workspace(self, instance_id: str, path: str | None) -> TicketInstance:
+        """登记（或撤销登记）学员自己的工作区目录。
+
+        指引式 provision 的落地：平台给出 clone 命令，学员在**自己熟悉的地方**拉代码，再把路径登记
+        回来；此后 diff 与阅卷都对着那个目录跑（D3：阅卷在学员自己的机器上）。``None`` = 撤销登记，
+        回到平台自己准备的那个 clone。
+
+        **只做"能不能用"的检查，不替学员修**：不存在就报不存在，不是 git 仓库就说不是。这里**故意**
+        不去 clone、不去 checkout、不写他的 config——那都是他机器上的事（§C.5：平台不代跑 git
+        写操作）。
+        """
+        instance = self._must_get_instance(instance_id)
+        if path is not None:
+            candidate = Path(path).expanduser()
+            if not candidate.is_dir():
+                raise WorkspacePathError(
+                    f"目录不存在：{candidate}", reason="not_a_directory"
+                )
+            if not (candidate / ".git").exists():
+                raise WorkspacePathError(
+                    f"这个目录不是 git 仓库：{candidate}（用平台给的 clone 命令拉一份）",
+                    reason="not_a_repo",
+                )
+            instance = instance.model_copy(update={"workspace_path": str(candidate)})
+        else:
+            instance = instance.model_copy(update={"workspace_path": None})
         self._store.save_instance(instance)
         return instance
 

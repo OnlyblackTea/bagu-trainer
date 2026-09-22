@@ -5,14 +5,16 @@ import { defineConfig, devices } from '@playwright/test'
  *
  * 本机没有 browser-use MCP，Playwright 是可安装、可重复、可进 CI 的等价物。
  *
- * 用**独立端口**且 `reuseExistingServer: false`：后端的 store 是内存态，复用旧进程会
- * 让上一轮跑出来的实例状态（已 passed 的阶段不可重做）污染这一轮。
+ * **状态隔离**：默认 store 是 SQLite（重启不失忆），所以"用独立端口"不足以隔离——数据库文件
+ * 也会跨轮留下来，上一轮入学过的阶段会让这一轮连「入学」按钮都看不到（真发生过：e2e 直接超时）。
+ * 于是这里把数据库也指到 scratch/_e2e 下，并由下面的启动器在每次跑之前删掉它。
  */
 
 const BACKEND_PORT = 8100
 const FRONTEND_PORT = 5183
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`
 const FRONTEND_URL = `http://127.0.0.1:${FRONTEND_PORT}`
+const E2E_ROOT = 'scratch/_e2e'
 
 export default defineConfig({
   testDir: './e2e',
@@ -31,11 +33,14 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
-      // A′ 后端（默认用 demo Track；工作区隔离在 scratch/_e2e）。
+      // A′ 后端（默认用 demo Track；工作区与数据库都隔离在 scratch/_e2e）。
       // 反斜杠是必要的：这条命令由 Windows 的 cmd.exe 执行，正斜杠路径会被当成命令名。
+      // 每次开跑先删掉上一轮的库：e2e 要验的是"从没入过学开始"的整条流程。
       command:
+        `cmd /c "if exist ${E2E_ROOT}\\bagu.sqlite3 del /q ${E2E_ROOT}\\bagu.sqlite3*" && ` +
         '.venv\\Scripts\\python.exe -m platform_api.serve ' +
-        `--port ${BACKEND_PORT} --workspace-root scratch/_e2e`,
+        `--port ${BACKEND_PORT} --workspace-root ${E2E_ROOT} ` +
+        `--store sqlite --database-url ${E2E_ROOT}/bagu.sqlite3`,
       cwd: '..',
       url: `${BACKEND_URL}/tracks`,
       reuseExistingServer: false,

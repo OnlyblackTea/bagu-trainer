@@ -1016,3 +1016,20 @@ pre.cmd {
 a {
   color: var(--accent);
 }
+
+/* 登记"我自己的工作区目录"用的输入框。 */
+.input {
+  font: inherit;
+  flex: 1 1 260px;
+  min-width: 200px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.input:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}

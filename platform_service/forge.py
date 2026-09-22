@@ -56,6 +56,9 @@ class Workspace:
     #: 学员要把改动推上去时跑的 git 命令（真 Forge 才有意义）。**不含任何凭据**：平台的 token
     #: 放在仓库外的凭据文件里，由 repo-local credential.helper 指过去。
     push_hint: str | None = None
+    #: 学员想**在自己的目录里**拉取时照抄的命令（指引式 provision）。``None`` = 这个后端没有可推的
+    #: 远端（桩），给了会把人骗去跑一条注定失败的命令。
+    clone_hint: str | None = None
 
 
 class WorkspaceRefMissingError(Exception):
@@ -188,14 +191,37 @@ def _absolute_clone_url(clone_url: str) -> str:
     return str(Path(clone_url).resolve())
 
 
+def remember_baseline(repo: Path, base_ref: str) -> str:
+    """把**基线 ref 解析成 SHA** 记进本地 git config（``bagu.baseRef``），返回它。
+
+    为什么必须是解析好的 SHA、不能记 ``HEAD``：``HEAD`` 会随学员的提交一起前移，等于永远比不出
+    东西（这个坑测试里踩过）。幂等：已经记过就不覆盖。
+    """
+    existing = git(repo, "config", "--get", "bagu.baseRef", check=False).stdout.strip()
+    if existing:
+        return existing
+    resolved = git(repo, "rev-parse", base_ref).stdout.strip()
+    git(repo, "config", "bagu.baseRef", resolved)
+    return resolved
+
+
+def taken_over_workspace(instance: TicketInstance, fallback: Path) -> Path:
+    """这次操作该用哪个工作区：学员登记过就用**他的**，否则用平台自己准备的那个。
+
+    指引式 provision 的核心：平台给出 clone 命令，学员在**自己熟悉的地方**拉代码、把路径登记回来，
+    此后 diff 与阅卷都对着那个目录跑（D3：阅卷在学员自己的机器上）。没登记就是平台自己的 clone——
+    两种都合法，只是"在哪儿"必须说清楚（diff 响应里会带上）。
+    """
+    return Path(instance.workspace_path) if instance.workspace_path else fallback
+
+
 def prepare_workspace(
     *, dest: Path, clone_url: str, base_ref: str, make_dev_branch: bool
 ) -> Path:
     """把工作区准备到"学员可以开始写"的状态（两个 Forge 共用，幂等）。
 
-    做四件事：clone（已存在就跳过）、校验阶段分支存在、把 ``dev`` 准备好、把**基线 ref 解析成 SHA
-    记进本地 git config**（``bagu.baseRef``）——阅卷据此比出"学员改了什么"，**已提交**的改动也算数；
-    记 ``HEAD`` 会随学员的提交一起前移，等于永远比不出东西（这个坑测试里踩过）。
+    做四件事：clone（已存在就跳过）、校验阶段分支存在、把 ``dev`` 准备好、把基线记进 git config
+    （见 :func:`remember_baseline`）。
 
     ``dev`` 的优先级是**本地已有 > 远端已有 > 从阶段分支新建**。第二条是必须的：学员的 ``dev``
     是跨阶段累积的那条线（§C.5：通过一关后从下一阶段分支 cherry-pick/提 PR 合入 dev）。若每次都
@@ -225,6 +251,5 @@ def prepare_workspace(
             git(dest, "checkout", "-q", "-b", DEV_BRANCH, remote_dev)
         else:
             git(dest, "checkout", "-q", "-b", DEV_BRANCH, base_ref)
-    if not git(dest, "config", "--get", "bagu.baseRef", check=False).stdout.strip():
-        git(dest, "config", "bagu.baseRef", git(dest, "rev-parse", base_ref).stdout.strip())
+    remember_baseline(dest, base_ref)
     return dest

@@ -25,6 +25,10 @@ interface Props {
  */
 export function WorkspaceView({ instance, busy, onStart }: Props) {
   const [workspace, setWorkspace] = useState<WorkspaceOut | null>(null)
+  const [registered, setRegistered] = useState<
+    (WorkspaceOut & { workspace_path: string | null }) | null
+  >(null)
+  const [path, setPath] = useState('')
   const [diff, setDiff] = useState<DiffOut | null>(null)
   const [pr, setPr] = useState<PullRequestOut | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -33,6 +37,8 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
   // 换实例就清空本屏的资源（工作区/diff/PR 都只属于当前实例）。
   useEffect(() => {
     setWorkspace(null)
+    setRegistered(null)
+    setPath('')
     setDiff(null)
     setPr(null)
     setError(null)
@@ -121,6 +127,60 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
               <code>{workspace.base_ref}</code>
             </dd>
           </dl>
+
+          {workspace.clone_hint && (
+            <div className="hint-block" data-testid="clone-hint">
+              <p className="muted">
+                想在自己的目录里做这一题？把下面三行照抄（平台不替你 clone，也不碰你机器上的
+                git 凭据）：
+              </p>
+              <pre className="cmd">{workspace.clone_hint}</pre>
+              <div className="row">
+                <input
+                  className="input"
+                  data-testid="workspace-path"
+                  placeholder="拉好之后，把那个目录的路径登记回来（后端这台上能看到的绝对路径）"
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  disabled={disabled}
+                />
+                <button
+                  onClick={() =>
+                    run(async () => {
+                      setRegistered(await api.attachWorkspace(instance.id, path.trim()))
+                      setDiff(null)
+                    })
+                  }
+                  disabled={disabled || path.trim() === ''}
+                >
+                  用这个目录
+                </button>
+                {registered?.workspace_path && (
+                  <button
+                    onClick={() =>
+                      run(async () => {
+                        setRegistered(await api.attachWorkspace(instance.id, null))
+                        setPath('')
+                        setDiff(null)
+                      })
+                    }
+                    disabled={disabled}
+                  >
+                    改回平台准备的目录
+                  </button>
+                )}
+              </div>
+              <p className="muted">
+                现在用的是：
+                {registered?.workspace_path ? (
+                  <strong>你自己的目录</strong>
+                ) : (
+                  <strong>平台准备的工作区</strong>
+                )}{' '}
+                <code>{registered?.path ?? workspace.path}</code>
+              </p>
+            </div>
+          )}
 
           {workspace.push_hint && (
             <div className="hint-block" data-testid="push-hint">
