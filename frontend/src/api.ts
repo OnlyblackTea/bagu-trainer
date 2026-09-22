@@ -27,7 +27,14 @@ import type {
   WorkspaceOut,
 } from './types'
 
-/** 后端错误的短码（Plan 1 §C.8）。 */
+/**
+ * 后端错误的短码（Plan 1 §C.8）。
+ *
+ * **必须与后端实际会发的短码一一对齐**——漏一个，学员看到的就是"未识别的错误：instance_not_found"
+ * 这种死胡同（本文件的 `humanize` 落到 default）。对齐由后端侧的
+ * `tests/test_error_codes.py` 守着：它扫 `platform_api/**` 里所有 `detail="…"` 字面量，逐个要求
+ * 出现在这个文件里。加短码时两边一起加。
+ */
 export type ErrorCode =
   | 'not_found'
   | 'illegal_transition'
@@ -44,7 +51,12 @@ export type ErrorCode =
   | 'track_not_deployed'
   | 'enroll_needs_track'
   | 'ticket_id_ambiguous'
+  | 'instance_not_found'
+  | 'submission_not_found'
+  | 'ticket_not_found'
   | 'internal_error'
+  | 'network_error'
+  | 'http_422'
 
 export class ApiError extends Error {
   readonly status: number
@@ -101,6 +113,16 @@ export function humanize(
       return '部署了多个 Track，报名时必须指定报哪一个。'
     case 'ticket_id_ambiguous':
       return '这个工单号在多个 Track 里都存在（工单号只在 Track 内唯一）。请指明 Track 后再取卷。'
+    case 'instance_not_found':
+      return '这个实例在后端不存在了——多半是后端重启过（`--store memory` 重启即失忆），或它来自一个已经被重置/重建的实例。刷新页面重新「入学」即可，历史记录不会因此丢。'
+    case 'submission_not_found':
+      return '这条提交在后端不存在了：可能它属于一个已被重置或重建的实例。刷新页面看当前实例的提交。'
+    case 'ticket_not_found':
+      return '这个工单号在当前 Track 里不存在。看板上的阶段若已撤下，取卷就会 404——刷新页面试试。'
+    case 'http_422':
+      return '请求参数没通过后端校验（422）。这多半是前端与后端的契约不一致，请把这一步的操作与短码记下来报给部署者。'
+    case 'network_error':
+      return '连不上后端。确认 `platform_api.serve` 还在跑（若用的是 5174 那个真后端，还要确认 SSH 隧道没断）。'
     case 'grading_unavailable': {
       const why = extra?.reason ? `（${extra.reason}）` : ''
       return `阅卷跑不起来${why}。这是**平台/环境**问题，不是你代码的问题：本机需要 JDK17 + Maven，以及 Track 声明的基础设施。`
@@ -117,6 +139,18 @@ export function humanize(
       return `后端返回了未识别的错误：${detail}`
   }
 }
+
+/**
+ * "这个资源已经没了"一类短码。界面看到它们时不该只是报错——本地那份实例/提交已经过期
+ * （最典型：后端重启过、或部署者重置过数据），**正确恢复是刷新看板**，而不是让学员对着一个
+ * 已经不存在的东西反复点。
+ */
+export const STALE_RESOURCE_CODES: readonly string[] = [
+  'instance_not_found',
+  'submission_not_found',
+  'ticket_not_found',
+  'not_found',
+]
 
 interface ErrorBody {
   detail?: unknown

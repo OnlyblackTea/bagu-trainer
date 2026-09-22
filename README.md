@@ -60,12 +60,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 276 passed, 14 skipped
+.venv/Scripts/python.exe -m pytest -q        # 278 passed, 14 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，80 passed
+npm test                                      # vitest + RTL，84 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 

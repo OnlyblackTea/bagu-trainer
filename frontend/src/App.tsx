@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { api } from './api'
+import { api, ApiError, STALE_RESOURCE_CODES } from './api'
 import { DecisionView } from './components/DecisionView'
 import { GradingView } from './components/GradingView'
 import { HistoryView } from './components/HistoryView'
@@ -57,7 +57,17 @@ export default function App() {
     try {
       await fn()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const message = e instanceof Error ? e.message : String(e)
+      // 本地那份实例已经不在了（后端重启过 / 数据被重置 / 实例被重建）：光报错没用，
+      // 界面上那个实例是个幻影，点它只会再 404。**刷新看板 + 清掉选中项**才是恢复动作。
+      if (e instanceof ApiError && STALE_RESOURCE_CODES.includes(e.detail) && track) {
+        selectStage(null) // 顺手清掉 error/notice，所以下面两个 set 必须放在它**之后**
+        await refreshInstances(track.id).catch(() => {})
+        setError(message) // 「为什么」留在错误条里，不要只留一句"已刷新"
+        setNotice('看板已刷新——重新点一个阶段继续。')
+      } else {
+        setError(message)
+      }
     } finally {
       setBusy(false)
     }

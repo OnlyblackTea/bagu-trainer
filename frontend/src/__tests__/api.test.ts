@@ -124,6 +124,8 @@ describe('api: 错误短码翻人话（Plan 2 §4 铁律）', () => {
 
 describe('humanize', () => {
   it('每个已知短码都有人话，且都不是短码本身', () => {
+    // 与 ErrorCode union 同步维护；**漏一个的代价**是学员看到「未识别的错误：instance_not_found」
+    // 这种死胡同（真出过一次）。后端那一侧另有 tests/test_error_codes.py 反向兜底。
     const codes = [
       'not_found',
       'illegal_transition',
@@ -131,10 +133,37 @@ describe('humanize', () => {
       'diff_too_large',
       'git_command_failed',
       'workspace_ref_missing',
+      'report_not_found',
+      'report_not_ready',
+      'grading_unavailable',
+      'forge_unavailable',
+      'remote_branch_missing',
+      'track_not_found',
+      'track_not_deployed',
+      'enroll_needs_track',
+      'ticket_id_ambiguous',
+      'instance_not_found',
+      'submission_not_found',
+      'ticket_not_found',
+      'internal_error',
+      'network_error',
+      'http_422',
     ]
     for (const code of codes) {
-      expect(humanize(code)).not.toBe(code)
-      expect(humanize(code).length).toBeGreaterThan(8)
+      const text = humanize(code)
+      expect(text, code).not.toBe(code)
+      expect(text, code).not.toContain('未识别')
+      expect(text.length, code).toBeGreaterThan(8)
     }
+  })
+
+  it('实例没了要说清"为什么 + 怎么办"，而不是只说找不到', () => {
+    const text = humanize('instance_not_found')
+    expect(text).toContain('刷新页面')
+    expect(text).toMatch(/重启|重置/)
+  })
+
+  it('真未知的短码仍然报短码（那是给部署者拿去查的）', () => {
+    expect(humanize('brand_new_code')).toContain('brand_new_code')
   })
 })
