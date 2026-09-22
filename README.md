@@ -60,12 +60,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 250 passed, 12 skipped
+.venv/Scripts/python.exe -m pytest -q        # 259 passed, 12 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，46 passed
+npm test                                      # vitest + RTL，53 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 
@@ -101,6 +101,36 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 > 绕过放回来**，且报告里会如实记 `infra.reset: false`。
 
 报告随时可从 `GET /submissions/{id}/report` 读——桩时代看不出来，接上真后端才发现这个端点是必需的。
+
+### 提交是异步的（进度反馈）
+
+`POST /instances/{id}/submit` 立刻回 **202**，阅卷在后台跑；学员轮询
+`GET /submissions/{id}/progress` 看"到哪一步了"。真阅卷要 `docker compose down -v` 再
+`mvn test`，几十到上百秒——同步做的话这一个请求就干挂着，中间没有任何反馈。
+
+| 端点 | 说什么 |
+|---|---|
+| `POST /instances/{id}/submit` → 202 | `{submission, progress}`：提交已受理 + 当前进度。**不等阅卷** |
+| `GET /submissions/{id}/progress` | `status`（queued/running/done/failed/**unknown**）、`step`、`elapsed_ms`、`report_ready`、**完整阶段链** `steps[]` |
+| `GET /submissions/{id}/report` | 跑完前 404 `report_not_ready`；跑挂了按失败短码报 503/500；从来没有过 404 `report_not_found` |
+
+阶段（后端只承诺短标识，措辞在前端）：`reset_infra` 重置环境 → `run_tests` 跑验收测试 →
+`parse` 解析结果。
+
+三条刻意的取舍：
+
+- **单线程**（`max_workers=1`）：环境重置会 `down -v` 掉 Track 的**共享**基础设施，maven 还要抢
+  端口与 `~/.m2`。两个阅卷并行不是更快，是互相砸场子——一个把另一个的数据库删了。
+- **进度不落库**：它是运行时瞬时状态。进程一没就失去意义（要么报告已落库、要么没跑完）。
+  重启后 `status=unknown` 是**如实回答**——编一个"正在跑第 2 步"比说不知道糟得多。
+- **跑不起来 ≠ 没过**：异步之后异常处理器够不着后台线程，所以失败在登记处就地分类成短码
+  （`grading_unavailable` / `workspace_ref_missing` / …），`report` 与 `progress` 原样报出来。
+
+> [!NOTE]
+> `--grading stub` 下提交是**瞬时**的（桩不 sleep、不假装在干活），所以进度条一闪而过——
+> 想看真的进度得换 `--grading docker`。实测（VM，真 MySQL + maven）：`submit` 80 ms 返回 202，
+> 而整次阅卷 120 s，轮询依次看到 `reset_infra`(0.1 s) → `run_tests`(109 s) → `done`(120 s)，
+> 报告带 `simulated:false` / `exit_code:1` / `infra.reset:true` 与逐条测试结果。
 
 ### 进度存在哪（持久化）
 

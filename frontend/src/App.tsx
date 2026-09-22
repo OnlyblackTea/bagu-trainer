@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api } from './api'
 import { DecisionView } from './components/DecisionView'
+import { GradingView } from './components/GradingView'
 import { ReviewView } from './components/ReviewView'
 import { SimulatedBadge } from './components/SimulatedBadge'
 import { StageBoard } from './components/StageBoard'
@@ -10,6 +11,8 @@ import { TrackSwitcher } from './components/TrackSwitcher'
 import { WorkspaceView } from './components/WorkspaceView'
 import type {
   DecisionOut,
+  GradingProgressOut,
+  GradingReportOut,
   GradingScenario,
   InstanceOut,
   ReviewOut,
@@ -23,14 +26,19 @@ import type {
 /** 自托管演练所的唯一用户（部署者本人）。 */
 const LEARNER = 'deployer'
 
+/** 轮询间隔。桩是瞬时的，真阅卷几十秒——700ms 既不刷爆后端，也不会让人觉得卡住。 */
+const POLL_MS = 700
+
 export default function App() {
   const [tracks, setTracks] = useState<TrackSummary[]>([])
   const [track, setTrack] = useState<TrackDetail | null>(null)
   const [instances, setInstances] = useState<InstanceOut[]>([])
   const [selected, setSelected] = useState<StageEntry | null>(null)
 
-  // 当前阶段这条链上的产物：提交 → 评审 → 决策。换阶段就清空。
+  // 当前阶段这条链上的产物：提交 → 阅卷（进度 + 报告）→ 评审 → 决策。换阶段就清空。
   const [submission, setSubmission] = useState<SubmissionOut | null>(null)
+  const [progress, setProgress] = useState<GradingProgressOut | null>(null)
+  const [report, setReport] = useState<GradingReportOut | null>(null)
   const [review, setReview] = useState<ReviewOut | null>(null)
   const [decision, setDecision] = useState<DecisionOut | null>(null)
 
@@ -57,6 +65,26 @@ export default function App() {
   // 实例按 Track 过滤：两个 Track 可以有同名 ticket id，不过滤就会把 A 的进度画进 B 的看板。
   const refreshInstances = (trackId: string) =>
     api.listInstances(LEARNER, trackId).then(setInstances)
+
+  // 轮询的"代"号：换阶段/换 Track 或重新提交都 +1，在飞的那轮轮询看到代号变了就自己停下。
+  // 不加这个，切走之后旧轮询还会往界面上写它那个阶段的进度。
+  const pollGeneration = useRef(0)
+
+  /** 提交后的轮询：把阶段进度一路画到报告就绪（或失败/无记录）。 */
+  async function pollGrading(submissionId: string, generation: number) {
+    for (;;) {
+      const p = await api.progress(submissionId)
+      if (pollGeneration.current !== generation) return
+      setProgress(p)
+      if (p.status === 'failed') return
+      if (p.report_ready) {
+        setReport(await api.report(submissionId))
+        return
+      }
+      if (p.status === 'unknown') return
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -88,11 +116,19 @@ export default function App() {
     })
   }
 
-  function selectStage(stage: StageEntry | null) {
-    setSelected(stage)
+  /** 清空"当前阶段这条链"的全部产物，并让在飞的轮询失效。 */
+  function clearChain() {
+    pollGeneration.current += 1
     setSubmission(null)
+    setProgress(null)
+    setReport(null)
     setReview(null)
     setDecision(null)
+  }
+
+  function selectStage(stage: StageEntry | null) {
+    clearChain()
+    setSelected(stage)
     setNotice(null)
     setError(null)
   }
@@ -148,11 +184,23 @@ export default function App() {
                   busy={busy}
                   onSubmit={(scenario: GradingScenario) =>
                     run(async () => {
-                      setSubmission(await api.submit(current.id, { scenario }))
+                      // 提交是异步的（202）：先把 submission 与进度画出来，再等轮询。
+                      const accepted = await api.submit(current.id, { scenario })
+                      pollGeneration.current += 1
+                      const generation = pollGeneration.current
+                      setSubmission(accepted.submission)
+                      setProgress(accepted.progress)
+                      setReport(null)
                       setReview(null)
                       setDecision(null)
                       await refreshInstances(t.id)
-                      setNotice('已提交并跑完阅卷桩。接下来发起评审。')
+                      setNotice('已受理：阅卷在后台跑，进度见下。')
+                      // 不 await：轮询自己会更新进度，界面不该被它挂住。
+                      void pollGrading(accepted.submission.id, generation).catch((e: unknown) => {
+                        if (pollGeneration.current === generation) {
+                          setError(e instanceof Error ? e.message : String(e))
+                        }
+                      })
                     })
                   }
                   onReview={(scenario: ReviewScenario) =>
@@ -165,6 +213,8 @@ export default function App() {
                     })
                   }
                 />
+
+                <GradingView submission={submission} progress={progress} report={report} />
 
                 <DecisionView
                   instance={current}
@@ -188,9 +238,7 @@ export default function App() {
                   onRetry={() =>
                     run(async () => {
                       await api.retry(current.id)
-                      setSubmission(null)
-                      setReview(null)
-                      setDecision(null)
+                      clearChain()
                       await refreshInstances(t.id)
                       setNotice('已回到「开发中」，可再走一遍提交 → 评审 → 决策。')
                     })

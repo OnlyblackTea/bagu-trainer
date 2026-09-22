@@ -178,6 +178,39 @@ button.primary:hover:not(:disabled) {
   font-weight: 600;
 }
 
+/* --- 阅卷进度（提交后）--- */
+
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+}
+
+.step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.step:last-child {
+  border-bottom: none;
+}
+
+.step__name {
+  min-width: 6em;
+  font-weight: 600;
+}
+
+.step--pending {
+  opacity: 0.5;
+}
+
+.step--running .step__name {
+  color: var(--accent);
+}
+
 /* --- 徽标 --- */
 
 .badge {

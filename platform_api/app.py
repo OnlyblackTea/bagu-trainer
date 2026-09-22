@@ -11,7 +11,8 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from .deps import (
     store_backend_name,
 )
 from .grading_docker import GradingUnavailableError
+from .jobs import GradingJobs
 from .stubs_wiring import ForgeBackend, forge_backend_name
 
 
@@ -166,7 +168,19 @@ def create_app(
     :func:`~platform_api.deps.build_tracks`）：报名时指定 track，实例上盖 ``track`` 戳，
     此后每个请求都能从实例反查出该用哪个 Track 的 ticket / forge / stage refs。
     """
-    app = FastAPI(title="bagu-trainer A′", version=PLATFORM_VERSION)
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """退出时关掉后台阅卷线程池。
+
+        ``wait=False``——等待会把 Ctrl-C 卡住几十秒（正在跑的 maven 不会因为我们要退出就停下），
+        而"这次阅卷没跑完"本来就由登记处如实表达（重启后 ``status=unknown``）。
+        """
+        try:
+            yield
+        finally:
+            app.state.grading_jobs.shutdown()
+
+    app = FastAPI(title="bagu-trainer A′", version=PLATFORM_VERSION, lifespan=_lifespan)
     roots = list(content_dirs) if content_dirs is not None else [content_dir]
     if content_dir is not None and content_dirs is not None:
         raise ValueError("content_dir 与 content_dirs 只能给一个")
@@ -188,11 +202,14 @@ def create_app(
     app.state.store = store
     app.state.store_backend = store_backend_name(store)
     app.state.tracks = tracks
-    app.state.grading_runner = lambda scenario: grading_runner(
+    runner_for = lambda scenario: grading_runner(  # noqa: E731 - 见下：同一个来源喂两处
         scenario, backend=backend, reset_infra=reset_infra
     )
+    app.state.grading_runner = runner_for
     app.state.grading_backend = backend
     app.state.grading_reset = reset_infra
+    # 提交后的阅卷跑在后台（单线程排队），进度经 GET /submissions/{id}/progress 查。
+    app.state.grading_jobs = GradingJobs(runner_for)
     app.state.review_engine = review_engine
     # 多 Track 时逐个上报；单 Track 就是一个元素的 map。Forge 后端是**一个**开关，
     # 所以名字取自任一 bundle——但"这个 Track 的 forge 到底是不是真的"仍逐项可查。

@@ -55,6 +55,17 @@ test.describe.serial('学习者闭环（真后端 + 真浏览器）', () => {
     await page.getByRole('button', { name: /提交（跑阅卷桩）/ }).click()
     await expect(page.getByTestId('submission-info')).toContainText('第 1 次')
 
+    // 提交是**异步**的（202 + 轮询进度），报告随后渲染出来（屏幕 4a）
+    const progress = page.getByTestId('grading-progress')
+    await expect(progress).toContainText('重置环境')
+    await expect(progress).toContainText('跑验收测试')
+    await expect(progress).toContainText('解析结果')
+    const report = page.getByTestId('grading-report')
+    await expect(report).toContainText('阅卷报告')
+    await expect(report).toContainText('不可信自报告')
+    await expect(report).toContainText('绿')
+    await expect(report.getByTestId('simulated-badge')).toBeVisible() // 桩产出 ⇒ 必须标模拟
+
     await page.getByTestId('review-scenario').selectOption('approve')
     await page.getByRole('button', { name: /发起 AI 评审/ }).click()
     const reviewInfo = page.getByTestId('review-info')

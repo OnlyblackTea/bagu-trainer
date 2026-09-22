@@ -12,12 +12,14 @@ import type {
   DecisionOut,
   DiffOut,
   EnrollmentOut,
+  GradingProgressOut,
+  GradingReportOut,
   GradingScenario,
   InstanceOut,
   PullRequestOut,
   ReviewOut,
   ReviewScenario,
-  SubmissionOut,
+  SubmitAcceptedOut,
   Ticket,
   TrackDetail,
   TrackSummary,
@@ -208,13 +210,18 @@ export const api = {
     instanceId: string,
     opts: { scenario: GradingScenario; pr_url?: string; defense?: string },
   ) =>
-    request<SubmissionOut>(
+    request<SubmitAcceptedOut>(
       `/instances/${encodeURIComponent(instanceId)}/submit${query({ scenario: opts.scenario })}`,
       {
         method: 'POST',
         body: JSON.stringify({ pr_url: opts.pr_url ?? null, defense: opts.defense ?? null }),
       },
     ),
+  /** 提交是异步的：轮询这个端点直到 `report_ready`（§C.3 步骤 6）。 */
+  progress: (submissionId: string) =>
+    request<GradingProgressOut>(`/submissions/${encodeURIComponent(submissionId)}/progress`),
+  report: (submissionId: string) =>
+    request<GradingReportOut>(`/submissions/${encodeURIComponent(submissionId)}/report`),
   review: (submissionId: string, opts: { scenario: ReviewScenario; dimensions?: string[] }) =>
     request<ReviewOut>(
       `/submissions/${encodeURIComponent(submissionId)}/review${query({ scenario: opts.scenario })}`,

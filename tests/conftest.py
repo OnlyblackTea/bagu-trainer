@@ -289,6 +289,46 @@ def client(demo_app: Any) -> Any:
     return TestClient(demo_app)
 
 
+@pytest.fixture
+def submit_and_wait() -> Any:
+    """``POST submit``（202）→ 轮询到阅卷结束 → 返回 submission dict。
+
+    异步提交之后，路由测试不能再假设"响应回来就有报告了"（§C.3 步骤 6）。这个 helper 做的正是
+    前端做的事：拿 202、轮询 progress。桩是瞬时的，所以通常一轮就 ``done``；用 ``report_ready``
+    而不是 ``status`` 判停，是因为 **report 才是下游唯一要的东西**。
+    """
+
+    def _submit(
+        client: Any,
+        instance_id: str,
+        *,
+        scenario: str = "fail",
+        body: dict[str, Any] | None = None,
+        timeout_s: float = 30.0,
+    ) -> dict[str, Any]:
+        import time
+
+        r = client.post(
+            f"/instances/{instance_id}/submit",
+            params={"scenario": scenario},
+            json=body or {},
+        )
+        assert r.status_code == 202, r.text
+        payload = r.json()
+        submission = payload["submission"]
+        deadline = time.monotonic() + timeout_s
+        progress = payload["progress"]
+        while not progress["report_ready"] and time.monotonic() < deadline:
+            if progress["status"] == "failed":
+                break
+            time.sleep(0.02)
+            progress = client.get(f"/submissions/{submission['id']}/progress").json()
+        assert progress["status"] == "done", progress
+        return submission
+
+    return _submit
+
+
 # --- 持久化（PostgreSQL）-------------------------------------------------------
 # 需要一台真库。没有 DSN 就 **skip**，不静默通过：内存那一半证明不了任何 SQL。
 

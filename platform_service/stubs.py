@@ -19,6 +19,7 @@ from .forge import (
     prepare_workspace,
     stage_branch_for,
 )
+from .grading import GradingStep, ProgressReporter, report_progress
 from .models import (
     GradingReport,
     ReportCorrectness,
@@ -32,7 +33,12 @@ _STAMP = "2026-09-10T00:00:00+00:00"
 
 
 class StubGradingRunner:
-    """返回预置 GradingReport；``scenario`` 选 pass/fail（结构化满足 GradingRunner）。"""
+    """返回预置 GradingReport；``scenario`` 选 pass/fail（结构化满足 GradingRunner）。
+
+    **它不假装在干活**：不 sleep、不逐阶段磨时间。阶段上报按真实顺序一次性发完（reset →
+    跑测试 → 解析），于是端到端演示里进度条是"一闪而过"而不是"卡 3 秒再绿"——那 3 秒会是
+    编出来的。要看真的进度得换 ``--grading docker``。
+    """
 
     def __init__(self, *, scenario: Literal["pass", "fail"] = "pass") -> None:
         self._scenario = scenario
@@ -44,10 +50,17 @@ class StubGradingRunner:
         ticket: TicketSpec,
         track: TrackManifest,
         workspace: Path,
+        on_progress: ProgressReporter | None = None,
     ) -> GradingReport:
         """忽略 ``track``/``workspace``——占位后端本来就不跑任何东西（诚实标注见 docstring）。"""
         passed = self._scenario == "pass"
         correctness = ticket.grader.correctness
+        for step, detail in (
+            (GradingStep.RESET_INFRA, "占位后端：不重置任何东西"),
+            (GradingStep.RUN_TESTS, f"占位后端：不跑 {correctness.canonical_test}"),
+            (GradingStep.PARSE, "占位后端：结果取自 fixture"),
+        ):
+            report_progress(on_progress, step, detail)
         return GradingReport(
             submission_id="pending",  # service.submit 会重新键到铸造的 submission id
             ticket=instance.ticket_id,

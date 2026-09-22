@@ -146,7 +146,7 @@ class PlatformService:
         self,
         instance_id: str,
         *,
-        grading_report: GradingReport,
+        grading_report: GradingReport | None = None,
         pr_url: str | None = None,
         defense: str | None = None,
     ) -> Submission:
@@ -155,6 +155,12 @@ class PlatformService:
         The Submission ``seq`` auto-increments over the instance's history, so a retry
         yields a NEW Submission (never overwrites). The untrusted grading report is
         re-keyed to the minted submission id before it is stored.
+
+        ``grading_report`` is optional because grading is asynchronous (§C.3 step 6): with
+        a real runner, ``submit`` must return while ``mvn test`` is still running, so the
+        report cannot be an argument. It arrives later through :meth:`attach_report`. The
+        submission itself is recorded either way — that is what "已提交" means, and what
+        the board shows while grading is in flight.
         """
         instance = self._must_get_instance(instance_id)
         seq = len(self._store.list_submissions(instance_id)) + 1
@@ -168,10 +174,21 @@ class PlatformService:
         record_submission(instance, submission)
         self._store.save_instance(instance)
         self._store.save_submission(submission)
-        self._store.save_report(
-            grading_report.model_copy(update={"submission_id": submission.id})
-        )
+        if grading_report is not None:
+            self.attach_report(submission.id, grading_report)
         return submission
+
+    def attach_report(self, submission_id: str, report: GradingReport) -> GradingReport:
+        """Bind a finished report to an existing submission (the async tail of ``submit``).
+
+        Keyed by ``submission_id``, never minted here: the report must land on the
+        submission the learner actually made, and the report the runner produced carries
+        only a placeholder key (``pending``).
+        """
+        self._must_get_submission(submission_id)
+        aligned = report.model_copy(update={"submission_id": submission_id})
+        self._store.save_report(aligned)
+        return aligned
 
     def review(self, submission_id: str, review: Review) -> Review:
         """``submitted → grading``: store the advisory AI Review (§11.2).

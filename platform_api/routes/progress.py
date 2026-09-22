@@ -14,10 +14,12 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from platform_service.ai_review import generate_review
 from platform_service.review_diff import generate_diff
 
+from ..jobs import ERROR_STATUS
 from ..schemas import EnrollRequest, ReviewRequest, SubmitRequest, instance_out
 from ._resolve import bundle_for_instance, bundle_for_track, must_instance
 
@@ -70,46 +72,113 @@ def start(instance_id: str, request: Request) -> dict[str, Any]:
     return instance_out(bundle_for_instance(request, instance).service.start(instance_id))
 
 
-@router.post("/instances/{instance_id}/submit")
+@router.post("/instances/{instance_id}/submit", status_code=202)
 def submit(
     instance_id: str,
     request: Request,
     body: SubmitRequest,
     scenario: GradingScenario = "fail",
 ) -> dict[str, Any]:
-    """跑阅卷桩 → GradingReport，再由 ``service.submit`` 落到铸造的 submission 上。
+    """**异步**提交：立刻 202 + 进度，阅卷在后台单线程跑（§C.3 步骤 6）。
 
-    ``scenario`` 选 pass/fail fixture，让前端能演示 decide 两条分支。
+    真阅卷要重置容器再 ``mvn test``，几十秒起步；同步做的话这一个请求就干挂着，中间没有
+    任何"现在在干什么"。所以这里只做三件事：铸造 submission（状态 ``submitted``）、登记一个
+    后台任务、把进度交回去。报告由后台任务跑完后经 ``service.attach_report`` 落库，学员轮询
+    ``GET /submissions/{id}/progress``。
+
+    ``scenario`` 仍然在提交时选定：桩按它分叉，真阅卷不看它——这个差别对调用方是透明的，
+    但**桩确实会立刻答完**，所以进度条在桩下是一闪而过的（不编造等待时间）。
     """
     state = request.app.state
     instance = must_instance(request, instance_id)
     bundle = bundle_for_instance(request, instance)
     ticket = bundle.tickets[instance.ticket_id]
     workspace = bundle.forge.provision(instance)
-    report = state.grading_runner(scenario).grade(
+    submission = bundle.service.submit(
+        instance_id, pr_url=body.pr_url, defense=body.defense
+    )
+    job = state.grading_jobs.start(
+        submission_id=submission.id,
         instance=instance,
         ticket=ticket,
         track=bundle.track,
         workspace=workspace.path,
+        scenario=scenario,
+        on_done=bundle.service.attach_report,
     )
-    submission = bundle.service.submit(
-        instance_id, grading_report=report, pr_url=body.pr_url, defense=body.defense
+    return {
+        "submission": submission.model_dump(mode="json"),
+        "progress": job.as_dict(),
+    }
+
+
+@router.get("/submissions/{submission_id}/progress")
+def grading_progress(submission_id: str, request: Request) -> dict[str, Any]:
+    """阅卷进度（§C.3 步骤 6）：当前阶段 / 已走过的阶段 / 耗时 / 报告好没好。
+
+    ``status=unknown`` 是**如实回答**而不是错误：进度只在内存里（见
+    :mod:`platform_api.jobs`），服务重启过或这条提交来自旧版本时，平台就是不知道——编一个
+    "正在跑第 2 步"比说不知道糟得多。此时 ``report_ready`` 仍按库里有没有报告如实给出。
+    """
+    state = request.app.state
+    if state.store.get_submission(submission_id) is None:
+        raise HTTPException(status_code=404, detail="submission_not_found")
+    job = state.grading_jobs.get(submission_id)
+    if job is not None:
+        return job.as_dict()
+    report = state.store.get_report(submission_id)
+    return {
+        "submission_id": submission_id,
+        "instance_id": None,
+        "track": None,
+        "status": "unknown",
+        "step": "unknown",
+        "detail": (
+            "这次阅卷没有进度记录（服务重启过，或这条提交来自旧版本）。"
+            + ("报告已经落库。" if report is not None else "可以 retry 重新提交一次。")
+        ),
+        "elapsed_ms": None,
+        "report_ready": report is not None,
+        "error": None,
+        "steps": [],
+    }
+
+
+def _job_failure(job: Any) -> JSONResponse | None:
+    """后台任务失败了 ⇒ 原样报出**当初**那个短码与状态码（§7.1：环境问题不栽给学员）。"""
+    if job is None or job.status != "failed" or not job.error_code:
+        return None
+    return JSONResponse(
+        status_code=ERROR_STATUS.get(job.error_code, 500),
+        content={"detail": job.error_code, "reason": job.error_reason},
     )
-    return submission.model_dump(mode="json")
 
 
 @router.get("/submissions/{submission_id}/report")
-def grading_report(submission_id: str, request: Request) -> dict[str, Any]:
+def grading_report(submission_id: str, request: Request) -> Any:
     """阅卷报告（§7.4）：**不可信自报告**，但学员必须看得到——否则真阅卷等于没做。
 
-    报告在 ``submit`` 时产生；此前调用返回 404 ``report_not_found``。真阅卷下这里带
-    ``provenance.host_env``（maven/java 版本、退出码、耗时）与**逐条测试**的真实结果，
-    正是学员定位失败所需的信息。
+    报告由提交后的后台任务产生，所以这里有三种"还没有"：
+
+    * 阅卷正排队/在跑 ⇒ 404 ``report_not_ready``（**不是** ``report_not_found``：
+      前者是"等一会儿"，后者是"这条提交不会有报告了"——两种提示让学员做的事完全不同）；
+    * 阅卷失败（缺 maven、工作区没了……）⇒ 按失败短码报 503/500，绝不伪装成"没过"；
+    * 压根没有这条提交的阅卷记录 ⇒ 404 ``report_not_found``。
+
+    报告本身带 ``provenance.host_env``（maven/java 版本、退出码、耗时、**这次有没有重置环境**）
+    与**逐条测试**的真实结果，正是学员定位失败所需的信息。
     """
-    report = request.app.state.store.get_report(submission_id)
-    if report is None:
-        raise HTTPException(status_code=404, detail="report_not_found")
-    return report.model_dump(mode="json")
+    state = request.app.state
+    report = state.store.get_report(submission_id)
+    if report is not None:
+        return report.model_dump(mode="json")
+
+    failure = _job_failure(state.grading_jobs.get(submission_id))
+    if failure is not None:
+        return failure
+    if state.grading_jobs.get(submission_id) is not None:
+        raise HTTPException(status_code=404, detail="report_not_ready")
+    raise HTTPException(status_code=404, detail="report_not_found")
 
 
 @router.post("/submissions/{submission_id}/review")

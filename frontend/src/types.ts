@@ -117,6 +117,37 @@ export interface PullRequestOut {
   simulated: boolean
 }
 
+/** 阅卷阶段（后端 `GradingStep`）。稳定短标识；人话在 UI 层。 */
+export type GradingStep = 'queued' | 'reset_infra' | 'run_tests' | 'parse' | 'done' | 'failed'
+
+export type GradingJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'unknown'
+
+export interface GradingStepOut {
+  step: GradingStep
+  status: 'pending' | 'running' | 'done' | 'failed'
+  detail: string
+}
+
+/** `GET /submissions/{id}/progress`（§C.3 步骤 6）。 */
+export interface GradingProgressOut {
+  submission_id: string
+  instance_id: string | null
+  track: string | null
+  status: GradingJobStatus
+  step: string
+  detail: string
+  elapsed_ms: number | null
+  report_ready: boolean
+  error: { detail: string; reason: string } | null
+  steps: GradingStepOut[]
+}
+
+/** `POST /instances/{id}/submit` 的 202 响应：提交已受理 + 当前进度。 */
+export interface SubmitAcceptedOut {
+  submission: SubmissionOut
+  progress: GradingProgressOut
+}
+
 export interface SubmissionOut {
   id: string
   instance_id: string
@@ -172,6 +203,38 @@ export interface DecisionOut {
   }
   /** 决策后的**全量**实例状态；看板据此刷新，不必再发一轮请求。 */
   instances: InstanceOut[]
+}
+
+export interface GradingTestResultOut {
+  name: string
+  status: string
+  detail?: string
+}
+
+/** `GET /submissions/{id}/report`（§7.4）：**不可信自报告**，带 provenance。 */
+export interface GradingReportOut {
+  submission_id: string
+  ticket: string
+  ticket_version: number
+  test_version: number
+  engine_version: string
+  learner: string
+  provenance: {
+    generated_at: string
+    generated_by: string
+    /** 真阅卷里有 java/maven/退出码/耗时/`infra`（这次有没有重置环境）。 */
+    host_env: Record<string, unknown>
+    runner_trust: 'self'
+  }
+  correctness: {
+    test_group: string
+    passed: boolean
+    tests: GradingTestResultOut[]
+  }
+  performance: Record<string, unknown> | null
+  lint: Record<string, unknown>
+  files_changed: string[]
+  out_of_scope_edits: string[]
 }
 
 export type GradingScenario = 'pass' | 'fail'

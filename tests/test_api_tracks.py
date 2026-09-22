@@ -9,6 +9,7 @@ track.id** 部署两次——ticket id（``db-stage-01``）因此**故意撞名*
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -131,7 +132,9 @@ def test_each_track_provisions_into_its_own_workspace(client: TestClient) -> Non
     assert TRACK_A in paths[TRACK_A] and TRACK_B in paths[TRACK_B]
 
 
-def test_passing_one_track_does_not_unlock_the_other(client: TestClient) -> None:
+def test_passing_one_track_does_not_unlock_the_other(
+    client: TestClient, submit_and_wait: Any
+) -> None:
     """跨 Track 串味的最隐蔽形态：ticket id 撞名 ⇒ 不按 track 过滤的解锁会让**另一个** Track
     的同名后继阶段解锁。这条断言就是为那个缺陷写的。"""
     _enroll(client, TRACK_A)
@@ -139,9 +142,7 @@ def test_passing_one_track_does_not_unlock_the_other(client: TestClient) -> None
     for track in (TRACK_A, TRACK_B):
         inst = _instance_of(client, track, "db-stage-00")
         client.post(f"/instances/{inst['id']}/start")
-        sub = client.post(
-            f"/instances/{inst['id']}/submit", params={"scenario": "pass"}, json={}
-        ).json()
+        sub = submit_and_wait(client, inst["id"], scenario="pass")
         client.post(f"/submissions/{sub['id']}/review", params={"scenario": "approve"}, json={})
         decided = client.post(f"/submissions/{sub['id']}/decide").json()
         assert decided["decision"]["verdict"] == "pass"

@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from platform_service.grading import GradingStep, ProgressReporter, report_progress
 from platform_service.models import (
     GradingReport,
     ReportCorrectness,
@@ -297,6 +298,7 @@ class DockerGradingRunner:
         ticket: TicketSpec,
         track: TrackManifest,
         workspace: Path,
+        on_progress: ProgressReporter | None = None,
     ) -> GradingReport:
         workspace = Path(workspace)
         if not workspace.is_dir():
@@ -308,8 +310,19 @@ class DockerGradingRunner:
             )
         command = self._test_command(track, ticket)
         # 先校验（省得为一个配置错误白等一次容器重启），再重置环境，最后才跑测试。
+        # 三个阶段各自上报：真阅卷是几十秒的事，学员有权知道现在卡在哪一段（§C.3 步骤 6）。
+        report_progress(
+            on_progress,
+            GradingStep.RESET_INFRA,
+            (
+                f"重置 Track 基础设施（{track.runtime.compose}）"
+                if self._reset_infra and track.runtime.compose
+                else "跳过环境重置"
+            ),
+        )
         infra = self._prepare_infra(track, workspace)
         group = ticket.grader.correctness.test_group
+        report_progress(on_progress, GradingStep.RUN_TESTS, " ".join(command))
         started = datetime.now(UTC)
         timed_out = False
         try:
@@ -323,6 +336,7 @@ class DockerGradingRunner:
             exit_code = None
         duration_s = (datetime.now(UTC) - started).total_seconds()
 
+        report_progress(on_progress, GradingStep.PARSE, "读 surefire 报告与 git diff")
         results = _surefire_results(workspace / "target" / "surefire-reports")
         if not results:
             # 没有 surefire 报告 = 根本没跑到测试（编译失败、依赖拉不下来、超时……）。

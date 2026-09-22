@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -44,14 +45,23 @@ def test_progress_survives_an_app_restart(tmp_path: Path, clean_postgres: str) -
     root = next(i for i in instances if i["state"] == "available")
     first.post(f"/instances/{root['id']}/start")
     submitted = first.post(f"/instances/{root['id']}/submit?scenario=fail", json={}).json()
-    # 提交时就把（不可信的）阅卷报告一起落了，重启后必须还能看——否则"真阅卷等于没做"。
-    assert first.get(f"/submissions/{submitted['id']}/report").status_code == 200
+    submission_id = submitted["submission"]["id"]
+    # 提交是异步的（202 + 进度）；这里等报告真落库，再断言重启后还读得到——
+    # 否则"真阅卷等于没做"，而且这条断言会变成在测"桩跑得够快"。
+    for _ in range(200):
+        if first.get(f"/submissions/{submission_id}/progress").json()["report_ready"]:
+            break
+        time.sleep(0.02)
+    assert first.get(f"/submissions/{submission_id}/report").status_code == 200
 
     second = boot()
     after = second.get("/instances", params={"learner": "deployer"}).json()
     assert [i["id"] for i in after] == [i["id"] for i in instances]
     assert next(i for i in after if i["id"] == root["id"])["state"] == "submitted"
-    assert second.get(f"/submissions/{submitted['id']}/report").status_code == 200
+    assert second.get(f"/submissions/{submission_id}/report").status_code == 200
+    # 进度**不**落库（见 platform_api/jobs）：重启后如实说不知道，而不是编一个"正在跑第 2 步"。
+    progress = second.get(f"/submissions/{submission_id}/progress").json()
+    assert progress["status"] == "unknown" and progress["report_ready"] is True
 
     # 第二次 enroll 必须**新增** 3 个实例，而不是因为 id 从头数而覆盖掉上面那 3 个。
     again = second.post("/enrollments", json={"learner": "deployer"}).json()["instances"]

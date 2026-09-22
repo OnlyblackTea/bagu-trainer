@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from '../App'
-import type { InstanceOut, SubmissionOut } from '../types'
+import type { GradingReportOut, InstanceOut, SubmissionOut } from '../types'
 import { makeInstance, review as reviewFixture, ticket, track } from './fixtures'
 
 /**
@@ -27,10 +27,35 @@ function json(body: unknown, status = 200): Response {
   } as unknown as Response
 }
 
+const REPORT: GradingReportOut = {
+  submission_id: 'sub-1',
+  ticket: 'db-stage-00',
+  ticket_version: 1,
+  test_version: 1,
+  engine_version: 'a-prime-0.1.0',
+  learner: 'deployer',
+  provenance: {
+    generated_at: '2026-09-10T00:00:00Z',
+    generated_by: 'stub-grading/a-prime',
+    host_env: { simulated: true },
+    runner_trust: 'self',
+  },
+  correctness: {
+    test_group: 'db-stage-00',
+    passed: true,
+    tests: [{ name: 'tests/db-stage-00/AcceptanceTest.java', status: 'pass' }],
+  },
+  performance: null,
+  lint: {},
+  files_changed: ['src/db-stage-00/Solution.java'],
+  out_of_scope_edits: [],
+}
+
 function fakeBackend() {
   let instances: InstanceOut[] = []
   let submission: SubmissionOut | null = null
   let gradingPassed = true
+  let reportReady = false
 
   const withInstance = (id: string, patch: Partial<InstanceOut>) =>
     (instances = instances.map((i) => (i.id === id ? { ...i, ...patch } : i)))
@@ -96,8 +121,59 @@ function fakeBackend() {
         defense_text: null,
         created_at: '',
       }
+      reportReady = true
       withInstance(submit[1], { state: 'submitted' })
-      return json(submission)
+      // 提交是**异步**的：202 + 进度，报告靠轮询 progress 拿（§C.3 步骤 6）。
+      return json(
+        {
+          submission,
+          progress: {
+            submission_id: submission.id,
+            instance_id: submit[1],
+            track: track.id,
+            status: 'done',
+            step: 'done',
+            detail: '阅卷完成',
+            elapsed_ms: 5,
+            report_ready: true,
+            error: null,
+            steps: [
+              { step: 'reset_infra', status: 'done', detail: '' },
+              { step: 'run_tests', status: 'done', detail: '' },
+              { step: 'parse', status: 'done', detail: '' },
+            ],
+          },
+        },
+        202,
+      )
+    }
+
+    const progressCall = url.match(/^\/submissions\/([^/]+)\/progress$/)
+    if (progressCall) {
+      return json({
+        submission_id: progressCall[1],
+        instance_id: submission?.instance_id ?? null,
+        track: track.id,
+        status: reportReady ? 'done' : 'running',
+        step: reportReady ? 'done' : 'run_tests',
+        detail: '',
+        elapsed_ms: 7,
+        report_ready: reportReady,
+        error: null,
+        steps: [
+          { step: 'reset_infra', status: 'done', detail: '' },
+          { step: 'run_tests', status: reportReady ? 'done' : 'running', detail: '' },
+          { step: 'parse', status: reportReady ? 'done' : 'pending', detail: '' },
+        ],
+      })
+    }
+
+    if (url.match(/^\/submissions\/([^/]+)\/report$/)) {
+      if (!reportReady) return json({ detail: 'report_not_ready' }, 404)
+      return json({
+        ...REPORT,
+        correctness: { ...REPORT.correctness, passed: gradingPassed },
+      })
     }
 
     const reviewCall = url.match(/^\/submissions\/([^/]+)\/review\?scenario=(approve|request_changes)$/)
