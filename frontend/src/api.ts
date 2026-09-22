@@ -15,6 +15,7 @@ import type {
   GradingProgressOut,
   GradingReportOut,
   GradingScenario,
+  InstanceHistoryOut,
   InstanceOut,
   PullRequestOut,
   ReviewOut,
@@ -222,6 +223,9 @@ export const api = {
     request<GradingProgressOut>(`/submissions/${encodeURIComponent(submissionId)}/progress`),
   report: (submissionId: string) =>
     request<GradingReportOut>(`/submissions/${encodeURIComponent(submissionId)}/report`),
+  /** 该实例的**全部**尝试 + 与上一次的比对（§11）。 */
+  history: (instanceId: string) =>
+    request<InstanceHistoryOut>(`/instances/${encodeURIComponent(instanceId)}/history`),
   review: (submissionId: string, opts: { scenario: ReviewScenario; dimensions?: string[] }) =>
     request<ReviewOut>(
       `/submissions/${encodeURIComponent(submissionId)}/review${query({ scenario: opts.scenario })}`,

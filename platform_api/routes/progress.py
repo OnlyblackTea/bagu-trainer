@@ -20,7 +20,14 @@ from platform_service.ai_review import generate_review
 from platform_service.review_diff import generate_diff
 
 from ..jobs import ERROR_STATUS
-from ..schemas import EnrollRequest, ReviewRequest, SubmitRequest, instance_out
+from ..schemas import (
+    EnrollRequest,
+    ReviewRequest,
+    SubmitRequest,
+    attempt_out,
+    grading_run_out,
+    instance_out,
+)
 from ._resolve import bundle_for_instance, bundle_for_track, must_instance
 
 router = APIRouter(tags=["progress"])
@@ -97,7 +104,7 @@ def submit(
     submission = bundle.service.submit(
         instance_id, pr_url=body.pr_url, defense=body.defense
     )
-    job = state.grading_jobs.start(
+    run = state.grading_jobs.start(
         submission_id=submission.id,
         instance=instance,
         ticket=ticket,
@@ -108,39 +115,51 @@ def submit(
     )
     return {
         "submission": submission.model_dump(mode="json"),
-        "progress": job.as_dict(),
+        "progress": grading_run_out(run, live=True),
     }
 
 
 @router.get("/submissions/{submission_id}/progress")
 def grading_progress(submission_id: str, request: Request) -> dict[str, Any]:
-    """阅卷进度（§C.3 步骤 6）：当前阶段 / 已走过的阶段 / 耗时 / 报告好没好。
+    """阅卷进度（§C.3 步骤 6）——**读库**，不读内存。
 
-    ``status=unknown`` 是**如实回答**而不是错误：进度只在内存里（见
-    :mod:`platform_api.jobs`），服务重启过或这条提交来自旧版本时，平台就是不知道——编一个
-    "正在跑第 2 步"比说不知道糟得多。此时 ``report_ready`` 仍按库里有没有报告如实给出。
+    进度与历史是同一份数据（:class:`~platform_service.models.GradingRun`），所以这里永远和
+    ``GET /instances/{id}/history`` 一致，也不会出现"接口说 done、历史里还是 running"。
+
+    三种"不是 running"要分清：
+
+    * ``unknown`` —— 压根没有运行记录（本特性之前的历史提交，或提交没真正开始）；
+    * ``stalled`` —— 有活跃记录但**不在本进程手里**：服务重启过，或它由另一个平台实例在跑
+      （见 :mod:`platform_api.jobs` 关于 owner 的说明）。措辞不替它下结论；
+    * ``interrupted`` —— 本进程清扫过自己的孤儿记录，即确定这次阅卷被重启打断了。
     """
     state = request.app.state
     if state.store.get_submission(submission_id) is None:
         raise HTTPException(status_code=404, detail="submission_not_found")
-    job = state.grading_jobs.get(submission_id)
-    if job is not None:
-        return job.as_dict()
-    report = state.store.get_report(submission_id)
+    run = state.store.get_grading_run(submission_id)
+    view = grading_run_out(run, live=state.grading_jobs.is_live(submission_id))
+    if run is None:
+        # 没有运行记录时，报告的到场情况仍如实给出（老提交可能只有报告）。
+        view["report_ready"] = state.store.get_report(submission_id) is not None
+        view["submission_id"] = submission_id
+    return view
+
+
+@router.get("/instances/{instance_id}/history")
+def instance_history(instance_id: str, request: Request) -> dict[str, Any]:
+    """该实例的**全部**尝试：提交 → 运行 → 报告 → 评审 → 判定，以及与上一次的比对（§11）。
+
+    学员刷同一道题会提交很多次，而平台此前只留得住"当前状态"——"上次挂在哪条、这次动没动它"
+    无从回答。这里把每次尝试连同比对一起给出来。第一次尝试的 ``delta`` 是 ``null``（没有"上一次"）。
+    """
+    instance = must_instance(request, instance_id)
+    attempts = bundle_for_instance(request, instance).service.history(instance_id)
     return {
-        "submission_id": submission_id,
-        "instance_id": None,
-        "track": None,
-        "status": "unknown",
-        "step": "unknown",
-        "detail": (
-            "这次阅卷没有进度记录（服务重启过，或这条提交来自旧版本）。"
-            + ("报告已经落库。" if report is not None else "可以 retry 重新提交一次。")
-        ),
-        "elapsed_ms": None,
-        "report_ready": report is not None,
-        "error": None,
-        "steps": [],
+        "instance_id": instance_id,
+        "ticket_id": instance.ticket_id,
+        "track": instance.track,
+        "learner": instance.learner,
+        "attempts": [attempt_out(a) for a in attempts],
     }
 
 

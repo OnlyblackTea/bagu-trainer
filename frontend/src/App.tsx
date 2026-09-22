@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { DecisionView } from './components/DecisionView'
 import { GradingView } from './components/GradingView'
+import { HistoryView } from './components/HistoryView'
 import { ReviewView } from './components/ReviewView'
 import { SimulatedBadge } from './components/SimulatedBadge'
 import { StageBoard } from './components/StageBoard'
@@ -69,6 +70,8 @@ export default function App() {
   // 轮询的"代"号：换阶段/换 Track 或重新提交都 +1，在飞的那轮轮询看到代号变了就自己停下。
   // 不加这个，切走之后旧轮询还会往界面上写它那个阶段的进度。
   const pollGeneration = useRef(0)
+  // 历史是"提交"的产物：每提交一次 / 每判一次都 +1，让历史面板重新拉一次。
+  const [historyKey, setHistoryKey] = useState(0)
 
   /** 提交后的轮询：把阶段进度一路画到报告就绪（或失败/无记录）。 */
   async function pollGrading(submissionId: string, generation: number) {
@@ -79,6 +82,8 @@ export default function App() {
       if (p.status === 'failed') return
       if (p.report_ready) {
         setReport(await api.report(submissionId))
+        // 报告到手 ⇒ 历史里那一条也从"在跑"变成"有报告"，让它重拉一次。
+        setHistoryKey((n) => n + 1)
         return
       }
       if (p.status === 'unknown') return
@@ -195,6 +200,7 @@ export default function App() {
                       setDecision(null)
                       await refreshInstances(t.id)
                       setNotice('已受理：阅卷在后台跑，进度见下。')
+                      setHistoryKey((n) => n + 1)
                       // 不 await：轮询自己会更新进度，界面不该被它挂住。
                       void pollGrading(accepted.submission.id, generation).catch((e: unknown) => {
                         if (pollGeneration.current === generation) {
@@ -216,6 +222,8 @@ export default function App() {
 
                 <GradingView submission={submission} progress={progress} report={report} />
 
+                <HistoryView instanceId={current.id} refreshKey={historyKey} />
+
                 <DecisionView
                   instance={current}
                   submission={submission}
@@ -228,6 +236,7 @@ export default function App() {
                       setDecision(out)
                       // 决策响应带"这个 learner 的全部实例"：按当前 Track 过滤后再刷新看板。
                       setInstances(out.instances.filter((i) => i.track === t.id))
+                      setHistoryKey((n) => n + 1)
                       setNotice(
                         out.decision.verdict === 'pass'
                           ? '通过：下一阶段已解锁。'

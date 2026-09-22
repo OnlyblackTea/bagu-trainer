@@ -7,12 +7,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from platform_service.forge import Workspace
-from platform_service.models import InstanceState, TicketInstance
+from platform_service.history import AttemptRecord
+from platform_service.models import (
+    GradingRun,
+    GradingRunStep,
+    InstanceState,
+    TicketInstance,
+)
 
 
 class _Strict(BaseModel):
@@ -63,4 +70,94 @@ def workspace_out(ws: Workspace) -> dict[str, Any]:
         "base_ref": ws.base_ref,
         "head_ref": ws.head_ref,
         "simulated": ws.simulated,
+    }
+
+
+#: 阅卷运行状态 → 读给前端的口径。``stalled`` **不是**持久化状态，而是"这条活跃记录不在本进程手里"
+#: 的读时判断：服务重启过，或它由另一个平台实例在跑。措辞刻意不下结论——两种可能都无法排除。
+_STALLED_DETAIL = (
+    "这条提交的阅卷不在本进程手里：服务重启过，或它由另一个平台实例在跑。"
+    "报告落库之前无法确认它是否还在跑。"
+)
+
+
+def grading_run_out(run: GradingRun | None, *, live: bool) -> dict[str, Any]:
+    """一次阅卷运行的可读投影（§C.3 步骤 6）。
+
+    * ``run is None`` ⇒ ``unknown``：这条提交压根没有运行记录（来自本特性之前，或提交没成功）。
+    * ``run`` 活跃但本进程没持有 ⇒ ``stalled``：见上面的口径说明。
+    * 其余照实投影，含**每阶段的起止时间**——"120 秒里 109 秒在重置基础设施"就是从这里读出来的。
+    """
+    if run is None:
+        return {
+            "submission_id": None,
+            "instance_id": None,
+            "track": None,
+            "status": "unknown",
+            "step": "unknown",
+            "detail": (
+                "这条提交没有阅卷运行记录（它可能来自本特性之前，或提交没有真正开始）。"
+                "可以 retry 重新提交一次。"
+            ),
+            "started_at": None,
+            "ended_at": None,
+            "elapsed_ms": None,
+            "report_ready": False,
+            "owner": None,
+            "error": None,
+            "steps": [],
+        }
+    stalled = run.is_active and not live
+    return {
+        "submission_id": run.submission_id,
+        "instance_id": run.instance_id,
+        "track": run.track,
+        "ticket_id": run.ticket_id,
+        "owner": run.owner,
+        "status": "stalled" if stalled else run.status.value,
+        "step": run.step,
+        "detail": _STALLED_DETAIL if stalled else run.detail,
+        "started_at": run.started_at.isoformat(),
+        "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+        "elapsed_ms": run.elapsed_ms if run.ended_at else elapsed_since(run.started_at),
+        "report_ready": run.report_ready,
+        "error": (
+            {"detail": run.error_code, "reason": run.error_reason} if run.error_code else None
+        ),
+        "steps": [
+            {
+                "step": step.step,
+                "status": step.status.value,
+                "detail": step.detail,
+                "started_at": step.started_at.isoformat() if step.started_at else None,
+                "ended_at": step.ended_at.isoformat() if step.ended_at else None,
+                "elapsed_ms": step_elapsed_ms(step),
+            }
+            for step in run.steps
+        ],
+    }
+
+
+def elapsed_since(started: datetime) -> int:
+    return int((datetime.now(UTC) - started).total_seconds() * 1000)
+
+
+def step_elapsed_ms(step: GradingRunStep) -> int | None:
+    if step.started_at is None:
+        return None
+    return int(((step.ended_at or datetime.now(UTC)) - step.started_at).total_seconds() * 1000)
+
+
+def attempt_out(attempt: AttemptRecord) -> dict[str, Any]:
+    """一条历史尝试。``delta`` 可能是 ``None``（第一次尝试没有"上一次"可比）。"""
+    return {
+        "submission": attempt.submission.model_dump(mode="json"),
+        "grading": (
+            grading_run_out(attempt.grading, live=False) if attempt.grading is not None else None
+        ),
+        "report": attempt.report.model_dump(mode="json") if attempt.report else None,
+        "review": attempt.review.model_dump(mode="json") if attempt.review else None,
+        "decision": attempt.decision.model_dump(mode="json") if attempt.decision else None,
+        "verdict": attempt.verdict,
+        "delta": attempt.delta.model_dump(mode="json") if attempt.delta else None,
     }

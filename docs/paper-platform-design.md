@@ -158,6 +158,8 @@ v0.4 的"prar-agent 模块级复用对照表"已随引擎退休。平台当前�
 | `platform_service/content_loader.py` · `admission.py` | 读 `track.yaml` / `stages/*/ticket.yaml`；schema + 准入门 | 存活（§4.2 / §4.6） |
 | `platform_service/service.py` · `store.py` | 用例编排 + 存储缝（`Store` Protocol + `InMemoryStore`）；**取号在缝上**（`next_id`），否则进程重启后计数器归零会 upsert 覆盖旧行 | 存活（§9.1） |
 | `platform_api/store_postgres.py` | **真持久化后端**：`bagu_documents`（`kind,id` 主键 + 抽出被查询的键列建索引 + `payload jsonb`）+ `bagu_id_seq`；psycopg3 同步驱动（服务层是同步的），每操作单开连接故线程安全 | **新建**（`--store postgres`；§9.1） |
+| `platform_api/jobs.py` | 后台阅卷登记处：单线程排队 + 运行记录写穿到 store + 启动时把**自己名下**卡在 queued/running 的孤儿记录收成 `interrupted`（崩掉的进程没法给自己写墓志铭） | **新建**（§C.3 步骤 6） |
+| `platform_service/history.py` | 历史投影 + **纯函数**比对：逐条测试的状态迁移（红→绿/绿→红/新增/消失）与耗时变化；耗时优先取运行记录（含重置环境那一段） | **新建**（§11） |
 | `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git / fork / PR） | 存活（§7 / §8） |
 | `platform_api/grading_docker.py` | **真阅卷后端**：跑测试前按 `runtime.compose` 重置基础设施（`down -v` + `up -d --wait`），再在工作区跑 canonical 测试，把 surefire 的真实结果映成 `GradingReport`（真实 provenance、真 `git diff` 物证）；环境故障抛 `GradingUnavailableError` → 503 | **新建**（`--grading docker`；§7.1） |
 | `platform_api/gitea.py` · `forge_gitea.py` | **真 Forge 后端**：`GiteaApi`（最小 REST 封装：仓库在不在 / 确保 fork / 开 PR）+ `GiteaForgeClient`（provision = 真 fork + clone + 建 `dev` 分支 + 记基线；create_pr = 真开 PR 返回 `html_url`） | **新建**（`--forge gitea`；§8.1） |
@@ -383,7 +385,7 @@ paper new-track --topic "JVM 八股" --concepts "GC,类加载,内存模型,JIT"
 | **4 起工作区** | 在本地 IDE 写代码；需要时 `docker compose up` 起 runtime 依赖 | `POST /instances/{id}/provision`：clone 骨架仓、checkout 本阶段 `base_ref`，落到 `head_ref` 开发分支 | 平台（指示）+ **学员设备** |
 | **5 开发** | 在 `head_ref` 上提交；随时看平台给出的 diff 概览 | 平台**不跑** git 写操作，只指示（§8）；`GET /instances/{id}/diff` 出 base↔head diff（真本地 git） | **学员设备** |
 | **6 本地阅卷** | 跑 canonical 测试 / EXPLAIN / 并发 sim，产出**结构化阅卷报告** | 收报告（`GradingRunner` 缝）。**报告是不可信证据**：自带 `provenance` + `runner_trust`（§7.4） | **学员设备** |
-| **7 提交 PR** | 填**答辩模板** + 附阅卷报告 → 开 PR | `POST /instances/{id}/pr` 生成 PR 描述 + 体积预检；`POST /instances/{id}/submit` → `submitted` | 学员设备 + Gitea |
+| **7 提交 PR** | 填**答辩模板** + 附阅卷报告 → 开 PR | `POST /instances/{id}/pr` 生成 PR 描述 + 体积预检；`POST /instances/{id}/submit` → **202** + `submitted`，阅卷转后台；`GET /instances/{id}/history` 回看历次尝试与逐条测试迁移 | 学员设备 + Gitea |
 | **8 [可选] AI 评审** | 收到锚定 diff 的**点评** + approve/request_changes 建议 | `POST /submissions/{id}/review`：跑阅卷 + 可选评审 → `grading`。**挂件缺席时照常产出结论，闭环不中断**（§11.2 / D4） | 平台（+ 可选部署方 LLM） |
 | **9 裁决** | 看是否通过；不过则按点评改 → `POST /instances/{id}/retry` 回到 4 | `POST /submissions/{id}/decide` → **确定性验收门**（§11.3）：`correctness` 硬门 ∧ `review=approve` ∧ 证据信任级 ∧ `auto` ⇒ `passed` / `failed` | 平台 |
 | **10 讲八股** | 过关后读 `bagu-map.md` 对应章节，对照参考解 | 渲染 `submission.bagu_map_ref` 指向的章节 + `<stage>-sol` 参考解（§8） | 平台 |
@@ -812,7 +814,7 @@ AcceptanceDecision = f(
 | 阶段 | 目标 | 交付 | 状态 |
 |------|------|------|------|
 | **A′ 引擎无关切片** | 单 Track + 单机跑通完整闭环，**不依赖任何引擎** | `platform_api/`（纯 REST 控制面）+ `frontend/`（学习者 SPA）+ 三个 Protocol 缝与"诚实占位"桩 + 内置 demo Track；`content/schema/` + `admission.validate_track` | ✅ **已完成**（后端全量测试 + ruff 绿；前端单测 + 真浏览器 e2e 绿） |
-| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ **真 Forge**（`GiteaForgeClient` + `--forge gitea`：真 fork + 真 PR，VM 端到端实测过）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`，前端也渲染了）、✅ **判定面硬门**（§11.3）、✅ **PostgreSQL `Store`**（`--store postgres`：真库上跑一致性套件，并起两次 uvicorn 证明重启后进度还在、取号接着走）、✅ **多 Track 部署**（`--content-dir` 可重复：`GET /tracks` 列全部、enroll 指定 track、实例带 `track` 戳、每 Track 各自的 forge 与工作区）、✅ **提交异步化 + 进度反馈**（`submit` 立刻 202，后台单线程阅卷，`GET /submissions/{id}/progress` 报阶段链，前端显示进度与报告；真阅卷实测 202 用 80 ms / 全程 120 s）；⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
+| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ **真 Forge**（`GiteaForgeClient` + `--forge gitea`：真 fork + 真 PR，VM 端到端实测过）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`，前端也渲染了）、✅ **判定面硬门**（§11.3）、✅ **PostgreSQL `Store`**（`--store postgres`：真库上跑一致性套件，并起两次 uvicorn 证明重启后进度还在、取号接着走）、✅ **多 Track 部署**（`--content-dir` 可重复）、✅ **提交异步化 + 进度反馈**（`submit` 立刻 202，后台单线程阅卷，阶段链含每阶段耗时）、✅ **运行记录落库 + 历史查询与比对**（`GradingRun` 实体按 submission 落库；`GET /instances/{id}/history` 给全部尝试与逐条测试迁移；重启孤儿记录收成 `interrupted`）；⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
 | **P2 教学增强** | 让"刷题"更像"带教" | 学习者画像（§10）、过程回放视图（§11.4）、（可选）AI 评审 / 口试挂件（§11.2 / §12.2） | ⬜ |
 | **P3 社区可贡献**（开源命脉） | 让别人也能出题 | `paper new-track` 脚手架生成器、`paper validate-track` CLI + CI 接线、贡献工作流与文档；第二个 Track（JVM / 并发）打样 | ⬜ |
 

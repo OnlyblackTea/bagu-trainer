@@ -60,12 +60,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 259 passed, 12 skipped
+.venv/Scripts/python.exe -m pytest -q        # 276 passed, 14 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，53 passed
+npm test                                      # vitest + RTL，61 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 
@@ -111,8 +111,9 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 | 端点 | 说什么 |
 |---|---|
 | `POST /instances/{id}/submit` → 202 | `{submission, progress}`：提交已受理 + 当前进度。**不等阅卷** |
-| `GET /submissions/{id}/progress` | `status`（queued/running/done/failed/**unknown**）、`step`、`elapsed_ms`、`report_ready`、**完整阶段链** `steps[]` |
+| `GET /submissions/{id}/progress` | `status`（queued/running/done/failed/**interrupted**/**stalled**/unknown）、`step`、`elapsed_ms`、`report_ready`、**完整阶段链** `steps[]`（每阶段自带起止时间与耗时） |
 | `GET /submissions/{id}/report` | 跑完前 404 `report_not_ready`；跑挂了按失败短码报 503/500；从来没有过 404 `report_not_found` |
+| `GET /instances/{id}/history` | 该实例**全部尝试**（submission + 运行记录 + 报告 + 评审 + 判定）与**与上一次的比对** |
 
 阶段（后端只承诺短标识，措辞在前端）：`reset_infra` 重置环境 → `run_tests` 跑验收测试 →
 `parse` 解析结果。
@@ -121,16 +122,47 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 
 - **单线程**（`max_workers=1`）：环境重置会 `down -v` 掉 Track 的**共享**基础设施，maven 还要抢
   端口与 `~/.m2`。两个阅卷并行不是更快，是互相砸场子——一个把另一个的数据库删了。
-- **进度不落库**：它是运行时瞬时状态。进程一没就失去意义（要么报告已落库、要么没跑完）。
-  重启后 `status=unknown` 是**如实回答**——编一个"正在跑第 2 步"比说不知道糟得多。
+- **运行记录落库**（见下）：阅卷是分钟级的事，进程中途重启不能只剩一句"我不知道"。
 - **跑不起来 ≠ 没过**：异步之后异常处理器够不着后台线程，所以失败在登记处就地分类成短码
-  （`grading_unavailable` / `workspace_ref_missing` / …），`report` 与 `progress` 原样报出来。
+  （`grading_unavailable` / `workspace_ref_missing` / …），`report`、`progress`、历史都原样报出来。
 
 > [!NOTE]
 > `--grading stub` 下提交是**瞬时**的（桩不 sleep、不假装在干活），所以进度条一闪而过——
 > 想看真的进度得换 `--grading docker`。实测（VM，真 MySQL + maven）：`submit` 80 ms 返回 202，
 > 而整次阅卷 120 s，轮询依次看到 `reset_infra`(0.1 s) → `run_tests`(109 s) → `done`(120 s)，
 > 报告带 `simulated:false` / `exit_code:1` / `infra.reset:true` 与逐条测试结果。
+
+### 历史查询与比对
+
+刷同一道题会提交很多次，而**"这次和上次差在哪"正是练习的价值**。平台此前只留得住"当前状态"，
+所以每次尝试都连同**运行记录**一起落库，`GET /instances/{id}/history` 按 `seq` 给出全部尝试：
+
+```jsonc
+{ "attempts": [
+  { "submission": {"seq": 1}, "grading": {"status": "done", "elapsed_ms": 103129,
+      "steps": [{"step": "reset_infra", "elapsed_ms": 93559},
+                {"step": "run_tests",   "elapsed_ms": 9239},
+                {"step": "parse",       "elapsed_ms": 323}]},
+    "report": { /* §7.4 的不可信自报告，逐条测试都在 */ },
+    "verdict": "fail", "delta": null },        // 第一次没有"上一次"
+  { "submission": {"seq": 2}, "verdict": "pass",
+    "delta": { "against": 1, "elapsed_ms_before": 103129, "elapsed_ms_after": 12088,
+               "tests": [{"name": "explainUsesIndex", "frm": "fail", "to": "pass"}] } }
+]}
+```
+
+- **比对只列真正变了的测试**：真 Track 的 canonical 测试常有十几条，把没动的也列出来等于没说。
+  红→绿（`fixed`）、绿→红（`broke`）、新增、消失**分开说**——它们是相反的消息。
+- **耗时优先取运行记录**：它含"重置基础设施"那一段，而那正是"阅卷为什么这么慢"的答案
+  （实测 103 秒里 93.6 秒在重置容器）。报告里的 `duration_s` 只是 maven 那一段，故只作兜底。
+- 前端的历史面板列出每次尝试，可展开看那次的报告，并显示与上一次的差异。
+
+> [!NOTE]
+> **重启后的三种口径**，都不编：
+> `interrupted` = 本进程启动时清扫了自己的孤儿记录（确定被打断）；`stalled` = 有活跃记录但不在
+> 本进程手里（重启过，或另一个平台实例在跑——不替它下结论）；`unknown` = 压根没有运行记录
+> （这条提交来自本特性之前）。多实例共用一个库时给每个实例不同的 `--instance-id` /
+> `BAGU_INSTANCE_ID`，清扫只动自己名下的。
 
 ### 进度存在哪（持久化）
 

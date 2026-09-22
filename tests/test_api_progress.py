@@ -197,6 +197,93 @@ def test_progress_of_an_unknown_submission_is_404(client: Any) -> None:
     assert r.status_code == 404 and r.json()["detail"] == "submission_not_found"
 
 
+# --- 历史查询与比对 -------------------------------------------------------------
+
+
+def test_history_lists_every_attempt_with_a_comparison(
+    client: Any, submit_and_wait: Any
+) -> None:
+    """同一道题刷两次之后，"上次挂在哪条、这次动没动它"必须答得出来（§11）。
+
+    这是这条端点的全部意义：平台此前只留得住"当前状态"，而刷题的价值恰恰在于几次之间的差别。
+    """
+    iid = _stage00(client)
+
+    # 第一次：红
+    first = submit_and_wait(client, iid, scenario="fail")
+    client.post(f"/submissions/{first['id']}/review", params={"scenario": "approve"}, json={})
+    client.post(f"/submissions/{first['id']}/decide")
+    client.post(f"/instances/{iid}/retry")
+
+    # 第二次：绿
+    second = submit_and_wait(client, iid, scenario="pass")
+    client.post(f"/submissions/{second['id']}/review", params={"scenario": "approve"}, json={})
+    client.post(f"/submissions/{second['id']}/decide")
+
+    body = client.get(f"/instances/{iid}/history").json()
+
+    assert body["instance_id"] == iid and body["ticket_id"] == "db-stage-00"
+    assert [a["submission"]["seq"] for a in body["attempts"]] == [1, 2]
+
+    first_attempt, second_attempt = body["attempts"]
+    assert first_attempt["verdict"] == "fail" and second_attempt["verdict"] == "pass"
+    # 每次尝试都带**运行记录**（阶段与耗时都在里面，所以历史不只说结果）
+    assert first_attempt["grading"]["status"] == "done"
+    assert first_attempt["grading"]["steps"][0]["elapsed_ms"] is not None
+    # 第一次没有"上一次"，第二次才有比对
+    assert first_attempt["delta"] is None
+    assert second_attempt["delta"]["against"] == 1
+    assert second_attempt["delta"]["passed_before"] is False
+    assert second_attempt["delta"]["passed_after"] is True
+    assert [c["to"] for c in second_attempt["delta"]["tests"]] == ["pass"]
+
+
+def test_history_is_empty_before_the_first_submission(client: Any) -> None:
+    iid = _stage00(client)
+    body = client.get(f"/instances/{iid}/history").json()
+    assert body["attempts"] == []
+
+
+def test_history_of_an_unknown_instance_is_404(client: Any) -> None:
+    r = client.get("/instances/nope/history")
+    assert r.status_code == 404 and r.json()["detail"] == "instance_not_found"
+
+
+def test_history_keeps_an_attempt_whose_grading_failed(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """跑起来失败的尝试也要留在历史里——"这次为什么没跑起来"本身就是要查的东西。"""
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from platform_api import grading_docker
+    from platform_api.app import create_app
+    from platform_api.demo_repo import build_demo_track_repo
+
+    monkeypatch.setattr(grading_docker.shutil, "which", lambda name: None)
+    repo = build_demo_track_repo(tmp_path / "demo")
+    c = TestClient(create_app(content_dir=repo, forge_base=tmp_path / "ws", grading="docker"))
+    c.post("/enrollments", json={"learner": "deployer"})
+    iid = next(
+        i["id"]
+        for i in c.get("/instances", params={"learner": "deployer"}).json()
+        if i["ticket_id"] == "db-stage-00"
+    )
+    c.post(f"/instances/{iid}/start")
+    sub_id = c.post(f"/instances/{iid}/submit", json={}).json()["submission"]["id"]
+    for _ in range(200):
+        if c.get(f"/submissions/{sub_id}/progress").json()["status"] == "failed":
+            break
+        time.sleep(0.02)
+
+    attempt = c.get(f"/instances/{iid}/history").json()["attempts"][0]
+    assert attempt["report"] is None
+    assert attempt["verdict"] is None
+    assert attempt["grading"]["status"] == "failed"
+    assert attempt["grading"]["error"]["detail"] == "grading_unavailable"
+
+
 def test_review_unknown_submission_404(client: Any) -> None:
     assert client.post("/submissions/nope/review", json={}).status_code == 404
 

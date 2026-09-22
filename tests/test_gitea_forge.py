@@ -37,12 +37,17 @@ _FORK_OWNER = "deployer"
 
 
 def _local_repo(tmp_path: Path) -> Path:
-    """假装是 fork 的远端：本地 git 仓库（这样 provision 里的 clone 是真跑）。"""
+    """假装是 fork 的远端：本地 git 仓库（这样 provision 里的 clone 是真跑）。
+
+    ``commit.gpgsign false`` 不是可有可无：本机全局开着签名时，``git commit`` 会去弹 pinentry，
+    在无人值守的测试里表现为**卡 60 秒后失败 128**——一个跟被测代码毫无关系的红。
+    """
     repo = tmp_path / "fork-repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     git(repo, "config", "user.email", "t@example.com")
     git(repo, "config", "user.name", "t")
+    git(repo, "config", "commit.gpgsign", "false")
     (repo / "a.txt").write_text("v1\n", encoding="utf-8")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "init")

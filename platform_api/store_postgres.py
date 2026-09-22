@@ -18,6 +18,7 @@ psycopg3 直接写 SQL，读的人能一眼看到"到底查了什么"。
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -26,6 +27,7 @@ from platform_service.models import (
     AcceptanceDecision,
     Enrollment,
     GradingReport,
+    GradingRun,
     Review,
     Submission,
     TicketInstance,
@@ -42,6 +44,7 @@ MODELS: dict[str, type[BaseModel]] = {
     "reports": GradingReport,
     "reviews": Review,
     "decisions": AcceptanceDecision,
+    "grading_runs": GradingRun,
 }
 
 #: 文档表 + 身份序列。``created_at`` 可空：只有带 ``created_at`` 的实体（见 models）会填，
@@ -206,6 +209,7 @@ class PostgresStore(Store):
         model: type[BaseModel],
         *,
         order_by: str = "created_at, id",
+        states: Sequence[str] | None = None,
         **filters: Any,
     ) -> list[Any]:
         where = ["kind = %s"]
@@ -215,6 +219,9 @@ class PostgresStore(Store):
             if value is not None:
                 where.append(f"{column} = %s")
                 params.append(value)
+        if states:
+            where.append("state = ANY(%s)")
+            params.append(list(states))
         sql = (
             f"SELECT payload FROM bagu_documents WHERE {' AND '.join(where)} "
             f"ORDER BY {order_by}"
@@ -303,3 +310,32 @@ class PostgresStore(Store):
 
     def get_decision(self, submission_id: str) -> AcceptanceDecision | None:
         return self._get("decisions", submission_id, AcceptanceDecision)
+
+    # --- 阅卷运行记录 ---------------------------------------------------------
+    # 复用同一张文档表：``state`` 放 run 状态，``created_at`` 放 started_at（列表就按它排序）。
+    # 于是**不需要任何迁移**——新增一种 kind 就够了。
+
+    def save_grading_run(self, run: GradingRun) -> None:
+        self._save(
+            "grading_runs",
+            run,
+            key=run.submission_id,
+            learner=run.learner,
+            track=run.track,
+            ticket_id=run.ticket_id,
+            instance_id=run.instance_id,
+            state=run.status.value,
+        )
+
+    def get_grading_run(self, submission_id: str) -> GradingRun | None:
+        return self._get("grading_runs", submission_id, GradingRun)
+
+    def list_grading_runs(
+        self, *, instance_id: str | None = None, active_only: bool = False
+    ) -> list[GradingRun]:
+        return self._list(
+            "grading_runs",
+            GradingRun,
+            instance_id=instance_id,
+            states=("queued", "running") if active_only else None,
+        )

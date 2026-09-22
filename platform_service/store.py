@@ -16,6 +16,7 @@ from .models import (
     AcceptanceDecision,
     Enrollment,
     GradingReport,
+    GradingRun,
     Review,
     Submission,
     TicketInstance,
@@ -98,6 +99,24 @@ class Store(Protocol):
     def get_decision(self, submission_id: str) -> AcceptanceDecision | None:
         ...
 
+    # --- 阅卷运行记录（§C.3 步骤 6）-----------------------------------------
+    # 与 report/review/decision 同一个形状：按 ``submission_id`` 存，一次提交一条。
+
+    def save_grading_run(self, run: GradingRun) -> None:
+        ...
+
+    def get_grading_run(self, submission_id: str) -> GradingRun | None:
+        ...
+
+    def list_grading_runs(
+        self, *, instance_id: str | None = None, active_only: bool = False
+    ) -> list[GradingRun]:
+        """``active_only`` = 只取 queued/running：启动时的"孤儿运行"清扫要用它。
+
+        没有它，重启后那些卡在 ``running`` 的记录会一直撒谎说"正在阅卷"。
+        """
+        ...
+
 
 class InMemoryStore(Store):
     """Dict-backed :class:`Store` for tests and single-process self-study (§9.1).
@@ -114,6 +133,7 @@ class InMemoryStore(Store):
         self._reports: dict[str, GradingReport] = {}
         self._reviews: dict[str, Review] = {}
         self._decisions: dict[str, AcceptanceDecision] = {}
+        self._grading_runs: dict[str, GradingRun] = {}
         self._counters: dict[str, int] = {}
 
     def next_id(self, prefix: str) -> str:
@@ -184,3 +204,20 @@ class InMemoryStore(Store):
 
     def get_decision(self, submission_id: str) -> AcceptanceDecision | None:
         return self._decisions.get(submission_id)
+
+    def save_grading_run(self, run: GradingRun) -> None:
+        self._grading_runs[run.submission_id] = run
+
+    def get_grading_run(self, submission_id: str) -> GradingRun | None:
+        return self._grading_runs.get(submission_id)
+
+    def list_grading_runs(
+        self, *, instance_id: str | None = None, active_only: bool = False
+    ) -> list[GradingRun]:
+        matches = [
+            run
+            for run in self._grading_runs.values()
+            if (instance_id is None or run.instance_id == instance_id)
+            and (not active_only or run.is_active)
+        ]
+        return sorted(matches, key=lambda r: (r.started_at, r.submission_id))

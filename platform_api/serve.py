@@ -62,6 +62,7 @@ def build_server(
     forge: ForgeBackend | None = None,
     store: StoreBackend | None = None,
     database_url: str | None = None,
+    instance_id: str | None = None,
 ) -> FastAPI:
     """按内容目录装配 app；一个都不给时用 demo track-repo（``content_dirs`` 可给多个）。
 
@@ -86,6 +87,7 @@ def build_server(
         forge=forge,
         store_backend=store,
         database_url=database_url,
+        instance_id=instance_id,
     )
 
 
@@ -143,6 +145,12 @@ def main(argv: list[str] | None = None) -> None:
         help="--store postgres 用的 libpq 连接串，例如 "
         "postgresql://bagu:bagu@127.0.0.1:5432/bagu（也可用 BAGU_DATABASE_URL）",
     )
+    parser.add_argument(
+        "--instance-id",
+        default=None,
+        help="本平台实例的标识（也可用 BAGU_INSTANCE_ID，默认 default）。**多个实例共用一个库时"
+        "必须各不相同**：启动时清扫「被重启打断的阅卷记录」只动自己名下的，同名会互相误伤",
+    )
     args = parser.parse_args(argv)
     dirs = args.content_dir or []
 
@@ -156,6 +164,7 @@ def main(argv: list[str] | None = None) -> None:
         forge=args.forge,
         store=args.store,
         database_url=args.database_url,
+        instance_id=args.instance_id,
     )
     import uvicorn
 

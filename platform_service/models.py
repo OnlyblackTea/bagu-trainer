@@ -61,6 +61,26 @@ class RunnerTrust(StrEnum):
     SELF = "self"
 
 
+class GradingRunStatus(StrEnum):
+    """Lifecycle of one grading run (§C.3 step 6)."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    #: The process died mid-run. Set on the **next** boot, not by the run itself — a
+    #: crashed run cannot write its own epitaph. Distinct from "no record at all",
+    #: which stays ``unknown`` at the API layer.
+    INTERRUPTED = "interrupted"
+
+
+class GradingStepStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -245,6 +265,62 @@ class Submission(_Strict):
     defense_text: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
+
+class GradingRunStep(_Strict):
+    """One phase of a run, with **timestamps**.
+
+    ``started_at``/``ended_at`` are the whole reason this is a model and not a bare
+    string: "重置环境花了 109 秒、跑测试 11 秒" is what makes a slow grading
+    explainable, and it is only answerable if each phase records its own bounds.
+    """
+
+    step: str
+    status: GradingStepStatus = GradingStepStatus.PENDING
+    detail: str = ""
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+
+
+class GradingRun(_Strict):
+    """The durable execution record of one grading run, keyed by ``submission_id``.
+
+    **Why this is an entity and not transient state.** Grading can take minutes (reset
+    the infra, then ``mvn test``). If the process restarts in the middle, an in-memory
+    registry can only answer "I don't know" — the learner is left unable to tell "还在跑"
+    from "早就死了", and a finished-but-unrecorded run leaves no trace to compare later
+    attempts against. Persisting the run makes that question answerable after the fact,
+    and gives the retry history something to diff (§11: 历史查询与比对).
+
+    The **result** (``GradingReport``) was already durable; this is the *execution* log
+    around it: which phase, how long each took, and — if it never finished — the short
+    code that says why.
+
+    One run per submission, because a retry mints a NEW submission (§9.2).
+    """
+
+    submission_id: str
+    instance_id: str
+    track: str
+    ticket_id: str
+    learner: str
+    #: 哪个平台实例登记的这次运行（``BAGU_INSTANCE_ID``）。启动时清扫孤儿记录**只动自己名下的**：
+    #: 两个实例共库时，无故把对方正在跑的阅卷标成中断是有害的。
+    owner: str = "default"
+    status: GradingRunStatus = GradingRunStatus.QUEUED
+    #: 当前阶段（``platform_service.grading.GradingStep`` 的短标识，存成 str 以便扩展）。
+    step: str = "queued"
+    detail: str = ""
+    steps: list[GradingRunStep] = Field(default_factory=list)
+    started_at: datetime = Field(default_factory=_utcnow)
+    ended_at: datetime | None = None
+    elapsed_ms: int | None = None
+    error_code: str | None = None
+    error_reason: str | None = None
+    report_ready: bool = False
+
+    @property
+    def is_active(self) -> bool:
+        return self.status in (GradingRunStatus.QUEUED, GradingRunStatus.RUNNING)
 
 class ReportProvenance(_Strict):
     """Where the grading claim came from (§7.4). ``generated_at`` stays a raw

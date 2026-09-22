@@ -24,6 +24,7 @@ from platform_service.models import (
     AcceptanceInputs,
     Enrollment,
     GradingReport,
+    GradingStepStatus,
     InstanceState,
     Recommendation,
     Review,
@@ -160,6 +161,50 @@ def test_report_review_decision_keyed_by_submission(
     store.save_decision(decision)
     assert store.get_decision(report.submission_id) == decision
     assert store.get_decision("ghost") is None
+
+
+def test_grading_runs_round_trip_and_filter(store: Store) -> None:
+    """运行记录与 report/review/decision 同形：按 ``submission_id`` 存，按实例取。
+
+    ``active_only`` 是启动清扫的入口——没有它，重启后卡在 ``running`` 的孤儿记录会一直撒谎。
+    """
+    from platform_service.models import GradingRun, GradingRunStatus, GradingRunStep
+
+    def run(submission_id: str, instance_id: str, status: GradingRunStatus) -> GradingRun:
+        return GradingRun(
+            submission_id=submission_id,
+            instance_id=instance_id,
+            track="database-bagu",
+            ticket_id="db-stage-01",
+            learner="deployer",
+            owner="default",
+            status=status,
+            step="run_tests",
+            steps=[GradingRunStep(step="reset_infra", status=GradingStepStatus.DONE)],
+        )
+
+    done = run("sub-1", "ti-1", GradingRunStatus.DONE)
+    active = run("sub-2", "ti-1", GradingRunStatus.RUNNING)
+    other = run("sub-3", "ti-2", GradingRunStatus.DONE)
+    for r in (done, active, other):
+        store.save_grading_run(r)
+
+    assert store.get_grading_run("sub-1") == done
+    assert store.get_grading_run("ghost") is None
+    assert {r.submission_id for r in store.list_grading_runs()} == {"sub-1", "sub-2", "sub-3"}
+    assert {r.submission_id for r in store.list_grading_runs(instance_id="ti-1")} == {
+        "sub-1",
+        "sub-2",
+    }
+    assert [r.submission_id for r in store.list_grading_runs(active_only=True)] == ["sub-2"]
+
+    # 落库的是**整条**记录：阶段连同细节一起，否则重启后"每阶段花了多久"就没了
+    assert store.get_grading_run("sub-1").steps[0].step == "reset_infra"
+
+    # upsert 按身份：同一个 submission 再存一次是更新而不是新增
+    store.save_grading_run(active.model_copy(update={"status": GradingRunStatus.INTERRUPTED}))
+    assert len(store.list_grading_runs()) == 3
+    assert store.get_grading_run("sub-2").status is GradingRunStatus.INTERRUPTED
 
 
 def test_next_id_mints_fresh_unique_identities(store: Store) -> None:

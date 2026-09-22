@@ -120,26 +120,77 @@ export interface PullRequestOut {
 /** 阅卷阶段（后端 `GradingStep`）。稳定短标识；人话在 UI 层。 */
 export type GradingStep = 'queued' | 'reset_infra' | 'run_tests' | 'parse' | 'done' | 'failed'
 
-export type GradingJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'unknown'
+export type GradingJobStatus =
+  | 'queued'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'interrupted'
+  /** 有活跃记录但**不在本进程手里**（重启过，或另一个实例在跑）——措辞不下结论。 */
+  | 'stalled'
+  | 'unknown'
 
 export interface GradingStepOut {
-  step: GradingStep
+  step: GradingStep | string
   status: 'pending' | 'running' | 'done' | 'failed'
   detail: string
+  started_at: string | null
+  ended_at: string | null
+  elapsed_ms: number | null
 }
 
 /** `GET /submissions/{id}/progress`（§C.3 步骤 6）。 */
 export interface GradingProgressOut {
-  submission_id: string
+  submission_id: string | null
   instance_id: string | null
   track: string | null
+  ticket_id?: string
+  owner: string | null
   status: GradingJobStatus
   step: string
   detail: string
+  started_at: string | null
+  ended_at: string | null
   elapsed_ms: number | null
   report_ready: boolean
   error: { detail: string; reason: string } | null
   steps: GradingStepOut[]
+}
+
+/** 一次尝试与**上一次**的差别（§11：历史查询与比对）。 */
+export interface TestStatusChangeOut {
+  name: string
+  /** 上次的状态；null = 上次报告里没有这条测试（新增/改名）。 */
+  frm: string | null
+  to: string | null
+}
+
+export interface AttemptDeltaOut {
+  against: number
+  elapsed_ms_before: number | null
+  elapsed_ms_after: number | null
+  passed_before: boolean | null
+  passed_after: boolean | null
+  tests: TestStatusChangeOut[]
+}
+
+export interface AttemptOut {
+  submission: SubmissionOut
+  grading: GradingProgressOut | null
+  report: GradingReportOut | null
+  review: ReviewOut | null
+  decision: DecisionOut['decision'] | null
+  verdict: 'pass' | 'fail' | null
+  delta: AttemptDeltaOut | null
+}
+
+/** `GET /instances/{id}/history`：该实例全部尝试，按 seq 从旧到新。 */
+export interface InstanceHistoryOut {
+  instance_id: string
+  ticket_id: string
+  track: string
+  learner: string
+  attempts: AttemptOut[]
 }
 
 /** `POST /instances/{id}/submit` 的 202 响应：提交已受理 + 当前进度。 */

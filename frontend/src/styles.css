@@ -211,6 +211,35 @@ button.primary:hover:not(:disabled) {
   color: var(--accent);
 }
 
+/* --- 历史尝试（刷题的价值在"和上次差在哪"）--- */
+
+.attempts {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+}
+
+.attempt {
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.attempt:last-child {
+  border-bottom: none;
+}
+
+.delta {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 6px 6px 0;
+}
+
+.delta ul {
+  margin: 6px 0 0;
+}
+
 /* --- 徽标 --- */
 
 .badge {

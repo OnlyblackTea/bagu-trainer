@@ -166,6 +166,8 @@ def _init_repo(root: Path, files: dict[str, str]) -> None:
     _git(root, "init", "-q")
     _git(root, "config", "user.email", "t@example.com")
     _git(root, "config", "user.name", "tester")
+    # 全局开着签名时 `git commit` 会去弹 pinentry：无人值守下卡 60 秒再失败 128。
+    _git(root, "config", "commit.gpgsign", "false")
     for name, body in files.items():
         (root / name).write_text(body, encoding="utf-8")
     _git(root, "add", "-A")

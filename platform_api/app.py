@@ -41,7 +41,7 @@ from .deps import (
     store_backend_name,
 )
 from .grading_docker import GradingUnavailableError
-from .jobs import GradingJobs
+from .jobs import GradingJobs, recover_interrupted_runs, resolve_instance_id
 from .stubs_wiring import ForgeBackend, forge_backend_name
 
 
@@ -161,6 +161,7 @@ def create_app(
     store: Any = None,
     store_backend: StoreBackend | None = None,
     database_url: str | None = None,
+    instance_id: str | None = None,
 ) -> FastAPI:
     """组装 app。``content_dir``（单个）与 ``content_dirs``（多个）二选一。
 
@@ -170,11 +171,14 @@ def create_app(
     """
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-        """退出时关掉后台阅卷线程池。
+        """启动时清扫孤儿阅卷记录；退出时收掉后台线程池。
 
-        ``wait=False``——等待会把 Ctrl-C 卡住几十秒（正在跑的 maven 不会因为我们要退出就停下），
-        而"这次阅卷没跑完"本来就由登记处如实表达（重启后 ``status=unknown``）。
+        启动那一步是**必须**的：崩掉的进程没法给自己写墓志铭，卡在 ``running`` 的记录会在重启后
+        一直撒谎说"正在阅卷"。清扫只动 ``owner`` 是本实例名下的记录（见 :mod:`platform_api.jobs`）。
         """
+        recovered = recover_interrupted_runs(app.state.store, owner=jobs_owner)
+        if recovered:
+            print(f"清扫了 {recovered} 条被重启打断的阅卷记录（owner={jobs_owner}）")
         try:
             yield
         finally:
@@ -208,8 +212,11 @@ def create_app(
     app.state.grading_runner = runner_for
     app.state.grading_backend = backend
     app.state.grading_reset = reset_infra
-    # 提交后的阅卷跑在后台（单线程排队），进度经 GET /submissions/{id}/progress 查。
-    app.state.grading_jobs = GradingJobs(runner_for)
+    # 提交后的阅卷跑在后台（单线程排队），运行记录写穿到 store，进度经
+    # GET /submissions/{id}/progress 查、历史经 GET /instances/{id}/history 查。
+    jobs_owner = resolve_instance_id(instance_id)
+    app.state.grading_jobs = GradingJobs(store, runner_for, owner=jobs_owner)
+    app.state.instance_id = jobs_owner
     app.state.review_engine = review_engine
     # 多 Track 时逐个上报；单 Track 就是一个元素的 map。Forge 后端是**一个**开关，
     # 所以名字取自任一 bundle——但"这个 Track 的 forge 到底是不是真的"仍逐项可查。
@@ -231,6 +238,7 @@ def create_app(
             "grading_reset": app.state.grading_reset,
             "forge_backend": app.state.forge_backend,
             "store_backend": app.state.store_backend,
+            "instance_id": app.state.instance_id,
         }
 
     _register_exception_handlers(app)

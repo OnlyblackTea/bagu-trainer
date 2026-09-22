@@ -131,16 +131,19 @@ function fakeBackend() {
             submission_id: submission.id,
             instance_id: submit[1],
             track: track.id,
+            owner: 'default',
             status: 'done',
             step: 'done',
             detail: '阅卷完成',
+            started_at: '2026-09-10T00:00:00Z',
+            ended_at: '2026-09-10T00:00:07Z',
             elapsed_ms: 5,
             report_ready: true,
             error: null,
             steps: [
-              { step: 'reset_infra', status: 'done', detail: '' },
-              { step: 'run_tests', status: 'done', detail: '' },
-              { step: 'parse', status: 'done', detail: '' },
+              { step: 'reset_infra', status: 'done', detail: '', started_at: null, ended_at: null, elapsed_ms: 1 },
+              { step: 'run_tests', status: 'done', detail: '', started_at: null, ended_at: null, elapsed_ms: 3 },
+              { step: 'parse', status: 'done', detail: '', started_at: null, ended_at: null, elapsed_ms: 1 },
             ],
           },
         },
@@ -154,17 +157,63 @@ function fakeBackend() {
         submission_id: progressCall[1],
         instance_id: submission?.instance_id ?? null,
         track: track.id,
+        owner: 'default',
         status: reportReady ? 'done' : 'running',
         step: reportReady ? 'done' : 'run_tests',
         detail: '',
+        started_at: '2026-09-10T00:00:00Z',
+        ended_at: reportReady ? '2026-09-10T00:00:07Z' : null,
         elapsed_ms: 7,
         report_ready: reportReady,
         error: null,
         steps: [
-          { step: 'reset_infra', status: 'done', detail: '' },
-          { step: 'run_tests', status: reportReady ? 'done' : 'running', detail: '' },
-          { step: 'parse', status: reportReady ? 'done' : 'pending', detail: '' },
+          { step: 'reset_infra', status: 'done', detail: '', started_at: null, ended_at: null, elapsed_ms: 3 },
+          { step: 'run_tests', status: reportReady ? 'done' : 'running', detail: '', started_at: null, ended_at: null, elapsed_ms: 4 },
+          { step: 'parse', status: reportReady ? 'done' : 'pending', detail: '', started_at: null, ended_at: null, elapsed_ms: null },
         ],
+      })
+    }
+
+    if (url.match(/^\/instances\/([^/]+)\/history$/)) {
+      // 历史与进度是**同一份落库数据**，所以这个假后端也从同一份状态里出。
+      const attempts = submission
+        ? [
+            {
+              submission,
+              grading: {
+                submission_id: submission.id,
+                instance_id: submission.instance_id,
+                track: track.id,
+                owner: 'default',
+                status: reportReady ? 'done' : 'running',
+                step: reportReady ? 'done' : 'run_tests',
+                detail: '',
+                started_at: '2026-09-10T00:00:00Z',
+                ended_at: null,
+                elapsed_ms: 7,
+                report_ready: reportReady,
+                error: null,
+                steps: [],
+              },
+              report: reportReady
+                ? {
+                    ...REPORT,
+                    correctness: { ...REPORT.correctness, passed: gradingPassed },
+                  }
+                : null,
+              review: null,
+              decision: null,
+              verdict: null,
+              delta: null,
+            },
+          ]
+        : []
+      return json({
+        instance_id: 'ti-0',
+        ticket_id: 'db-stage-00',
+        track: track.id,
+        learner: 'deployer',
+        attempts,
       })
     }
 
@@ -264,6 +313,10 @@ describe('App 装配：跑通整条自习闭环', () => {
       expect(within(board()).getByText('已通过')).toBeInTheDocument()
       expect(within(nextStage()).getByText('可开始')).toBeInTheDocument()
     })
+    // 历史：这次提交留在记录里（与进度端点同一份落库数据）
+    await waitFor(() =>
+      expect(screen.getByTestId('history-view')).toHaveTextContent('第 1 次'),
+    )
   })
 
   it('决策前门不可用并说明缺什么；fail 分支可 retry 回到开发中且清空旧结论', async () => {

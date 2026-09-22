@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from .acceptance import decide_acceptance, find_tampering
 from .errors import GateNotReadyError, NotFoundError
+from .history import AttemptRecord, attempt_delta, elapsed_ms_of
 from .lifecycle import record_submission, transition
 from .lifecycle import reissue as reissue_instance
 from .models import (
@@ -272,6 +273,50 @@ class PlatformService:
         transition(instance, InstanceState.IN_PROGRESS)
         self._store.save_instance(instance)
         return instance
+
+    def history(self, instance_id: str) -> list[AttemptRecord]:
+        """Every attempt on one instance, oldest first, each diffed against the previous.
+
+        A retry mints a NEW Submission (§9.2), so "all the tries at this ticket" is
+        exactly the instance's submission list in ``seq`` order. Assembling it here
+        (rather than in the route) keeps the two rules that matter in one place:
+
+        * a missing piece never hides the record — an attempt whose report or review is
+          absent is still returned, because "这次没跑完" is itself the answer;
+        * the comparison is against the **previous attempt**, not the best one or the
+          first one — that is what a learner means by "比上次".
+
+        Only ``seq`` order is used; nothing here depends on wall-clock times, which are
+        untrusted self-reports when a real runner wrote them (§7.4).
+        """
+        self._must_get_instance(instance_id)
+        attempts: list[AttemptRecord] = []
+        for submission in self._store.list_submissions(instance_id):
+            run = self._store.get_grading_run(submission.id)
+            report = self._store.get_report(submission.id)
+            previous = attempts[-1] if attempts else None
+            delta = (
+                attempt_delta(
+                    against=previous.submission.seq,
+                    previous_report=previous.report,
+                    current_report=report,
+                    previous_elapsed_ms=elapsed_ms_of(previous.grading, previous.report),
+                    current_elapsed_ms=elapsed_ms_of(run, report),
+                )
+                if previous is not None
+                else None
+            )
+            attempts.append(
+                AttemptRecord(
+                    submission=submission,
+                    grading=run,
+                    report=report,
+                    review=self._store.get_review(submission.id),
+                    decision=self._store.get_decision(submission.id),
+                    delta=delta,
+                )
+            )
+        return attempts
 
     def reissue(
         self,

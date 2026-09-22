@@ -18,9 +18,30 @@ const SUBMISSION: SubmissionOut = {
 }
 
 const STEPS = [
-  { step: 'reset_infra', status: 'done', detail: '重置 Track 基础设施' },
-  { step: 'run_tests', status: 'running', detail: 'mvn -B -Dgroups=stage01 test' },
-  { step: 'parse', status: 'pending', detail: '' },
+  {
+    step: 'reset_infra',
+    status: 'done',
+    detail: '重置 Track 基础设施',
+    started_at: '2026-09-10T00:00:00Z',
+    ended_at: '2026-09-10T00:01:49Z',
+    elapsed_ms: 109_000,
+  },
+  {
+    step: 'run_tests',
+    status: 'running',
+    detail: 'mvn -B -Dgroups=stage01 test',
+    started_at: '2026-09-10T00:01:49Z',
+    ended_at: null,
+    elapsed_ms: 4_000,
+  },
+  {
+    step: 'parse',
+    status: 'pending',
+    detail: '',
+    started_at: null,
+    ended_at: null,
+    elapsed_ms: null,
+  },
 ] as const
 
 function progress(over: Partial<GradingProgressOut> = {}): GradingProgressOut {
@@ -28,9 +49,12 @@ function progress(over: Partial<GradingProgressOut> = {}): GradingProgressOut {
     submission_id: 'sub-1',
     instance_id: 'ti-1',
     track: track.id,
+    owner: 'default',
     status: 'running',
     step: 'run_tests',
     detail: 'mvn -B -Dgroups=stage01 test',
+    started_at: '2026-09-10T00:00:00Z',
+    ended_at: null,
     elapsed_ms: 4200,
     report_ready: false,
     error: null,
@@ -95,7 +119,7 @@ describe('GradingView（屏幕 4a · 提交后的阅卷进度与报告）', () =
     expect(screen.getByTestId('grading-view')).toHaveTextContent('已用 4.2 s')
   })
 
-  it('没有进度记录时如实说不知道，而不是编一个阶段', () => {
+  it('没有运行记录时如实说不知道，而不是编一个阶段', () => {
     render(
       <GradingView
         submission={SUBMISSION}
@@ -103,12 +127,34 @@ describe('GradingView（屏幕 4a · 提交后的阅卷进度与报告）', () =
           status: 'unknown',
           step: 'unknown',
           steps: [],
-          detail: '这次阅卷没有进度记录（服务重启过）。',
+          detail: '这条提交没有阅卷运行记录（它可能来自本特性之前）。',
         })}
         report={null}
       />,
     )
-    expect(screen.getByTestId('grading-unknown')).toHaveTextContent('服务重启过')
+    expect(screen.getByTestId('grading-not-live')).toHaveTextContent('没有阅卷运行记录')
+  })
+
+  it('被重启打断时说清"不在本进程手里"，不替它下结论', () => {
+    render(
+      <GradingView
+        submission={SUBMISSION}
+        progress={progress({
+          status: 'interrupted',
+          step: 'run_tests',
+          detail: '服务在阅卷过程中重启',
+        })}
+        report={null}
+      />,
+    )
+    expect(screen.getByTestId('grading-not-live')).toHaveTextContent('服务在阅卷过程中重启')
+  })
+
+  it('阶段条给出**每阶段各自**的耗时（"慢在哪一段"就靠它）', () => {
+    render(<GradingView submission={SUBMISSION} progress={progress()} report={null} />)
+    const chain = screen.getByTestId('grading-progress')
+    expect(chain).toHaveTextContent('109.0 s')
+    expect(chain).toHaveTextContent('4.0 s')
   })
 
   it('阅卷跑不起来时说清"不是你的代码没过"，并给出短码', () => {
@@ -205,6 +251,15 @@ describe('App · 提交后的轮询', () => {
             ? progress()
             : progress({ status: 'done', step: 'done', report_ready: true }),
         )
+      }
+      if (url.endsWith('/history')) {
+        return json({
+          instance_id: 'ti-1',
+          ticket_id: 'db-stage-00',
+          track: track.id,
+          learner: 'deployer',
+          attempts: [],
+        })
       }
       if (url.endsWith('/report')) return json(report())
       return json({ detail: 'not_found' }, 404)
