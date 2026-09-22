@@ -27,6 +27,13 @@ scratch/
 .exams/
 !.gitkeep
 
+# 默认持久化后端（sqlite）的数据库文件：那是**做题进度**，属于本机数据，不进仓库。
+# 换地方用 --database-url / BAGU_DATABASE_URL（启动横幅会打印绝对路径）。
+bagu.sqlite3
+bagu.sqlite3-wal
+bagu.sqlite3-shm
+*.sqlite3
+
 # ---- Secrets / local config (deployer brings their own LLM key, D3) ----
 .env
 .env.*

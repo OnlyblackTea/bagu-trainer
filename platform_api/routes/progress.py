@@ -145,6 +145,31 @@ def grading_progress(submission_id: str, request: Request) -> dict[str, Any]:
     return view
 
 
+@router.get("/attempts")
+def recent_attempts(
+    request: Request, learner: str, track: str | None = None, limit: int = 8
+) -> dict[str, Any]:
+    """这位学员最近的几次提交（跨实例、跨 Track，最新的在前）。
+
+    首页"最近练习"用它——一个**跨 Track** 的问题（"我上次干到哪了"），所以由路由把所有已部署
+    Track 的结果并起来排一次，而不是让前端按 Track 循环请求再自己合并。
+    """
+    state = request.app.state
+    bundles = (
+        [bundle_for_track(request, track)] if track else list(state.tracks.values())
+    )
+    rows = [
+        row
+        for bundle in bundles
+        for row in bundle.service.recent_attempts(learner, limit=max(1, min(limit, 50)))
+    ]
+    rows.sort(key=lambda r: r.created_at, reverse=True)
+    return {
+        "learner": learner,
+        "attempts": [r.model_dump(mode="json") for r in rows[: max(1, min(limit, 50))]],
+    }
+
+
 @router.get("/instances/{instance_id}/history")
 def instance_history(instance_id: str, request: Request) -> dict[str, Any]:
     """该实例的**全部**尝试：提交 → 运行 → 报告 → 评审 → 判定，以及与上一次的比对（§11）。

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from platform_api.demo_repo import build_demo_track_repo
@@ -32,13 +34,31 @@ def _instance(instance_id: str, learner: str, ticket_id: str) -> TicketInstance:
     )
 
 
-def test_meta_reports_the_memory_store_by_default(client: TestClient) -> None:
-    """学员有权知道攒的进度是"重启就没"还是落了库；口径必须如实，不能笼统说"已保存"。"""
-    assert client.get("/meta").json()["store_backend"] == "memory"
+def test_meta_reports_which_store_and_where_it_is(client: TestClient) -> None:
+    """学员有权知道进度存在哪、重启会不会丢；口径必须如实，不能笼统说"已保存"。
+
+    `demo_app` 是测试自己装配的（默认 sqlite）——这条同时钉住默认后端不再是内存。
+    """
+    meta = client.get("/meta").json()
+    assert meta["store_backend"] == "sqlite"
+    assert meta["store_target"]
 
 
-def test_progress_survives_an_app_restart(tmp_path: Path, clean_postgres: str) -> None:
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+def test_progress_survives_an_app_restart(
+    tmp_path: Path, request: Any, backend: str
+) -> None:
+    """**这一条就是"重启不失忆"本身**，两个持久后端各跑一遍。
+
+    SQLite 是默认值，所以它必须被真跑过：新建一个 app 对象就等于重启——它不共享任何 Python
+    状态，能看到的只有磁盘上的那个文件/库。
+    """
     from platform_api.app import create_app
+
+    if backend == "postgres":
+        target = request.getfixturevalue("clean_postgres")
+    else:
+        target = str(tmp_path / "bagu.sqlite3")
 
     repo = build_demo_track_repo(tmp_path / "demo")
     forge_base = tmp_path / "ws"
@@ -48,13 +68,14 @@ def test_progress_survives_an_app_restart(tmp_path: Path, clean_postgres: str) -
             create_app(
                 content_dir=repo,
                 forge_base=forge_base,
-                store_backend="postgres",
-                database_url=clean_postgres,
+                store_backend=backend,
+                database_url=target,
             )
         )
 
     first = boot()
-    assert first.get("/meta").json()["store_backend"] == "postgres"
+    assert first.get("/meta").json()["store_backend"] == backend
+    assert first.get("/meta").json()["store_target"]
 
     enrollment = first.post("/enrollments", json={"learner": "deployer"}).json()
     instances = enrollment["instances"]

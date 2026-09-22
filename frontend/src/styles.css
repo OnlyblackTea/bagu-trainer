@@ -175,6 +175,89 @@ body {
   }
 }
 
+/* --- 主页 / 总览（屏幕 0）--- */
+
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.board-progress__bar--lg {
+  height: 10px;
+}
+
+.home__next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid #c7dbff;
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+}
+
+.home__next-title {
+  font-size: 17px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.problems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.problem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.problem:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.problem__title {
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.problem__state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.problem .stage__prereq {
+  grid-column: 1 / -1;
+}
+
+.attempts--compact .attempt {
+  padding: 8px 0;
+}
+
 /* --- 通用块 --- */
 
 .card {

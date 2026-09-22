@@ -16,8 +16,8 @@ test.describe.serial('学习者闭环（真后端 + 真浏览器）', () => {
     // 诚实占位 UI：首页就要说明三处都是占位后端
     await expect(page.getByTestId('simulated-badge').first()).toBeVisible()
 
-    // 入学
-    await page.getByRole('button', { name: /入学/ }).click()
+    // 入学（主页的入口；题目列表里的「未入学」徽标也会命中 /入学/，所以按 testid 点）
+    await page.getByTestId('enroll').click()
     const stage00 = page.getByTestId('stage-stage-00-onboarding')
     await expect(stage00).toContainText('可开始')
     // 后继阶段保持未解锁 —— 前置门真的在管事

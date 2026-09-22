@@ -4,6 +4,7 @@ import { api, ApiError, STALE_RESOURCE_CODES } from './api'
 import { DecisionView } from './components/DecisionView'
 import { GradingView } from './components/GradingView'
 import { HistoryView } from './components/HistoryView'
+import { HomeView } from './components/HomeView'
 import { ReviewView } from './components/ReviewView'
 import { SimulatedBadge } from './components/SimulatedBadge'
 import { StageBoard } from './components/StageBoard'
@@ -167,14 +168,6 @@ export default function App() {
             stateOf={instanceOf}
             selectedStage={selected?.stage ?? null}
             onSelect={selectStage}
-            onEnroll={() =>
-              run(async () => {
-                const res = await api.enroll(LEARNER, t.id)
-                setInstances(res.instances)
-                setNotice('已入学：根阶段可开始，其后阶段保持未解锁。')
-              })
-            }
-            busy={busy}
           />
         </aside>
 
@@ -271,17 +264,27 @@ export default function App() {
                 </>
               ) : (
                 <section className="card">
-                  <p className="muted">这个阶段还没有实例——先在左侧「入学」。</p>
+                  <p className="muted">这个阶段还没有实例——回到主页点「入学」。</p>
                 </section>
               )}
             </>
           ) : (
-            <section className="card empty">
-              <h2 className="card__title">选一个阶段开始</h2>
-              <p className="muted">
-                左边是这条 Track 的解锁链。点一个<strong>已出卷</strong>阶段，题面会出现在这里。
-              </p>
-            </section>
+            <HomeView
+              track={t}
+              learner={LEARNER}
+              stateOf={instanceOf}
+              onSelect={selectStage}
+              onEnroll={() =>
+                run(async () => {
+                  const res = await api.enroll(LEARNER, t.id)
+                  setInstances(res.instances)
+                  setHistoryKey((n) => n + 1)
+                  setNotice('已入学：根阶段可开始，其后阶段保持未解锁。')
+                })
+              }
+              busy={busy}
+              refreshKey={historyKey}
+            />
           )}
         </main>
 

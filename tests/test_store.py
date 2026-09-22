@@ -15,6 +15,7 @@ throwaway database.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -37,15 +38,20 @@ from platform_service.models import (
 from platform_service.store import InMemoryStore, Store
 
 
-@pytest.fixture(params=["memory", "postgres"])
-def store(request: pytest.FixtureRequest) -> Any:
+@pytest.fixture(params=["memory", "sqlite", "postgres"])
+def store(request: pytest.FixtureRequest, tmp_path: Path) -> Any:
     """Every store implementation, one suite.
 
-    ``request.param`` doubles as the backend name so a failure says which one broke.
-    The PostgreSQL leg skips (via ``clean_postgres``) when no test DSN is configured.
+    ``request.param`` doubles as the backend name so a failure says which one broke. SQLite 跑在每个
+    测试自己的临时文件上（真落盘，但互不打扰）；PostgreSQL 需要 ``BAGU_TEST_POSTGRES_DSN``，
+    没配就 skip。
     """
     if request.param == "memory":
         return InMemoryStore()
+    if request.param == "sqlite":
+        from platform_api.store_sqlite import SqliteStore
+
+        return SqliteStore(tmp_path / "store.sqlite3")
     dsn = request.getfixturevalue("clean_postgres")
     from platform_api.store_postgres import PostgresStore
 

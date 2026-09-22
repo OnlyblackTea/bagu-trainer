@@ -14,14 +14,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import (
     AcceptanceDecision,
     GradingReport,
     GradingRun,
+    InstanceState,
     Review,
     Submission,
+    TicketInstance,
 )
 
 
@@ -84,6 +88,51 @@ class AttemptRecord(_Strict):
     @property
     def verdict(self) -> str | None:
         return self.decision.verdict.value if self.decision else None
+
+
+class AttemptSummary(_Strict):
+    """一次尝试的**一行**摘要——给"最近练习"这类列表用。
+
+    刻意不带整份报告：首页要的是"我最近干了什么、结果如何"，不是把 N 份逐条测试结果一起搬过来
+    （要看细节就进那道题，那里有完整的 ``AttemptRecord``）。
+    """
+
+    instance_id: str
+    ticket_id: str
+    track: str
+    seq: int
+    submission_id: str
+    created_at: datetime
+    #: 实例**当前**状态（可能已经 retry/passed，与这次提交时的状态不同——两个都要有用）。
+    state: InstanceState
+    verdict: str | None = None
+    correctness_passed: bool | None = None
+    elapsed_ms: int | None = None
+    #: 判定面被改动的文件数（§11.3）。非 0 时首页就该提示"绿也不算绿"。
+    tampering: int = 0
+
+
+def attempt_summary(
+    *,
+    instance: TicketInstance,
+    submission: Submission,
+    run: GradingRun | None,
+    report: GradingReport | None,
+    decision: AcceptanceDecision | None,
+) -> AttemptSummary:
+    return AttemptSummary(
+        instance_id=instance.id,
+        ticket_id=instance.ticket_id,
+        track=instance.track,
+        seq=submission.seq,
+        submission_id=submission.id,
+        created_at=submission.created_at,
+        state=instance.state,
+        verdict=decision.verdict.value if decision else None,
+        correctness_passed=report.correctness.passed if report else None,
+        elapsed_ms=elapsed_ms_of(run, report),
+        tampering=len(decision.inputs.tampering) if decision else 0,
+    )
 
 
 def _status_by_name(report: GradingReport | None) -> dict[str, str]:

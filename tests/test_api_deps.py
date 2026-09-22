@@ -15,6 +15,7 @@ from platform_api.deps import (
     resolve_store_backend,
     review_engine,
     store_backend_name,
+    store_target_name,
 )
 from platform_service.models import InstanceState
 from platform_service.service import PlatformService
@@ -59,10 +60,24 @@ def test_build_service_accepts_an_injected_store(tmp_path: Path) -> None:
     assert len(mine.list_instances(learner="deployer")) == 3
 
 
-def test_memory_store_is_the_zero_config_default() -> None:
-    assert resolve_store_backend() == "memory"
-    assert isinstance(build_store(), InMemoryStore)
-    assert store_backend_name(build_store()) == "memory"
+def test_sqlite_is_the_zero_config_default(tmp_path: Path) -> None:
+    """默认必须是**真持久**的后端：零配置能跑，且重启不失忆。
+
+    内存后端做默认值的代价是"攒了一周的进度在重启后消失"，而 PostgreSQL 会把零配置的人挡在
+    安装步骤上。SQLite 是标准库自带的，两头都不欠。
+    """
+    assert resolve_store_backend() == "sqlite"
+    store = build_store("sqlite", dsn=str(tmp_path / "bagu.sqlite3"))
+    assert store_backend_name(store) == "sqlite"
+    assert store_target_name(store).endswith("bagu.sqlite3")
+    assert isinstance(store, Store)
+
+
+def test_memory_store_is_available_but_not_the_default() -> None:
+    """内存后端还在（跑测试、临时演示），但它必须**显式**选——不能再是默认值。"""
+    assert isinstance(build_store("memory"), InMemoryStore)
+    assert store_backend_name(build_store("memory")) == "memory"
+    assert "失忆" in store_target_name(build_store("memory"))
 
 
 def test_store_backend_rejects_typos(monkeypatch: pytest.MonkeyPatch) -> None:

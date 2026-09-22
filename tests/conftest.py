@@ -274,12 +274,21 @@ def sample_grading_report() -> dict[str, Any]:
 
 @pytest.fixture
 def demo_app(tmp_path: Path) -> Any:
-    """建 demo track-repo 并组装 FastAPI app（每个测试独立 tmp）。"""
+    """建 demo track-repo 并组装 FastAPI app（每个测试独立 tmp）。
+
+    显式指定 sqlite 文件（而不是靠 ``isolated_default_store`` 的环境变量）：这个 fixture 是绝大多数
+    路由测试的入口，写清楚比"靠一个 autouse 兜底"更不容易被后来的人改坏。
+    """
     from platform_api.app import create_app
     from platform_api.demo_repo import build_demo_track_repo
 
     repo = build_demo_track_repo(tmp_path / "demo")
-    return create_app(content_dir=repo, forge_base=tmp_path / "ws")
+    return create_app(
+        content_dir=repo,
+        forge_base=tmp_path / "ws",
+        store_backend="sqlite",
+        database_url=str(tmp_path / "bagu.sqlite3"),
+    )
 
 
 @pytest.fixture
@@ -327,6 +336,19 @@ def submit_and_wait() -> Any:
         return submission
 
     return _submit
+
+
+@pytest.fixture(autouse=True)
+def isolated_default_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认 store 现在是 **sqlite**（重启不失忆）；测试里必须让它落到**本测试自己的临时文件**上。
+
+    不隔离的后果是全场共用一个 ``./bagu.sqlite3``：实例 id 跨测试累积、``list_instances`` 返回上
+    一个测试留下的东西——一堆"只有一起跑才红"的假失败，而且仓库根会多出一个数据库文件。
+    （这不是假想：第一次改默认值时它真的发生了。）
+
+    每个测试一份，既保住"真落盘"的语义，又不互相串味。
+    """
+    monkeypatch.setenv("BAGU_DATABASE_URL", str(tmp_path / "bagu.sqlite3"))
 
 
 # --- 持久化（PostgreSQL）-------------------------------------------------------

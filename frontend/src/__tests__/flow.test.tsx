@@ -64,6 +64,9 @@ function fakeBackend() {
     const url = String(input)
     const method = (init?.method ?? 'GET').toUpperCase()
 
+    if (url.startsWith('/attempts')) {
+      return json({ learner: 'deployer', attempts: [] })
+    }
     if (url === '/tracks') {
       return json([
         {
@@ -287,7 +290,7 @@ describe('App 装配：跑通整条自习闭环', () => {
     render(<App />)
 
     // 入学前没有任何实例，看板只列阶段、不带状态徽章
-    await user.click(await screen.findByRole('button', { name: /入学/ }))
+    await user.click(await screen.findByTestId('enroll'))
 
     // 入学后：根阶段可开始，后继阶段未解锁（DAG 生效）
     await waitFor(() => expect(within(board()).getByText('可开始')).toBeInTheDocument())
@@ -324,7 +327,7 @@ describe('App 装配：跑通整条自习闭环', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: /入学/ }))
+    await user.click(await screen.findByTestId('enroll'))
     await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
 
     expect(screen.getByRole('button', { name: /取确定性结论/ })).toBeDisabled()
@@ -352,7 +355,7 @@ describe('App 装配：跑通整条自习闭环', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: /入学/ }))
+    await user.click(await screen.findByTestId('enroll'))
     await user.click(screen.getByTestId('stage-stage-03-deadlock-optional'))
 
     expect(screen.queryByTestId('ticket-view')).not.toBeInTheDocument()

@@ -24,8 +24,6 @@ describe('StageBoard（屏幕 1）', () => {
         stateOf={() => makeInstance({ state: 'in_progress' })}
         selectedStage={null}
         onSelect={() => {}}
-        onEnroll={() => {}}
-        busy={false}
       />,
     )
     const stage = screen.getByTestId('stage-stage-00-onboarding')
@@ -43,8 +41,6 @@ describe('StageBoard（屏幕 1）', () => {
         stateOf={() => undefined}
         selectedStage={null}
         onSelect={onSelect}
-        onEnroll={() => {}}
-        busy={false}
       />,
     )
     const boardOnly = screen.getByTestId('stage-stage-03-deadlock-optional')
@@ -55,18 +51,18 @@ describe('StageBoard（屏幕 1）', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
-  it('未入学时给出入学入口；已入学则不显示', () => {
+  it('未入学时**提示去主页**入学（这一栏是导航，行动入口在主页）', () => {
     const { rerender } = render(
       <StageBoard
         track={track}
         stateOf={() => undefined}
         selectedStage={null}
         onSelect={() => {}}
-        onEnroll={() => {}}
-        busy={false}
       />,
     )
-    expect(screen.getByRole('button', { name: /入学/ })).toBeInTheDocument()
+    expect(screen.getByTestId('board-enroll-hint')).toHaveTextContent('主页')
+    // 这里**不该**再有一个入学按钮：两个同名入口会让该点哪个变成猜谜
+    expect(screen.queryByRole('button', { name: /入学/ })).not.toBeInTheDocument()
 
     rerender(
       <StageBoard
@@ -74,11 +70,9 @@ describe('StageBoard（屏幕 1）', () => {
         stateOf={() => makeInstance()}
         selectedStage={null}
         onSelect={() => {}}
-        onEnroll={() => {}}
-        busy={false}
       />,
     )
-    expect(screen.queryByRole('button', { name: /入学/ })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('board-enroll-hint')).not.toBeInTheDocument()
   })
 
   it('点已出卷阶段会把它交给上层', async () => {
@@ -89,8 +83,6 @@ describe('StageBoard（屏幕 1）', () => {
         stateOf={() => makeInstance()}
         selectedStage={null}
         onSelect={onSelect}
-        onEnroll={() => {}}
-        busy={false}
       />,
     )
     await userEvent.click(screen.getByTestId('stage-stage-01-product-query-index'))
@@ -106,8 +98,6 @@ describe('StageBoard（屏幕 1）', () => {
         stateOf={() => makeInstance()}
         selectedStage={null}
         onSelect={() => {}}
-        onEnroll={() => {}}
-        busy={false}
       />,
     )
     expect(screen.getByText(/前置：db-stage-00/)).toBeInTheDocument()

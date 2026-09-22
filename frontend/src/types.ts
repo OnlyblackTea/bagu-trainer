@@ -295,5 +295,27 @@ export interface GradingReportOut {
   out_of_scope_edits: string[]
 }
 
+/** `GET /attempts`：一次尝试的一行摘要（首页"最近练习"用）。 */
+export interface AttemptSummaryOut {
+  instance_id: string
+  ticket_id: string
+  track: string
+  seq: number
+  submission_id: string
+  created_at: string
+  /** 实例**当前**状态（可能已经 retry/passed，与提交那一刻不同）。 */
+  state: InstanceState
+  verdict: Verdict | null
+  correctness_passed: boolean | null
+  elapsed_ms: number | null
+  /** 判定面被改动的文件数（§11.3）：非 0 时绿也不算绿。 */
+  tampering: number
+}
+
+export interface AttemptsOut {
+  learner: string
+  attempts: AttemptSummaryOut[]
+}
+
 export type GradingScenario = 'pass' | 'fail'
 export type ReviewScenario = 'approve' | 'request_changes'

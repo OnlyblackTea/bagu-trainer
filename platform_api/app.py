@@ -39,6 +39,7 @@ from .deps import (
     resolve_grading_reset,
     review_engine,
     store_backend_name,
+    store_target_name,
 )
 from .grading_docker import GradingUnavailableError
 from .jobs import GradingJobs, recover_interrupted_runs, resolve_instance_id
@@ -205,6 +206,7 @@ def create_app(
 
     app.state.store = store
     app.state.store_backend = store_backend_name(store)
+    app.state.store_target = store_target_name(store)
     app.state.tracks = tracks
     runner_for = lambda scenario: grading_runner(  # noqa: E731 - 见下：同一个来源喂两处
         scenario, backend=backend, reset_infra=reset_infra
@@ -238,6 +240,7 @@ def create_app(
             "grading_reset": app.state.grading_reset,
             "forge_backend": app.state.forge_backend,
             "store_backend": app.state.store_backend,
+            "store_target": app.state.store_target,
             "instance_id": app.state.instance_id,
         }
 

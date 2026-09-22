@@ -134,16 +134,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--store",
-        choices=("memory", "postgres"),
+        choices=("sqlite", "postgres", "memory"),
         default=None,
-        help="持久化后端：memory=进程内字典，重启即失忆（默认；也可用 BAGU_STORE）；"
-        "postgres=进度落库，重启后还在（需 --database-url 或 BAGU_DATABASE_URL + psycopg）",
+        help="持久化后端：sqlite=单文件数据库，**重启不失忆**（默认；也可用 BAGU_STORE）；"
+        "postgres=多人/多实例共库；memory=进程内字典，重启即失忆（只适合临时演示）",
     )
     parser.add_argument(
         "--database-url",
         default=None,
-        help="--store postgres 用的 libpq 连接串，例如 "
-        "postgresql://bagu:bagu@127.0.0.1:5432/bagu（也可用 BAGU_DATABASE_URL）",
+        help="sqlite 是数据库文件路径（默认 ./bagu.sqlite3，绝对路径会打印在启动横幅里）；"
+        "postgres 是 libpq 连接串，例如 postgresql://bagu:bagu@127.0.0.1:5432/bagu。"
+        "也可用 BAGU_DATABASE_URL",
     )
     parser.add_argument(
         "--instance-id",
@@ -172,8 +173,10 @@ def main(argv: list[str] | None = None) -> None:
     print(f"已部署 Track: {', '.join(app.state.tracks)}")
     print(
         f"阅卷后端: {app.state.grading_backend}  环境重置: {app.state.grading_reset}"
-        f"  Forge: {app.state.forge_backend}  存储: {app.state.store_backend}"
+        f"  Forge: {app.state.forge_backend}"
     )
+    # 存储落点单独一行：部署的人应当能一眼说出"我的做题进度存在哪儿"。
+    print(f"存储: {app.state.store_backend} → {app.state.store_target}")
     if args.reload:
         uvicorn.run(
             "platform_api.serve:build_server",

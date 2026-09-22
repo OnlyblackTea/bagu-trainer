@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from .acceptance import decide_acceptance, find_tampering
 from .errors import GateNotReadyError, NotFoundError
-from .history import AttemptRecord, attempt_delta, elapsed_ms_of
+from .history import AttemptRecord, AttemptSummary, attempt_delta, attempt_summary, elapsed_ms_of
 from .lifecycle import record_submission, transition
 from .lifecycle import reissue as reissue_instance
 from .models import (
@@ -273,6 +273,28 @@ class PlatformService:
         transition(instance, InstanceState.IN_PROGRESS)
         self._store.save_instance(instance)
         return instance
+
+    def recent_attempts(self, learner: str, *, limit: int = 8) -> list[AttemptSummary]:
+        """这位学员在本 Track 下**最近**的几次提交，最新的在前（跨实例）。
+
+        首页"最近练习"用它。跨实例是重点：学员想知道的是"我上次干到哪了"，不在乎那条提交属
+        于哪个 instance；而**状态取实例的当前状态**——一次 fail 之后 retry 过，首页该显示"开发中"
+        而不是那次 fail（两件事都有用，但列表里只放得下一个，见 :class:`AttemptSummary`）。
+        """
+        rows: list[AttemptSummary] = []
+        for instance in self._store.list_instances(learner=learner, track=self._track.id):
+            for submission in self._store.list_submissions(instance.id):
+                rows.append(
+                    attempt_summary(
+                        instance=instance,
+                        submission=submission,
+                        run=self._store.get_grading_run(submission.id),
+                        report=self._store.get_report(submission.id),
+                        decision=self._store.get_decision(submission.id),
+                    )
+                )
+        rows.sort(key=lambda r: r.created_at, reverse=True)
+        return rows[:limit]
 
     def history(self, instance_id: str) -> list[AttemptRecord]:
         """Every attempt on one instance, oldest first, each diffed against the previous.

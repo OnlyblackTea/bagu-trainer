@@ -26,6 +26,9 @@ function backend(opts: { instancesAfterRefresh?: () => unknown }) {
       json: async () => body,
     })
 
+    if (url.startsWith('/attempts')) {
+      return json({ learner: 'deployer', attempts: [] })
+    }
     if (url === '/tracks') {
       return json([
         {
@@ -86,7 +89,7 @@ describe('实例已经不在后端了', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('ticket-view')).not.toBeInTheDocument(),
     )
-    expect(screen.getByText(/选一个阶段开始/)).toBeInTheDocument()
+    expect(screen.getByTestId('home-view')).toBeInTheDocument()
     // 并且真的重新拉了实例列表
     await waitFor(() =>
       expect(

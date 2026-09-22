@@ -6,8 +6,6 @@ interface Props {
   stateOf: (stage: StageEntry) => InstanceOut | undefined
   selectedStage: string | null
   onSelect: (stage: StageEntry) => void
-  onEnroll: () => void
-  busy: boolean
 }
 
 /**
@@ -21,14 +19,7 @@ interface Props {
  * 环境入职阶段就如此），它**没有** `ticket_id`，所以既不可点进发卷、也不该被拿去取卷——
  * 取卷必须用 `identity.id`，拿 stage 目录名去取会 404。
  */
-export function StageBoard({
-  track,
-  stateOf,
-  selectedStage,
-  onSelect,
-  onEnroll,
-  busy,
-}: Props) {
+export function StageBoard({ track, stateOf, selectedStage, onSelect }: Props) {
   const assessed = track.stages.filter((s) => s.kind !== 'board_only')
   const passed = assessed.filter((s) => stateOf(s)?.state === 'passed').length
   const enrolled = track.stages.some((s) => stateOf(s) !== undefined)
@@ -58,12 +49,9 @@ export function StageBoard({
       </div>
 
       {!enrolled && (
-        <div className="board-card__enroll">
-          <button className="primary block" onClick={onEnroll} disabled={busy}>
-            入学（deployer）
-          </button>
-          <p className="muted">入学后会为每个已出卷阶段铸造一个实例。</p>
-        </div>
+        <p className="muted board-card__enroll" data-testid="board-enroll-hint">
+          还没入学——到<strong>主页</strong>点「入学」，平台会为每个已出卷阶段铸造一个实例。
+        </p>
       )}
 
       <nav className="board">

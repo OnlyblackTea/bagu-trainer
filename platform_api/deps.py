@@ -15,12 +15,15 @@
 
 **持久化后端的选择**（``BAGU_STORE`` 环境变量或 ``serve --store``）：
 
-* ``memory``（默认）—— :class:`~platform_service.store.InMemoryStore`：进程内字典，
-  **重启即失忆**。够用于跑测试和"我就想看看界面"；
-* ``postgres`` —— :class:`~platform_api.store_postgres.PostgresStore`：进度落库，重启后
-  enrollment/instance/submission/report/decision 都还在。DSN 取自 ``--database-url`` 或
-  ``BAGU_DATABASE_URL``（psycopg3 的 libpq 连接串，例如
-  ``postgresql://user:pw@127.0.0.1:5432/bagu``）。
+* ``sqlite``（**默认**）—— :class:`~platform_api.store_sqlite.SqliteStore`：标准库自带的单文件
+  数据库，**零额外依赖、重启不失忆**。这是"一个人自托管"的正确默认值：进程内字典会让攒了一周
+  的进度消失，PostgreSQL 又要求先装一个服务。
+* ``postgres`` —— :class:`~platform_api.store_postgres.PostgresStore`：多人/多实例共库时用。
+* ``memory`` —— :class:`~platform_service.store.InMemoryStore`：进程内字典，跑测试与临时演示用，
+  **重启即失忆**。
+
+DSN/路径取自 ``--database-url`` 或 ``BAGU_DATABASE_URL``：postgres 是 libpq 连接串，sqlite 是
+数据库文件路径（``sqlite:///…`` 也认）。不给就用 ``<workspace-root>/bagu.sqlite3``。
 
 **真阅卷前的环境重置**（``BAGU_GRADING_RESET`` 环境变量或 ``serve --grading-reset``）：
 
@@ -59,48 +62,75 @@ PLATFORM_VERSION = "a-prime-0.1.0"
 GradingScenario = Literal["pass", "fail"]
 ReviewScenario = Literal["approve", "request_changes"]
 GradingBackend = Literal["stub", "docker"]
-StoreBackend = Literal["memory", "postgres"]
+StoreBackend = Literal["sqlite", "postgres", "memory"]
 
 #: 选阅卷后端的开关。默认 ``stub``：装好 JDK17+Maven 之前，平台照样能整条跑通。
 GRADING_BACKEND_ENV = "BAGU_GRADING"
 #: 真阅卷前是否重置 Track 基础设施：``auto``（默认，重置）/ ``never``（不重置，会放大"假绿"）。
 GRADING_RESET_ENV = "BAGU_GRADING_RESET"
-#: 选持久化后端的开关。默认 ``memory``：不再默认失忆之后，这个默认值也该显式改过来，
-#: 但先保持"零配置能跑"，由 ``serve`` 在启动横幅里如实打印当前用的是哪个。
+#: 选持久化后端的开关。**默认 sqlite**：重启不失忆是底线，而它零依赖。
 STORE_BACKEND_ENV = "BAGU_STORE"
-#: ``--store postgres`` 时用的 libpq 连接串。
+#: ``--store postgres`` 的 libpq 连接串 / ``--store sqlite`` 的数据库文件路径。
 DATABASE_URL_ENV = "BAGU_DATABASE_URL"
+#: ``--store sqlite`` 不给路径时的落点：**启动时的当前目录**。不是源码树里，也不是临时目录——
+#: 部署的人应当能一眼说出"我的进度存在哪个文件里"，启动横幅会把绝对路径打出来。
+DEFAULT_SQLITE_PATH = "bagu.sqlite3"
 
 _TRUTHY = frozenset({"auto", "1", "true", "yes"})
 _FALSY = frozenset({"never", "0", "false", "no"})
 
 
 def resolve_store_backend(explicit: StoreBackend | None = None) -> StoreBackend:
-    """显式参数 > 环境变量 > ``memory``。取值非法时**立刻**炸。"""
+    """显式参数 > 环境变量 > ``sqlite``。取值非法时**立刻**炸。"""
     if explicit is not None:
         return explicit
-    raw = os.environ.get(STORE_BACKEND_ENV, "memory").strip().lower()
-    if raw not in ("memory", "postgres"):
-        raise ValueError(f"{STORE_BACKEND_ENV} must be 'memory' or 'postgres', got {raw!r}")
+    raw = os.environ.get(STORE_BACKEND_ENV, "sqlite").strip().lower()
+    if raw not in ("sqlite", "postgres", "memory"):
+        raise ValueError(
+            f"{STORE_BACKEND_ENV} must be 'sqlite', 'postgres' or 'memory', got {raw!r}"
+        )
     return raw  # type: ignore[return-value]
 
 
 def build_store(backend: StoreBackend | None = None, *, dsn: str | None = None) -> Store:
     """按 ``backend``（缺省读环境变量）产出一个 :class:`Store`。
 
-    ``postgres_store`` 是**惰性导入**：``memory`` 路径不该因为"没装 psycopg"而打不开，
-    反过来说选了 ``postgres`` 又没装驱动，应当在这里立刻炸（配错要现在就知道）。
+    ``sqlite``/``postgres`` 的实现都是**惰性导入**：选 ``memory`` 的人不该因为没装驱动而打不开；
+    反过来选了某个后端又缺依赖/缺路径，应当在这里立刻炸（配错要现在就知道）。
     """
-    if resolve_store_backend(backend) == "postgres":
+    resolved = resolve_store_backend(backend)
+    target = (dsn or os.environ.get(DATABASE_URL_ENV, "")).strip()
+    if resolved == "postgres":
         from .store_postgres import PostgresStore
 
-        return PostgresStore(dsn or os.environ.get(DATABASE_URL_ENV, ""))
+        return PostgresStore(target)
+    if resolved == "sqlite":
+        from .store_sqlite import SqliteStore
+
+        return SqliteStore(target or DEFAULT_SQLITE_PATH)
     return InMemoryStore()
 
 
 def store_backend_name(store: Store) -> StoreBackend:
     """如实上报当前用的是哪个 store（``/meta`` 用；前端据此说清"重启会不会丢"）。"""
-    return "postgres" if type(store).__name__ == "PostgresStore" else "memory"
+    name = type(store).__name__
+    if name == "PostgresStore":
+        return "postgres"
+    if name == "SqliteStore":
+        return "sqlite"
+    return "memory"
+
+
+def store_target_name(store: Store) -> str:
+    """给人看的**存储落点**（sqlite 是那个文件的绝对路径）。
+
+    部署的人应当能一眼回答"我的做题进度到底存哪儿了"——所以启动横幅与 ``/meta`` 都带上它，
+    而不是让人去猜。
+    """
+    path = getattr(store, "path", None)
+    if path is not None:
+        return str(Path(path).resolve())
+    return "（进程内，重启即失忆）" if store_backend_name(store) == "memory" else "（见 DSN）"
 
 
 def resolve_grading_backend(explicit: GradingBackend | None = None) -> GradingBackend:

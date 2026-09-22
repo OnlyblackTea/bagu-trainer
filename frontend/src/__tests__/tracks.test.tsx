@@ -38,6 +38,9 @@ function twoTrackBackend() {
       json: async () => body,
     })
 
+    if (url.startsWith('/attempts')) {
+      return json({ learner: 'deployer', attempts: [] })
+    }
     if (url === '/tracks') {
       return json([summary({ id: trackId }), summary({ id: OTHER, name: other.name })])
     }
@@ -129,7 +132,7 @@ describe('App · 多 Track 切换', () => {
       ),
     )
     // 报名也必须报进**当前** Track，否则学员会被报进另一个 Track 的 DAG。
-    await user.click(screen.getByRole('button', { name: /入学/ }))
+    await user.click(screen.getByTestId('enroll'))
     const enrollCall = fetchMock.mock.calls.find((c) => String(c[0]) === '/enrollments')
     expect(JSON.parse(String(enrollCall?.[1]?.body))).toEqual({
       learner: 'deployer',
