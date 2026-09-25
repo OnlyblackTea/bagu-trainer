@@ -1,10 +1,18 @@
-import type { DecisionOut, InstanceOut, ReviewOut, SubmissionOut } from '../types'
+import type {
+  DecisionOut,
+  GradingReportOut,
+  InstanceOut,
+  ReviewOut,
+  SubmissionOut,
+} from '../types'
 
 interface Props {
   instance: InstanceOut
   submission: SubmissionOut | null
   review: ReviewOut | null
   decision: DecisionOut | null
+  /** 这次判决所依据的阅卷报告——用来把"这条结论是不是桩给的"说清楚。 */
+  report: GradingReportOut | null
   busy: boolean
   onDecide: () => void
   onRetry: () => void
@@ -22,6 +30,7 @@ export function DecisionView({
   submission,
   review,
   decision,
+  report,
   busy,
   onDecide,
   onRetry,
@@ -34,6 +43,9 @@ export function DecisionView({
   const tampering = inputs?.tampering ?? []
   const tampered = tampering.length > 0
   const verdict = decision?.decision.verdict
+  // 报告自己的 provenance 说了它是不是桩——判词旁边必须写清，否则"我什么都没动却 pass 了"会被
+  // 读成"平台认为我写对了"（真发生过：桩按 scenario 给了预置绿）。
+  const simulatedEvidence = report?.provenance.host_env.simulated === true
   const title =
     verdict === 'pass'
       ? '通过：下一阶段已解锁'
@@ -74,6 +86,14 @@ export function DecisionView({
           data-testid="verdict"
         >
           <strong>{title}</strong>
+          {simulatedEvidence && (
+            <div className="muted" data-testid="stub-verdict" style={{ marginTop: 4 }}>
+              注意：这条结论的阅卷证据来自<strong>桩</strong>（主机环境标着 <code>simulated</code>）
+              ——它跟你的代码写没写、写得对不对<strong>没有关系</strong>，是预置的红绿。想要真结论，
+              让后端用 <code>--grading docker</code> 跑 Track 的 canonical 测试；想接着做这一题，
+              用右栏「重做这一题」（旧实例留档，重发一个）。
+            </div>
+          )}
           <div className="muted" style={{ marginTop: 4 }}>
             判据：阅卷 correctness = {String(inputs?.correctness_gate)} · 评审 ={' '}
             {inputs?.review_recommendation} · 证据信任 = {inputs?.evidence_trust} · 判定面改动 ={' '}

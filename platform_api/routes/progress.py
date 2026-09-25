@@ -179,6 +179,27 @@ def recent_attempts(
     }
 
 
+@router.post("/instances/{instance_id}/reissue")
+def reissue(instance_id: str, request: Request) -> dict[str, Any]:
+    """**重做这一题**：当前实例作废（``stale``，留档）+ 重发一个同版本的新实例。
+
+    为什么必须有这条：``retry`` 只从 ``failed`` 出发，而 ``passed`` 是终点、``submitted`` 也只能
+    往前走——"交卷后想接着改"、"这一关是误判/桩结果，我想真做一遍"在界面上没有任何出路（状态机
+    里 ``→ stale`` 是那些状态唯一的合法边，而 ``reissue`` 此前只在域里、没有路由）。原先的
+    ``stale`` 提示写着"用 reissue 重发新实例"，点下去却无处可点，等于把人指进死胡同。
+
+    返回 ``previous``（已作废的那个）与 ``instance``（新实例）：前端据此把选中项切到新实例，而不是
+    继续指着一个 stale 的实例操作。
+    """
+    instance = must_instance(request, instance_id)
+    bundle = bundle_for_instance(request, instance)
+    fresh = bundle.service.reissue_current(instance_id)
+    return {
+        "previous": instance_out(must_instance(request, instance_id)),
+        "instance": instance_out(fresh),
+    }
+
+
 @router.get("/instances/{instance_id}/history")
 def instance_history(instance_id: str, request: Request) -> dict[str, Any]:
     """该实例的**全部**尝试：提交 → 运行 → 报告 → 评审 → 判定，以及与上一次的比对（§11）。

@@ -28,6 +28,21 @@ import type {
 /** 自托管演练所的唯一用户（部署者本人）。 */
 const LEARNER = 'deployer'
 
+/**
+ * 同一 ticket 可能有多个实例（**重做/重发**后旧的留档成 `stale`）：只认活着的那一个。
+ *
+ * 取"第一个匹配"会把界面钉死在作废实例上——按钮全 409，而新实例就在列表里。全 stale 时退回最新
+ * 一个，好让看板仍显示"已作废"，而不是让那个阶段凭空消失。
+ */
+export function liveInstanceOf(
+  instances: InstanceOut[],
+  ticketId: string | null | undefined,
+): InstanceOut | undefined {
+  if (!ticketId) return undefined
+  const mine = instances.filter((i) => i.ticket_id === ticketId)
+  return mine.find((i) => i.state !== 'stale') ?? mine[mine.length - 1]
+}
+
 /** 轮询间隔。桩是瞬时的，真阅卷几十秒——700ms 既不刷爆后端，也不会让人觉得卡住。 */
 const POLL_MS = 700
 
@@ -47,9 +62,19 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** 「重做这一题」是作废性动作，走两步：先出确认块，再执行。 */
+  const [confirmReissue, setConfirmReissue] = useState(false)
 
+  /**
+   * 这个阶段当前该操作哪个实例。
+   *
+   * 同一个 ticket 可以同时存在多个实例——**重做/重发**之后旧的会留档成 `stale`。所以不能"取第一个
+   * 匹配 ticket 的"：那会把界面永久钉在那个已经作废的实例上（点任何按钮都是 409），而新实例明明
+   * 就在列表里。规则：非 stale 的那个优先；全 stale 时退回最新的一个（让看板还能显示"已作废"，
+   * 而不是凭空少一个阶段）。
+   */
   const instanceOf = (stage: StageEntry): InstanceOut | undefined =>
-    instances.find((i) => i.ticket_id === stage.ticket_id)
+    liveInstanceOf(instances, stage.ticket_id)
 
   /** 所有动作都走这里：统一 busy / 错误呈现（短码已在 api 层翻成人话）。 */
   async function run(fn: () => Promise<void>) {
@@ -147,6 +172,25 @@ export default function App() {
     setSelected(stage)
     setNotice(null)
     setError(null)
+    setConfirmReissue(false)
+  }
+
+  /**
+   * 重做这一题：把当前实例作废（留档）+ 领一个新实例。
+   *
+   * 刷新后 `instanceOf` 会自动指向新实例（它不 stale），所以**不需要**在这里改选中项；旧实例的
+   * 提交/报告/判定仍留在它的历史里（`HistoryView` 按实例 id 取，选中新实例就看新实例）。
+   */
+  function reissueInstance(instanceId: string, trackId: string) {
+    void run(async () => {
+      const out = await api.reissue(instanceId)
+      clearChain()
+      await refreshInstances(trackId)
+      setNotice(
+        `已重发 ${out.instance.id}（从该阶段初始态重新开始）；` +
+          `${out.previous.id} 留档为「已作废」，它的提交与报告仍可查。`,
+      )
+    })
   }
 
   const current = selected ? instanceOf(selected) : undefined
@@ -249,6 +293,7 @@ export default function App() {
                     submission={submission}
                     review={review}
                     decision={decision}
+                    report={report}
                     busy={busy}
                     onDecide={() =>
                       run(async () => {
@@ -319,6 +364,45 @@ export default function App() {
                 工单 v{current.ticket_version} · 测试 v{current.test_version} · 引擎锚{' '}
                 {current.engine_version}
               </p>
+              {current.state === 'stale' ? (
+                <p className="muted">这个实例已作废（重做过或内容漂移）——去下面选新发的那个。</p>
+              ) : confirmReissue ? (
+                <div className="hint-block" data-testid="reissue-confirm">
+                  <p className="muted">
+                    重做会把 <code>{current.id}</code> 作废（留档，提交与报告都还在历史里），并重发一个
+                    同版本的新实例，从该阶段的初始态重新开始。你自己登记的 workspace 目录会被继承。
+                  </p>
+                  <div className="row">
+                    <button
+                      className="primary"
+                      data-testid="reissue-confirm-yes"
+                      disabled={busy}
+                      onClick={() => {
+                        setConfirmReissue(false)
+                        reissueInstance(current.id, t.id)
+                      }}
+                    >
+                      确认重做
+                    </button>
+                    <button
+                      data-testid="reissue-confirm-no"
+                      disabled={busy}
+                      onClick={() => setConfirmReissue(false)}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  data-testid="reissue"
+                  title="交卷后想接着改、或这一关的结论不算数（桩/误判）时用它"
+                  disabled={busy}
+                  onClick={() => setConfirmReissue(true)}
+                >
+                  重做这一题
+                </button>
+              )}
             </section>
           )}
 

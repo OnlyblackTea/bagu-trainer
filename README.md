@@ -66,12 +66,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 315 passed, 14 skipped
+.venv/Scripts/python.exe -m pytest -q        # 320 passed, 14 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，112 passed
+npm test                                      # vitest + RTL，115 passed
 npx playwright test                           # 真浏览器 + 真后端，3 passed
 ```
 
@@ -187,6 +187,12 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 - **耗时优先取运行记录**：它含"重置基础设施"那一段，而那正是"阅卷为什么这么慢"的答案
   （实测 103 秒里 93.6 秒在重置容器）。报告里的 `duration_s` 只是 maven 那一段，故只作兜底。
 - 前端的历史面板列出每次尝试，可展开看那次的报告，并显示与上一次的差异。
+- **重做这一题**（`POST /instances/{id}/reissue`，"当前实例"卡片里的按钮）：交卷之后才发现想接着改、
+  或者这一关的结论不算数（桩给的、误判）时用它。状态机里 `retry` 只从 `failed` 出发、`passed` 是
+  终点、`submitted` 也只能往前走——`→ stale` 是那些状态**唯一**的合法边，所以这条不是便利功能，
+  是出路。旧实例留档为 `stale`（提交/报告/判定仍在历史里），新实例按该 ticket 当前版本重锚、回到
+  初始态；**你自己登记的 workspace 目录会被继承**（代码就在那儿），而**已经解锁的下一关不会被收回**
+  （解锁是单调的，你可能已经在下一关干活了）。
 
 > [!NOTE]
 > **重启后的三种口径**，都不编：

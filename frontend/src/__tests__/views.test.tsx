@@ -248,6 +248,7 @@ describe('DecisionView（屏幕 5）', () => {
         instance={makeInstance({ state: 'in_progress' })}
         submission={null}
         review={null}
+        report={null}
         decision={null}
         busy={false}
         onDecide={() => {}}
@@ -265,6 +266,7 @@ describe('DecisionView（屏幕 5）', () => {
         instance={makeInstance({ state: 'grading' })}
         submission={submission}
         review={review}
+        report={null}
         decision={null}
         busy={false}
         onDecide={onDecide}
@@ -281,6 +283,7 @@ describe('DecisionView（屏幕 5）', () => {
         instance={makeInstance({ state: 'passed' })}
         submission={submission}
         review={review}
+        report={null}
         decision={decision('pass')}
         busy={false}
         onDecide={() => {}}
@@ -300,6 +303,7 @@ describe('DecisionView（屏幕 5）', () => {
         instance={makeInstance({ state: 'failed' })}
         submission={submission}
         review={review}
+        report={null}
         decision={decision('fail')}
         busy={false}
         onDecide={() => {}}
@@ -317,6 +321,7 @@ describe('DecisionView（屏幕 5）', () => {
         instance={makeInstance({ state: 'passed' })}
         submission={submission}
         review={review}
+        report={null}
         decision={decision('pass')}
         busy={false}
         onDecide={() => {}}
@@ -332,6 +337,7 @@ describe('DecisionView（屏幕 5）', () => {
         instance={makeInstance({ state: 'failed' })}
         submission={submission}
         review={review}
+        report={null}
         decision={decision('fail', [
           'src/test/java/com/devteam/seckill/stage01/ProductQueryIndexAcceptanceTest.java',
         ])}
@@ -349,5 +355,60 @@ describe('DecisionView（屏幕 5）', () => {
     expect(box).toHaveTextContent('绿也不算绿')
     expect(box).toHaveTextContent('ProductQueryIndexAcceptanceTest.java')
     expect(box).toHaveTextContent(/git checkout/)
+  })
+
+  it('桩阅卷给出的 pass 必须自曝：结论跟你的代码无关', () => {
+    // 真发生过：学员"什么都没改"提交后看见 pass，以为自己写对了——那是桩按 scenario 给的预置绿，
+    // 而状态机没有回退边，于是他既误解了结论又没法接着做。
+    render(
+      <DecisionView
+        instance={makeInstance({ state: 'passed' })}
+        submission={submission}
+        review={review}
+        report={{
+          submission_id: 'sub-1',
+          ticket: 'db-stage-00',
+          ticket_version: 1,
+          test_version: 1,
+          engine_version: 'a-prime-0.1.0',
+          learner: 'deployer',
+          provenance: {
+            generated_at: '2026-09-10T00:00:00Z',
+            generated_by: 'stub-grading/a-prime',
+            host_env: { simulated: true },
+            runner_trust: 'self',
+          },
+          correctness: { test_group: 'stage00', passed: true, tests: [] },
+          performance: null,
+          lint: {},
+          files_changed: [],
+          out_of_scope_edits: [],
+        }}
+        decision={decision('pass')}
+        busy={false}
+        onDecide={() => {}}
+        onRetry={() => {}}
+      />,
+    )
+    const note = screen.getByTestId('stub-verdict')
+    expect(note).toHaveTextContent('桩')
+    expect(note).toHaveTextContent(/没有关系/)
+    expect(note).toHaveTextContent(/--grading docker/)
+  })
+
+  it('真阅卷（simulated=false）不贴那句警告', () => {
+    render(
+      <DecisionView
+        instance={makeInstance({ state: 'passed' })}
+        submission={submission}
+        review={review}
+        report={null}
+        decision={decision('pass')}
+        busy={false}
+        onDecide={() => {}}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.queryByTestId('stub-verdict')).not.toBeInTheDocument()
   })
 })

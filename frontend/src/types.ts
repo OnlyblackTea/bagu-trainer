@@ -146,6 +146,14 @@ export interface DiffOut {
   sync: WorkspaceSyncOut | null
 }
 
+/** `POST /instances/{id}/reissue`：重做这一题——旧实例作废（留档）+ 新实例。 */
+export interface ReissueOut {
+  /** 已被作废的那个（`stale`）：它的提交/报告/判定都还在历史里。 */
+  previous: InstanceOut
+  /** 新铸的实例（回到 DAG 初始态，锚在该 ticket 当前版本上）。 */
+  instance: InstanceOut
+}
+
 export interface PullRequestOut {
   pr_url: string
   simulated: boolean

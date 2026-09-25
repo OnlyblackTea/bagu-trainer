@@ -112,6 +112,22 @@ function fakeBackend() {
       return json(instances.find((i) => i.id === start[1]))
     }
 
+    // 重做这一题：旧实例留档成 stale，新铸一个回初始态（与后端 §9.2 同形）。
+    const reissue = url.match(/^\/instances\/([^/]+)\/reissue$/)
+    if (reissue && method === 'POST') {
+      const old = instances.find((i) => i.id === reissue[1])
+      if (!old || old.state === 'stale') return json({ detail: 'illegal_transition' }, 409)
+      withInstance(old.id, { state: 'stale', gate: '已作废（版本漂移）：用 reissue 重发新实例。' })
+      const fresh = makeInstance({
+        id: `ti-${instances.length}`,
+        ticket_id: old.ticket_id,
+        state: 'available',
+        gate: '可开始：start 本实例。',
+      })
+      instances = [...instances, fresh]
+      return json({ previous: { ...old, state: 'stale' }, instance: fresh })
+    }
+
     const submit = url.match(/^\/instances\/([^/]+)\/submit\?scenario=(pass|fail)$/)
     if (submit && method === 'POST') {
       gradingPassed = submit[2] === 'pass'
@@ -346,6 +362,34 @@ describe('App 装配：跑通整条自习闭环', () => {
     await waitFor(() => expect(within(board()).getByText('开发中')).toBeInTheDocument())
     // retry 后清空旧结论，避免拿上一次的提交/结论糊弄人
     expect(screen.queryByTestId('verdict')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('submission-info')).not.toBeInTheDocument()
+  })
+
+  it('重做这一题：交卷后也能回到能开发的状态，界面切到新实例而不是作废的那个', async () => {
+    // 用户的真实处境：submitted/passed 之后状态机没有回退边（retry 只从 failed 出发），
+    // 于是"交卷了才发现想接着改"在界面上无处可点。这条钉住那条唯一的出路，以及**别把界面钉在
+    // 作废实例上**（同 ticket 多实例时 instanceOf 必须挑活着的那个）。
+    vi.stubGlobal('fetch', vi.fn(fakeBackend()))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByTestId('enroll'))
+    await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
+    await user.click(screen.getByRole('button', { name: '开始本阶段' }))
+    await user.selectOptions(screen.getByTestId('grading-scenario'), 'pass')
+    await user.click(screen.getByRole('button', { name: /提交（跑阅卷桩）/ }))
+    await waitFor(() => expect(within(board()).getByText('已提交')).toBeInTheDocument())
+    // 此刻他已经无法再提交（状态机只允许 submitted → grading/passed/failed）
+    expect(screen.getByTestId('instance-status')).toHaveTextContent('ti-0')
+
+    await user.click(screen.getByTestId('reissue'))
+    await user.click(screen.getByTestId('reissue-confirm-yes'))
+
+    await waitFor(() => expect(within(board()).getByText('可开始')).toBeInTheDocument())
+    const status = await screen.findByTestId('instance-status')
+    expect(status).toHaveTextContent('ti-2') // 新实例
+    expect(status).not.toHaveTextContent('ti-0') // 不是被作废的那个
+    // 旧结论（提交/报告/判定）不再挂在当前实例上
     expect(screen.queryByTestId('submission-info')).not.toBeInTheDocument()
   })
 

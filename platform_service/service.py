@@ -305,6 +305,40 @@ class PlatformService:
         self._store.save_instance(instance)
         return instance
 
+    def reissue_current(self, instance_id: str) -> TicketInstance:
+        """学员主动"重做这一题"：把当前实例作废（``stale``，留档）并重发一个同版本的新实例。
+
+        为什么需要这条：状态机里 ``retry`` 只从 ``failed`` 出发，而 ``passed`` 是终点、``submitted``
+        也只能往前走——"交卷之后才发现还想接着改"或者"这一关是误判/桩结果，我想真的做一遍"都没有
+        回退边。``→ stale`` 是那些状态**唯一**的合法出路（§9.2），而域里本来就有 ``reissue``（版本
+        漂移时用），只是从没开给学员。这里把它开成学员能主动做的动作。
+
+        三条刻意如此的性质：
+
+        * **留档**：旧实例只是 ``stale``，它的提交/报告/判定都还在历史里，不是删除；
+        * **同版本重锚**：新实例按该 ticket **当前**的 ``ticket_version`` / ``test_version`` 与引擎
+          锚重新铸造，回到 DAG 派生的初始态（该锁的还是锁着）；
+        * **不收回已解锁的后继阶段**：解锁是单调的（§9.2），重做前一关不会把已解锁的下一关收回去。
+          这是有意的——学员可能已经在下一关干了活，平台不该把他的进度吃掉。
+        """
+        instance = self._must_get_instance(instance_id)
+        ticket = self._tickets[instance.ticket_id]
+        old, fresh = reissue_instance(
+            instance,
+            new_id=self._next_id("ti"),
+            ticket_version=ticket.identity.ticket_version,
+            test_version=ticket.grader.correctness.test_version,
+            engine_version=self._engine_version,
+            state=initial_state(instance.ticket_id, self._prereq_graph),
+        )
+        if instance.workspace_path:
+            # 学员自己登记的目录要**继承**：他的代码就在那儿，重做不该把他踢去一个空目录。
+            # （平台自己准备的工作区按新实例 id 重新 clone，那是"新一次尝试"该有的样子。）
+            fresh = fresh.model_copy(update={"workspace_path": instance.workspace_path})
+        self._store.save_instance(old)
+        self._store.save_instance(fresh)
+        return fresh
+
     def recent_attempts(self, learner: str, *, limit: int = 8) -> list[AttemptSummary]:
         """这位学员在本 Track 下**最近**的几次提交，最新的在前（跨实例）。
 

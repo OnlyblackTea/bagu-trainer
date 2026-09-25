@@ -290,3 +290,78 @@ def test_review_unknown_submission_404(client: Any) -> None:
 
 def test_decide_unknown_submission_404(client: Any) -> None:
     assert client.post("/submissions/nope/decide").status_code == 404
+
+
+# --- 重做这一题（reissue）：交卷后想接着改／结论不算数时的唯一出路 ------------------
+
+
+def test_reissue_stales_the_old_instance_and_mints_a_fresh_one(
+    client: Any, submit_and_wait: Any
+) -> None:
+    """``retry`` 只从 ``failed`` 出发，``passed`` 是终点、``submitted`` 也只能往前走——
+    "交卷之后才发现还想接着改"必须有一条路，否则学员被永久钉死在一个他无法再操作的实例上。"""
+    iid = _stage00(client)
+    submit_and_wait(client, iid, scenario="pass")  # 停在 submitted（桩立刻答完）
+
+    r = client.post(f"/instances/{iid}/reissue")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["previous"]["id"] == iid and body["previous"]["state"] == "stale"
+    fresh = body["instance"]
+    assert fresh["id"] != iid and fresh["ticket_id"] == "db-stage-00"
+    # 新实例回到 DAG 派生的初始态：可以重新开始（这里 stage-00 无前置 ⇒ available）
+    assert fresh["state"] == "available"
+    assert fresh["ticket_version"] == body["previous"]["ticket_version"]
+    # 旧实例没有被删掉：它的提交与报告仍在（留档），而且**新实例不背旧链**
+    assert client.get(f"/instances/{iid}").json()["state"] == "stale"
+    old_hist = client.get(f"/instances/{iid}/history").json()
+    assert len(old_hist["attempts"]) == 1
+    assert client.get(f"/instances/{fresh['id']}/history").json()["attempts"] == []
+    # 新实例能真的接着开发（这是这条路由存在的全部意义）
+    assert client.post(f"/instances/{fresh['id']}/start").json()["state"] == "in_progress"
+
+
+def test_reissue_keeps_the_registered_workspace(client: Any, tmp_path: Any) -> None:
+    """学员自己登记的 workspace 目录要**继承**：他的代码就在那儿，重做不该把他踢去一个空目录。"""
+    import subprocess
+
+    iid = _stage00(client)
+    own = tmp_path / "my-own-workspace"
+    own.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=own, check=True)
+    client.post(f"/instances/{iid}/workspace", json={"path": str(own)})
+
+    fresh = client.post(f"/instances/{iid}/reissue").json()["instance"]
+
+    assert fresh["workspace_path"] == str(own)
+
+
+def test_reissue_does_not_relock_already_unlocked_stages(client: Any, submit_and_wait: Any) -> None:
+    """解锁是单调的：重做前一关不该把已经解锁的下一关收回去（学员可能已经在下一关干活了）。"""
+    iid = _stage00(client)
+    sub = submit_and_wait(client, iid, scenario="pass")
+    client.post(f"/submissions/{sub['id']}/review", params={"scenario": "approve"}, json={})
+    states = {
+        i["ticket_id"]: i["state"]
+        for i in client.post(f"/submissions/{sub['id']}/decide").json()["instances"]
+    }
+    assert states["db-stage-00"] == "passed" and states["db-stage-01"] == "available"
+
+    client.post(f"/instances/{iid}/reissue")
+
+    after = {
+        i["ticket_id"]: i["state"]
+        for i in client.get("/instances", params={"learner": "deployer"}).json()
+    }
+    assert after["db-stage-01"] == "available"  # 没收回去
+
+
+def test_reissue_of_an_already_stale_instance_is_409(client: Any) -> None:
+    iid = _stage00(client)
+    assert client.post(f"/instances/{iid}/reissue").status_code == 200
+    again = client.post(f"/instances/{iid}/reissue")
+    assert again.status_code == 409 and again.json()["detail"] == "illegal_transition"
+
+
+def test_reissue_unknown_instance_404(client: Any) -> None:
+    assert client.post("/instances/nope/reissue").status_code == 404

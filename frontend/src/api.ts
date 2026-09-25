@@ -20,6 +20,7 @@ import type {
   InstanceOut,
   MetaOut,
   PullRequestOut,
+  ReissueOut,
   ReviewOut,
   ReviewScenario,
   SubmitAcceptedOut,
@@ -363,4 +364,14 @@ export const api = {
     }),
   retry: (instanceId: string) =>
     request<InstanceOut>(`/instances/${encodeURIComponent(instanceId)}/retry`, { method: 'POST' }),
+  /**
+   * 重做这一题：当前实例作废（`stale`，留档）+ 重发一个同版本的新实例。
+   *
+   * 状态机里 `retry` 只从 `failed` 出发，而 `passed` 是终点、`submitted` 也只能往前走——"交卷之后
+   * 才发现还想接着改"或"这一关是误判/桩结果，我想真做一遍"只有这一条出路。
+   */
+  reissue: (instanceId: string) =>
+    request<ReissueOut>(`/instances/${encodeURIComponent(instanceId)}/reissue`, {
+      method: 'POST',
+    }),
 }
