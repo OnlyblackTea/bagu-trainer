@@ -24,7 +24,9 @@ services:
     environment:
       # ROOT_URL 决定 clone_url / PR 链接长什么样，所以它必须是**浏览器与容器都能访问**的地址。
       # 写成 127.0.0.1 的话：容器里那是它自己，provision 的 clone 会超时（真踩过）。
-      GITEA__server__ROOT_URL: "${BAGU_PUBLIC_URL}/"
+      # `:?` 是故意的：.env 缺失时**立刻失败并说明原因**，而不是拿默认值把 Gitea 重建成一个
+      # ROOT_URL 为空的实例——那样整栈"看起来在跑"，clone_url 却是坏的（也真踩过）。
+      GITEA__server__ROOT_URL: "${BAGU_PUBLIC_URL:?请先创建 deploy/.env（见 .env.example），并设置 BAGU_PUBLIC_URL}/"
       GITEA__server__HTTP_PORT: "3000"
       GITEA__database__DB_TYPE: sqlite3
       GITEA__database__PATH: /data/gitea/gitea.db
@@ -67,7 +69,7 @@ services:
     restart: "no"
     entrypoint: ["python", "-m", "platform_api.track_loader"]
     environment:
-      BAGU_GITEA_URL: "${BAGU_PUBLIC_URL}"
+      BAGU_GITEA_URL: "${BAGU_PUBLIC_URL:?deploy/.env 里必须有 BAGU_PUBLIC_URL}"
       BAGU_CONTENT_DIR: /content
       BAGU_SECRETS_DIR: /run/bagu
       BAGU_TRACK_OWNER: "${TRACK_OWNER:-trackowner}"
@@ -81,7 +83,7 @@ services:
       BAGU_FORK_RESET: "${BAGU_FORK_RESET:-0}"
     volumes:
       # 内容仓**只读**挂进来：loader 只 push，绝不改你的内容。
-      - "${CONTENT_DIR:-../seckill-lab}:/content:ro"
+      - "${CONTENT_DIR:?deploy/.env 里必须有 CONTENT_DIR（Track 内容仓的路径）}:/content:ro"
       - secrets:/run/bagu
     depends_on:
       gitea:
@@ -97,7 +99,7 @@ services:
     restart: unless-stopped
     environment:
       BAGU_FORGE: "${FORGE:-gitea}"
-      BAGU_GITEA_URL: "${BAGU_PUBLIC_URL}"
+      BAGU_GITEA_URL: "${BAGU_PUBLIC_URL:?deploy/.env 里必须有 BAGU_PUBLIC_URL}"
       BAGU_GITEA_UPSTREAM: "${TRACK_OWNER:-trackowner}/${TRACK_NAME:-seckill-lab}"
       BAGU_GITEA_OWNER: "${LEARNER:-deployer}"
       BAGU_SECRETS_DIR: /run/bagu
@@ -112,7 +114,7 @@ services:
       # 后端自己要读 track.yaml / stages/*/ticket.yaml —— 内容**只读**挂进来（只读也保证了
       # 平台不可能去改你的内容仓）。漏了这一条，后端会在启动时直接死：
       # "file not found: /content/track.yaml"（真踩过）。
-      - "${CONTENT_DIR:-../seckill-lab}:/content:ro"
+      - "${CONTENT_DIR:?deploy/.env 里必须有 CONTENT_DIR（Track 内容仓的路径）}:/content:ro"
     ports:
       - "${PLATFORM_PORT:-8000}:8000"
     command:

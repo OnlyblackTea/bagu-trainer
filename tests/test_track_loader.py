@@ -10,6 +10,7 @@ HTTP 用 respx 拦；git 用真的临时仓库（分支名这种东西不该被 
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from platform_api.track_loader import (
     LoaderConfig,
     LoadError,
     delete_repo,
+    ensure_default_branch,
     ensure_fork,
     ensure_repo,
     ensure_user,
@@ -32,6 +34,7 @@ from platform_api.track_loader import (
     mint_token,
     push_all_branches,
     remote_branches,
+    token_for,
     token_push_url,
     valid_token,
     wait_for_admin,
@@ -252,6 +255,72 @@ def test_valid_token_answers_false_instead_of_raising() -> None:
 
 
 @respx.mock
+def test_token_for_reuses_a_stored_token_instead_of_minting_a_duplicate(tmp_path: Path) -> None:
+    """重启栈时**不能**再造一枚：Gitea 不允许同名令牌，第二次 up 会 400 直接把栈卡死。
+
+    真机症状：`access token name has been used already` → track-loader 退出非 0 →
+    platform 起不来。（只有"每次都清卷"的验证方式才看不出这个 bug。）
+    """
+    path = tmp_path / "secrets" / "gitea-token"
+    path.parent.mkdir(parents=True)
+    path.write_text("stored-token\n", encoding="utf-8")
+
+    user_route = respx.get(f"{GITEA}/api/v1/user").mock(
+        return_value=httpx.Response(200, json={"login": "deployer"})
+    )
+    mint_route = respx.post(f"{GITEA}/api/v1/users/deployer/tokens").mock(
+        return_value=httpx.Response(201, json={"sha1": "fresh"})
+    )
+
+    token, reused = token_for(GITEA, "deployer", "pw", "track-loader", path=path)
+
+    assert (token, reused) == ("stored-token", True)
+    assert user_route.called and not mint_route.called
+
+
+@respx.mock
+def test_token_for_mints_a_uniquely_named_token_when_the_stored_one_is_dead(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "secrets" / "gitea-token"
+    path.parent.mkdir(parents=True)
+    path.write_text("stale-token\n", encoding="utf-8")
+    respx.get(f"{GITEA}/api/v1/user").mock(return_value=httpx.Response(401, json={}))
+    mint_route = respx.post(f"{GITEA}/api/v1/users/deployer/tokens").mock(
+        return_value=httpx.Response(201, json={"sha1": "fresh-token"})
+    )
+
+    token, reused = token_for(GITEA, "deployer", "pw", "track-loader", path=path)
+
+    assert (token, reused) == ("fresh-token", False)
+    # 名字带时间戳：免得撞上 Gitea 里残留的同名令牌
+    sent = json.loads(mint_route.calls[0].request.content.decode())
+    assert sent["name"].startswith("track-loader-")
+    assert sent["name"] != "track-loader"
+    assert path.read_text(encoding="utf-8").strip() == "fresh-token"
+
+
+@respx.mock
+def test_ensure_default_branch_pins_it_and_skips_when_already_right() -> None:
+    """默认分支必须钉在 main：Gitea 会把"空"仓的第一条推送设成默认分支，
+    而学员第一次推的正是 dev——之后 dev 就删不掉了（重开一题会被拒）。"""
+    respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
+        return_value=httpx.Response(200, json={"default_branch": "main"})
+    )
+    patch = respx.patch(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    assert ensure_default_branch(GITEA, "TOK", "deployer", "seckill-lab", "main") is False
+    assert not patch.called
+
+    respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
+        return_value=httpx.Response(200, json={"default_branch": "_probe"})
+    )
+    assert ensure_default_branch(GITEA, "TOK", "deployer", "seckill-lab", "main") is True
+    assert json.loads(patch.calls[0].request.content.decode()) == {"default_branch": "main"}
+
+
+@respx.mock
 def test_delete_repo_tolerates_a_missing_repo() -> None:
     respx.delete(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
         return_value=httpx.Response(404, json={})
@@ -293,7 +362,7 @@ def test_load_track_pushes_upstream_before_creating_the_fork(
         return_value=httpx.Response(200, json={})
     )
     respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
-        return_value=httpx.Response(200, json={})
+        return_value=httpx.Response(200, json={"default_branch": "main"})
     )
 
     def fake_push(content_dir: Path, push_url: str, *, force: bool = True) -> list[str]:
@@ -367,7 +436,7 @@ def test_load_track_backfills_an_old_fork_and_fails_loudly_if_it_cannot(
         return_value=httpx.Response(200, json={})
     )
     respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
-        return_value=httpx.Response(200, json={})
+        return_value=httpx.Response(200, json={"default_branch": "main"})
     )
     monkeypatch.setattr(
         "platform_api.track_loader.token_push_url",

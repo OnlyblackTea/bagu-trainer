@@ -30,15 +30,18 @@ gitea(healthy) ─────────────────────�
 | `platform` | 后端（`depends_on: track-loader: service_completed_successfully`） | 保证"Gitea 里已经有它要 clone 的阶段分支"再开始接客 |
 | `web` | nginx：SPA + REST 反代 | 后端是**纯 REST**，不托管前端；少了它 `up` 完没有浏览器入口 |
 
-## 三个必须知道的约束
+## 四条约束
 
-1. **`BAGU_PUBLIC_URL` 要写局域网地址，不能写 `127.0.0.1`。** 它决定 Gitea 返回的 `clone_url` 与
+1. **`deploy/.env` 必须有**（`cp .env.example .env`）。缺了它 compose 会**直接报错**，而不是拿默认值
+   起一个坏栈——这条是踩出来的：曾有一次 `.env` 丢了，Gitea 被重建成 `ROOT_URL` 为空的实例，整栈
+   "看起来在跑"却 clone 不了。校验写在 compose 的 `${VAR:?}` 里。
+2. **`BAGU_PUBLIC_URL` 要写局域网地址，不能写 `127.0.0.1`。** 它决定 Gitea 返回的 `clone_url` 与
    PR 链接；容器里的 `127.0.0.1` 是容器自己。写成 localhost 的症状是 `provision` 时 git clone
    一直超时（loader 启动时会为此打一条 `!!` 警告）。这个地址要**浏览器和容器都连得上**。
-2. **内容仓必须有每个阶段的本地分支**（§C.5 一阶段一 ref）。loader 只推它看得见的：`git branch`
+3. **内容仓必须有每个阶段的本地分支**（§C.5 一阶段一 ref）。loader 只推它看得见的：`git branch`
    里有几条，Gitea 里就有几条。换机器时用 `git bundle create x.bundle --all` 打包再克隆——
    本地分支才是内容的全部（GitHub 上往往只有 `main`）。
-3. **`BAGU_FORK_RESET=1` 是破坏性的**：删掉学员的 fork 再重建，`dev` 分支与历史 PR 一起没。
+4. **`BAGU_FORK_RESET=1` 是破坏性的**：删掉学员的 fork 再重建，`dev` 分支与历史 PR 一起没。
    它的用处正是"把 dev 上不该有的东西（比如一份参考解）清掉，换一个干净起点"。默认 0。
 
 ## 真阅卷（可选）
@@ -66,6 +69,28 @@ Track 的基础设施（MySQL/Redis）由 compose 起，而那个守护进程在
 
 所以本仓一律**以 git 为准**判断分支在不在：`track_loader` 用 `git ls-remote` 等 fork 就绪并核对
 分支数，`provision` 走的也是 git。别拿 Gitea 的 `/branches` 去判断"阶段分支有没有载入"。
+
+## 学员怎么 push（第一次一定会遇到）
+
+平台**刻意不碰你自己机器上的 git 凭据**（§C.5），而 Gitea 的 HTTP push 需要认证——所以你在自己
+机器上 clone 出来的那份工作区，第一次 `git push` 会要账号密码。这不是故障，是缺一步配置。两种给法：
+
+```bash
+# ① 用学员账号（.env 里的 BAGU_LEARNER_PASSWORD，默认 deployer123）
+git config --global credential.helper store     # 可选：让 git 记住
+git push -u origin dev                          # 提示时输 deployer / deployer123
+
+# ② 用令牌（不想给密码时）——令牌是 loader 交给后端的那枚
+docker compose exec platform cat /run/bagu/gitea-token
+git remote set-url origin "http://deployer:$(docker compose exec -T platform cat /run/bagu/gitea-token | tr -d '\r\n')@<BAGU_PUBLIC_URL 的主机>/deployer/<TRACK_NAME>.git"
+```
+
+> 与"后端本机工作区"那条路的区别：如果工作区在**后端那台机器上**（拓扑 A/C），`provision` 会在
+> **那个工作区里**装好 repo-local 的 `credential.helper`（令牌放在仓库外的 0600 文件里），
+> 于是 `git push` 开箱可用。compose 栈里工作区在容器内，你在自己机器上 clone 的那份自然没有凭据。
+
+默认分支被钉在 `main`：Gitea 会把它认为「空」的仓的**第一条推送**设成默认分支，而学员第一次推的
+正是 `dev`——不钉住的话 `dev` 之后删都删不掉（重开一题会被拒）。loader 在 fork 就绪后会校正它。
 
 ## 常用操作
 

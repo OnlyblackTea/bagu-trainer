@@ -22,4 +22,4 @@ services:
       # 绑定挂载（不是命名卷）：见上面第 3 条——compose 文件里的相对路径要按宿主机解析。
       - "${BAGU_DATA_DIR:-./data}:/var/lib/bagu"
       - secrets:/run/bagu:ro
-      - "${CONTENT_DIR:-../seckill-lab}:/content:ro"
+      - "${CONTENT_DIR:?deploy/.env 里必须有 CONTENT_DIR}:/content:ro"

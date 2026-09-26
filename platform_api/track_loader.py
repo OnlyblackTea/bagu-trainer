@@ -47,6 +47,8 @@ DEFAULT_LEARNER_PASSWORD = "deployer123"
 
 #: 令牌落点（compose 用一个共享卷把它交给后端容器）。
 TOKEN_FILENAME = "gitea-token"
+#: 内容所有者那枚令牌的落点。只给 loader 自己用（建仓、推分支），后端不需要它。
+OWNER_TOKEN_FILENAME = "gitea-owner-token"
 
 
 class LoadError(RuntimeError):
@@ -76,6 +78,10 @@ class LoaderConfig:
     @property
     def token_path(self) -> Path:
         return self.secrets_dir / TOKEN_FILENAME
+
+    @property
+    def owner_token_path(self) -> Path:
+        return self.secrets_dir / OWNER_TOKEN_FILENAME
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> LoaderConfig:
@@ -221,6 +227,29 @@ def mint_token(gitea_url: str, user: str, password: str, name: str) -> str:
     return token
 
 
+def token_for(
+    gitea_url: str, user: str, password: str, name: str, *, path: Path
+) -> tuple[str, bool]:
+    """拿一枚**能用的**令牌，并把它存在 ``path``；返回 ``(token, 是否复用了旧的)``。
+
+    为什么必须"先试旧的"：Gitea 不允许同名令牌，而 loader 每次 ``compose up`` 都会跑。
+    固定名字 + 每次都造 = 第二次启动直接 400 ``access token name has been used already``，
+    于是 ``track-loader`` 退出非 0，``platform`` 起不来——**重启整个栈都会失败**。
+    （这不是假想：`docker compose up` 在没清卷的栈上就是这么挂的。）
+
+    旧令牌不可用（Gitea 数据被清过）时才造新的，名字带时间戳，免得再撞上一个残留同名令牌。
+    令牌越攒越多也是这个道理：能用就复用。
+    """
+    existing = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+    if valid_token(gitea_url, existing):
+        return existing, True
+    token = mint_token(gitea_url, user, password, f"{name}-{int(time.time())}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    return token, False
+
+
 def ensure_repo(gitea_url: str, token: str, owner: str, name: str) -> bool:
     """确保 ``owner/name`` 存在（用 owner 自己的令牌建）。返回是否**新建**。"""
     with _client(gitea_url, token=token) as client:
@@ -272,6 +301,33 @@ def delete_branch(gitea_url: str, token: str, owner: str, name: str, branch: str
     with _client(gitea_url, token=token) as client:
         response = client.delete(f"/repos/{owner}/{name}/branches/{branch}")
         return response.status_code in (204, 200)
+
+
+def ensure_default_branch(
+    gitea_url: str, token: str, owner: str, name: str, branch: str
+) -> bool:
+    """把默认分支钉在 ``branch`` 上；改了才返回 ``True``。
+
+    为什么必须做：Gitea 会把它认为"空"的仓的**第一条被推上去的分支**设成默认分支。学员的第一次
+    ``git push -u origin dev`` 正好满足这个条件——于是 ``dev`` 变成默认分支，此后想删掉它
+    （重开一题、或换一条干净的 dev）会被 Gitea 以
+    ``Branch: dev is the default branch ... and cannot be deleted`` 拒绝。
+    （真踩过：我探权限用的 `_probe` 分支就是这么成了默认分支，删都删不掉。）
+    """
+    with _client(gitea_url, token=token) as client:
+        info = client.get(f"/repos/{owner}/{name}")
+        if info.status_code != 200:
+            return False
+        current = str(info.json().get("default_branch") or "")
+        if current == branch:
+            return False
+        response = client.patch(f"/repos/{owner}/{name}", json={"default_branch": branch})
+        if response.status_code not in (200, 201):
+            raise LoadError(
+                f"把 {owner}/{name} 的默认分支设成 {branch} 失败："
+                f"{response.status_code} {response.text[:200]}"
+            )
+        return True
 
 
 # --- git ---------------------------------------------------------------------------
@@ -407,10 +463,24 @@ def load_track(config: LoaderConfig, *, log=print) -> LoadResult:
         created = ensure_user(config.gitea_url, admin, user, password)
         log(f"   {user}: {'新建' if created else '已存在'}")
 
-    owner_token = mint_token(config.gitea_url, config.upstream_owner,
-                             config.owner_password, "track-loader-owner")
-    learner_token = mint_token(config.gitea_url, config.learner,
-                               config.learner_password, config.token_name)
+    owner_token, owner_reused = token_for(
+        config.gitea_url,
+        config.upstream_owner,
+        config.owner_password,
+        "track-loader-owner",
+        path=config.owner_token_path,
+    )
+    learner_token, learner_reused = token_for(
+        config.gitea_url,
+        config.learner,
+        config.learner_password,
+        config.token_name,
+        path=config.token_path,
+    )
+    log(
+        "   令牌：owner "
+        f"{'复用' if owner_reused else '新造'} · 学员 {'复用' if learner_reused else '新造'}"
+    )
 
     log("== 上游仓 + 载入阶段分支 ==")
     created = ensure_repo(
@@ -450,11 +520,15 @@ def load_track(config: LoaderConfig, *, log=print) -> LoadResult:
         )
     result.fork = f"{config.learner}/{config.upstream_name}"
     log(f"   {result.fork} 已就绪，git 确认有全部 {len(remote)} 条分支")
+    # 默认分支钉在 main：否则学员第一次推上去的 dev 会被 Gitea 当成默认分支，之后删不掉。
+    if ensure_default_branch(
+        config.gitea_url, learner_token, config.learner, config.upstream_name, "main"
+    ):
+        log("   默认分支已修正为 main（Gitea 会把它视为「空」的仓的第一条推送设为默认分支）")
 
     result.token_path = config.token_path
-    result.token_path.write_text(learner_token + "\n", encoding="utf-8")
-    result.token_path.chmod(0o600)
-    log(f"== 后端令牌写入 {result.token_path}")
+    result.token_reused = learner_reused
+    log(f"== 后端令牌：{result.token_path}（{'复用已有' if learner_reused else '本次新造'}）")
     return result
 
 
