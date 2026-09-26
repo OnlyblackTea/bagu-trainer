@@ -1,32 +1,19 @@
-# 后端镜像（platform_api）。compose 里同时被 `platform` 与 `track-loader` 两个服务复用：
-# 它们都要 python + git + httpx，只是 entrypoint 不同。
+# 后端镜像（platform_api）。compose 里 `platform` 与 `track-loader` 两个服务都用它，只是 entrypoint
+# 不同，所以这两个服务都要 python + git + httpx。
 #
-# 默认**不含**阅卷工具链：compose 栈开箱用的是桩阅卷。要在这个栈里真跑 maven（D3：阅卷跑在
-# "学员自己的机器"上，容器化后那台就是宿主机），用
-#   docker compose build --build-arg WITH_GRADING_TOOLCHAIN=1
-# 并叠加 deploy/docker-compose.grading.yml（它把 docker socket 与 JDK/Maven 需要的路径挂进来）。
-# 注意 socket = 宿主机的 root 等价权限，只在你自己的机器上这么做。
+# **两个 target**：
+#   * `lean`（默认）：桩阅卷，小（不含 JDK/Maven）。
+#   * `grading`：真阅卷——多一份 JDK17 + Maven + docker CLI/compose。由
+#     deploy/docker-compose.grading.yml 指定（那条命令同时提供 docker socket 与绑定挂载）。
+#
+# 工具链**从官方镜像拷**，不走 apt：apt 的包名/源在各 base 镜像上并不一致（实测
+# `openjdk-17-jdk-headless` 在某个 python:3.12-slim 上直接 "Unable to locate package"，
+# 而构建到一半失败留下的是一堆更难查的症状）。拷过来的东西版本确定、可复现。
 FROM python:3.12-slim AS base
-
-ARG WITH_GRADING_TOOLCHAIN=0
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-
-# 真阅卷要的三样：JDK17、Maven、docker CLI + compose v2 插件（Track 的基础设施由 compose 起）。
-# 版本钉住：compose 插件的下载地址是 GitHub release，浮动版本会让构建在某天突然不一样。
-ARG COMPOSE_VERSION=v2.29.7
-RUN if [ "$WITH_GRADING_TOOLCHAIN" = "1" ]; then \
-      apt-get update \
-      && apt-get install -y --no-install-recommends openjdk-17-jdk-headless maven docker.io \
-      && rm -rf /var/lib/apt/lists/* \
-      && mkdir -p /usr/local/lib/docker/cli-plugins \
-      && curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-$(dpkg --print-architecture)" \
-           -o /usr/local/lib/docker/cli-plugins/docker-compose \
-      && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
-      && docker compose version; \
-    fi
 
 WORKDIR /app
 
@@ -51,3 +38,24 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=12 \
   CMD curl -fsS http://127.0.0.1:8000/meta || exit 1
 
 ENTRYPOINT ["/usr/local/bin/bagu-entrypoint"]
+
+# 默认 target：桩阅卷，最小。
+FROM base AS lean
+
+# --- 工具链来源（只有构建 grading 目标时才会被拉取）--------------------------------
+# JDK17 + Maven：temurin 镜像里 JAVA_HOME=/opt/java/openjdk，Maven 在 /usr/share/maven。
+FROM maven:3.9-eclipse-temurin-17 AS jdk
+# docker CLI + compose v2 插件：Track 的基础设施（MySQL/Redis）由 `docker compose` 起，
+# 而守护进程在宿主机上（socket 由 compose 挂进来）。
+FROM docker:27-cli AS dockercli
+
+# 真阅卷。JDK/Maven/compose 三样齐全，构建时自检一次——宁可红在构建，也别红在阅卷。
+FROM base AS grading
+COPY --from=jdk /opt/java /opt/java
+COPY --from=jdk /usr/share/maven /usr/share/maven
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose \
+     /usr/local/lib/docker/cli-plugins/docker-compose
+ENV JAVA_HOME=/opt/java/openjdk
+ENV PATH=/opt/java/openjdk/bin:/usr/share/maven/bin:$PATH
+RUN java -version && mvn -v | head -1 && docker --version && docker compose version

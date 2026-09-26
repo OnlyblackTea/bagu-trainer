@@ -68,6 +68,8 @@ class LoaderConfig:
     owner_password: str = DEFAULT_TRACK_OWNER_PASSWORD
     learner_password: str = DEFAULT_LEARNER_PASSWORD
     fork_reset: bool = False
+    #: 把学员加成上游仓的协作者（默认开）。开了才"自己开的 PR 自己能合"——见 add_collaborator。
+    learner_can_merge: bool = True
     token_name: str = "track-loader"
     timeout_s: float = 120.0
 
@@ -97,6 +99,10 @@ class LoaderConfig:
         def flag(name: str) -> bool:
             return e.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
+        def off(name: str) -> bool:
+            """默认**开**的开关：只在显式写了假值时才关。"""
+            return e.get(name, "").strip().lower() in ("0", "false", "no", "off")
+
         content = Path(need("BAGU_CONTENT_DIR"))
         if not (content / ".git").exists() and not (content / "HEAD").exists():
             raise LoadError(f"BAGU_CONTENT_DIR 不是一个 git 仓库（或 bare 仓库）：{content}")
@@ -112,6 +118,7 @@ class LoaderConfig:
             owner_password=e.get("BAGU_TRACK_OWNER_PASSWORD", DEFAULT_TRACK_OWNER_PASSWORD),
             learner_password=e.get("BAGU_LEARNER_PASSWORD", DEFAULT_LEARNER_PASSWORD),
             fork_reset=flag("BAGU_FORK_RESET"),
+            learner_can_merge=not off("BAGU_LEARNER_CAN_MERGE"),
         )
 
 
@@ -303,6 +310,22 @@ def delete_branch(gitea_url: str, token: str, owner: str, name: str, branch: str
         return response.status_code in (204, 200)
 
 
+def add_collaborator(
+    gitea_url: str, token: str, owner: str, name: str, user: str, *, permission: str = "write"
+) -> bool:
+    """把 ``user`` 加成 ``owner/name`` 的协作者（默认 write）。
+
+    为什么单用户自托管需要它：PR 的**合并按钮在 base 仓**（这里是上游），而学员账号对上游没有写权限
+    ——于是"自己开的 PR 自己合不了"，只能再登录一次内容所有者那个账号。这个部署里两个账号本来就是
+    同一个人，直接把学员加成协作者更贴合现实（多用户部署可以关掉：``BAGU_LEARNER_CAN_MERGE=0``）。
+    """
+    with _client(gitea_url, token=token) as client:
+        response = client.put(
+            f"/repos/{owner}/{name}/collaborators/{user}", json={"permission": permission}
+        )
+        return response.status_code in (200, 201, 204)
+
+
 def ensure_default_branch(
     gitea_url: str, token: str, owner: str, name: str, branch: str
 ) -> bool:
@@ -487,6 +510,17 @@ def load_track(config: LoaderConfig, *, log=print) -> LoadResult:
         config.gitea_url, owner_token, config.upstream_owner, config.upstream_name
     )
     log(f"   仓 {config.upstream}: {'新建' if created else '已存在'}")
+    if config.learner_can_merge:
+        # PR 的合并按钮在 base 仓（上游），学员对它没有写权限 ⇒ 加成协作者，否则"自己开的 PR
+        # 自己合不了"，还得再登一次内容所有者那个账号（单用户部署下纯属自找麻烦）。
+        add_collaborator(
+            config.gitea_url,
+            owner_token,
+            config.upstream_owner,
+            config.upstream_name,
+            config.learner,
+        )
+        log(f"   {config.learner} 已加为上游协作者（可合并 PR）")
     branches = push_all_branches(
         config.content_dir,
         token_push_url(config.gitea_url, config.upstream_owner, config.upstream_name, owner_token),

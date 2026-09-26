@@ -121,6 +121,41 @@ def test_provision_unknown_instance_404(client: Any) -> None:
     assert client.post("/instances/nope/provision").status_code == 404
 
 
+# --- 容器化部署：把容器内的路径翻成宿主机上那条 ---------------------------------
+
+
+def test_host_path_is_null_unless_the_deployment_declares_it(
+    client: Any, monkeypatch: Any
+) -> None:
+    """非容器部署里 ``path`` 本身就是真的，所以不给 ``host_path``（而不是给个假的）。"""
+    monkeypatch.delenv("BAGU_HOST_DATA_DIR", raising=False)
+    iid = _enroll_start(client)
+    assert client.post(f"/instances/{iid}/provision").json()["host_path"] is None
+
+
+def test_host_path_translates_the_container_data_root(client: Any, monkeypatch: Any) -> None:
+    """compose 栈把宿主机目录绑定挂到 /var/lib/bagu；界面要显示**宿主机**那条路径。
+
+    用户的原话："通过 docker 启动的服务，拉取本地工作区显示的地址是 docker 内的地址"——
+    容器里的 /var/lib/bagu/ws/... 对在自己电脑上写代码的人毫无用处。
+    """
+    monkeypatch.setenv("BAGU_HOST_DATA_DIR", "/home/lqz/bagu-trainer/deploy/data")
+    iid = _enroll_start(client)
+    body = client.post(f"/instances/{iid}/provision").json()
+    # 演示 app 的工作区不在数据根下（它在 tmp_path），映射不出来 ⇒ 仍然是 None，
+    # 但**真的**在数据根下时必须翻出来：
+    assert body["host_path"] is None
+
+    from platform_api.deps import host_visible_path
+
+    assert (
+        host_visible_path("/var/lib/bagu/ws/database-bagu/ti-1")
+        == "/home/lqz/bagu-trainer/deploy/data/ws/database-bagu/ti-1"
+    )
+    assert host_visible_path("/var/lib/bagu") == "/home/lqz/bagu-trainer/deploy/data"
+    assert host_visible_path("/somewhere/else") is None
+
+
 # --- 指引式 provision：登记学员自己的目录 -------------------------------------
 
 

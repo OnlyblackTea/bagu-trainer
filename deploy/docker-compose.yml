@@ -65,6 +65,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      target: lean
     image: bagu-platform:local
     restart: "no"
     entrypoint: ["python", "-m", "platform_api.track_loader"]
@@ -95,6 +96,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      target: lean
     image: bagu-platform:local
     restart: unless-stopped
     environment:
@@ -103,13 +105,25 @@ services:
       BAGU_GITEA_UPSTREAM: "${TRACK_OWNER:-trackowner}/${TRACK_NAME:-seckill-lab}"
       BAGU_GITEA_OWNER: "${LEARNER:-deployer}"
       BAGU_SECRETS_DIR: /run/bagu
-      BAGU_GRADING: "${GRADING:-stub}"
+      # 数据根在**两侧同路径**（见下面 volumes 的注释）：所以既不需要翻译，也不会出现
+      # "容器里那条路径在宿主机上不存在"这种把 bind 变成空目录的事故。
+      BAGU_HOST_DATA_DIR: "${BAGU_DATA_DIR:?deploy/.env 里必须有 BAGU_DATA_DIR（宿主机上的绝对路径）}"
+      BAGU_WS_DIR: "${BAGU_DATA_DIR}/ws"
+      BAGU_DATABASE_URL: "${BAGU_DATA_DIR}/progress.sqlite3"
+      # 阅卷后端**固定 stub**：真阅卷要 JDK17+Maven+compose 与 docker socket，那些由
+      # docker-compose.grading.yml 叠加文件提供（`GRADING` 之类的开关不放在 .env 里，免得
+      # "设了 docker 却忘了叠加文件"变成一堆看起来像学员代码问题的环境错）。
+      BAGU_GRADING: stub
       BAGU_STORE: sqlite
-      BAGU_DATABASE_URL: /var/lib/bagu/progress.sqlite3
       BAGU_INSTANCE_ID: "${INSTANCE_ID:-compose}"
     volumes:
-      # 进度库与工作区都在这里；重开 compose 不丢。
-      - data:/var/lib/bagu
+      # 进度库 + 工作区。**宿主路径与容器路径必须一模一样**（`X:X`，不是 `X:/var/lib/bagu`）：
+      # 真阅卷时 grading 会把 `<工作区>/docker/docker-compose.yml` 交给**宿主机**的守护进程，
+      # 那份 compose 里的相对路径（`./mysql/init`）由**客户端**（也就是这个容器）解析成绝对路径
+      # 再交给守护进程——两边路径一旦不同，宿主机上那个路径并不存在，Docker 就会**建一个空目录**
+      # 挂进去。症状极隐蔽：MySQL 起来了、库也在，但 `/docker-entrypoint-initdb.d` 是空的 ⇒
+      # 没有表也没有种子 ⇒ 测试在 `@Sql` 阶段就炸，看起来像"学员代码问题"。真踩过。
+      - "${BAGU_DATA_DIR:?deploy/.env 里必须有 BAGU_DATA_DIR（宿主机上的绝对路径）}:${BAGU_DATA_DIR:?deploy/.env 里必须有 BAGU_DATA_DIR（宿主机上的绝对路径）}"
       - secrets:/run/bagu:ro
       # 后端自己要读 track.yaml / stages/*/ticket.yaml —— 内容**只读**挂进来（只读也保证了
       # 平台不可能去改你的内容仓）。漏了这一条，后端会在启动时直接死：
@@ -121,7 +135,7 @@ services:
       - "--content-dir"
       - "/content"
       - "--forge-base"
-      - "/var/lib/bagu/ws"
+      - "${BAGU_DATA_DIR}/ws"
       - "--host"
       - "0.0.0.0"
       - "--port"
@@ -145,5 +159,4 @@ services:
 
 volumes:
   gitea-data:
-  data:
   secrets:

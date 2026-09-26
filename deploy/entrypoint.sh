@@ -20,8 +20,11 @@ if [ "${BAGU_FORGE:-stub}" = "gitea" ] && [ -z "${BAGU_GITEA_TOKEN:-}" ]; then
   exit 3
 fi
 
-# 工作区可能是从宿主机绑定挂载进来的（grading 叠加文件就是这么做的），属主与容器里的 root 不一致，
-# git 会以 "dubious ownership" 拒绝任何操作。这里只对**工作区根**放行，不开 '*"。
+# 工作区可能是从宿主机绑定挂载进来的，属主与容器里的 root 不一致，git 会以 "dubious ownership"
+# 拒绝任何操作。放行**工作区根**即可，不开 '*'。路径由 BAGU_WS_DIR 给（compose 两侧同路径），
+# 没给时退回旧的固定位置。
+WS_DIR="${BAGU_WS_DIR:-/var/lib/bagu/ws}"
+git config --global --add safe.directory "$WS_DIR/*" 2>/dev/null || true
 git config --global --add safe.directory '/var/lib/bagu/ws/*' 2>/dev/null || true
 
 exec python -m platform_api.serve "$@"

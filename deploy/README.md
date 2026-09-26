@@ -46,19 +46,30 @@ gitea(healthy) ─────────────────────�
 
 ## 真阅卷（可选）
 
-默认 `GRADING=stub`（预置红绿，零依赖）。要真跑指标测试：
+默认 `GRADING=stub`（预置红绿，零依赖）。要真跑 Track 的指标测试，**叠加 grading 文件**——它是
+阅卷后端的唯一开关（那条路要 JDK17+Maven+compose 与 docker socket，所以不放在 `.env` 里）：
 
 ```bash
-docker compose build --build-arg WITH_GRADING_TOOLCHAIN=1 platform
+cd deploy
+docker compose -f docker-compose.yml -f docker-compose.grading.yml build platform
 docker compose -f docker-compose.yml -f docker-compose.grading.yml up -d
 ```
 
-这条把 JDK17 + Maven + docker CLI/compose 装进后端镜像，并挂上 `/var/run/docker.sock`——
-Track 的基础设施（MySQL/Redis）由 compose 起，而那个守护进程在**宿主机**上。
-**socket 等于宿主机的 root 权限**，只在你自己的机器上这么做。还有一个细节：grading 会把
-`docker compose -f <工作区>/docker/docker-compose.yml` 交给宿主机守护进程，里面的相对路径
-（`./mysql/init`）是按宿主机解析的，所以叠加文件用 `${BAGU_DATA_DIR}` **绑定挂载**而不是命名卷
-（命名卷在宿主机的路径是 `/var/lib/docker/volumes/...`，相对路径就找不到了）。
+叠加文件做四件事，少一件就会红在"跟你的代码无关的地方"：
+
+1. **镜像换成 `target: grading`**：JDK17 + Maven + docker CLI/compose（工具链从官方镜像拷，
+   不走 apt——包名在各 base 镜像上并不一致，实测踩过 `Unable to locate package`）；
+2. **挂 `/var/run/docker.sock`**：Track 的 MySQL/Redis 由 `docker compose` 起，守护进程在宿主机上。
+   **socket 等于宿主机 root 权限**，只在你自己的机器上这么做；
+3. **工作区路径两侧一致**（基础 compose 已经是 `${BAGU_DATA_DIR}` 绑定挂载）：grading 会把
+   `<工作区>/docker/docker-compose.yml` 交给宿主机守护进程，`./mysql/init` 这类相对路径按宿主机解析；
+4. **把 `DB_HOST`/`REDIS_HOST` 指到宿主机**：maven 在**容器里**跑，而 MySQL/Redis 发布在**宿主机**上
+   （13306/16379）——容器里的 `localhost` 是它自己。漏掉这条，真跑出来的是"连不上数据库"，
+   一个看起来像学员代码问题的环境错。
+
+第一次真阅卷会 `docker compose down -v` + `up -d --wait` 重建 Track 的基础设施（灌 5 万行种子，
+约 90 秒），之后每次 10–30 秒。报告里 `host_env.simulated=false` 且带 `revision`（被阅的是哪个
+commit）——桩的报告是 `simulated=true`，两者一眼可分。
 
 ## 一个 Gitea 的怪癖（不影响使用，但解释清楚免得你查半天）
 

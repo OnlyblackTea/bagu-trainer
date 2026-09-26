@@ -321,19 +321,22 @@ gitea(healthy) ─────────────────────�
 3. `BAGU_FORK_RESET=1` 是**破坏性**的：删掉学员 fork 再重建（`dev` 与历史 PR 一起没）。它的用处正是
    "把 dev 上不该有的东西（比如一份参考解）清掉"。
 
-**真阅卷**（可选）：默认 `GRADING=stub`。要真跑 maven：
+**真阅卷**（可选）：基础 compose 固定桩阅卷，真阅卷由**叠加文件**开（唯一开关，见
+[`../deploy/README.md`](../deploy/README.md)）：
 
 ```bash
-docker compose build --build-arg WITH_GRADING_TOOLCHAIN=1 platform
+docker compose -f docker-compose.yml -f docker-compose.grading.yml build platform
 docker compose -f docker-compose.yml -f docker-compose.grading.yml up -d
 ```
 
-叠加文件把 JDK17 + Maven + docker CLI/compose 装进镜像、挂上 docker socket（= 宿主机 root 权限，
-只在你自己的机器上这么做），并把工作区**绑定挂载**到与宿主机一致的路径——因为 grading 会把
-`docker compose -f <工作区>/docker/docker-compose.yml` 交给**宿主机**的守护进程，里面的相对路径
-（`./mysql/init`）是按宿主机解析的；用命名卷的话那条路径是 `/var/lib/docker/volumes/...`，相对
-路径就找不到了。
+叠加文件做四件事：镜像换成 `target: grading`（JDK17 + Maven + docker CLI/compose，工具链从官方
+镜像拷而不是 apt——包名在各 base 镜像上不一致，实测踩过 `Unable to locate package`）；挂 docker
+socket（= 宿主机 root 权限，只在你自己的机器上这么做）；工作区**绑定挂载**成与宿主机一致的路径
+（grading 把 `docker compose -f <工作区>/docker/docker-compose.yml` 交给宿主机守护进程，相对路径
+`./mysql/init` 按宿主机解析，命名卷的 `/var/lib/docker/volumes/...` 对不上）；把 `DB_HOST`/
+`REDIS_HOST` 指到宿主机——maven 在容器里跑而 MySQL/Redis 发布在宿主机上，容器里的 `localhost`
+是它自己。
 
-**数据**：卷 `gitea-data`（Gitea）、`bagu-data`（进度库 + 工作区）、`bagu-secrets`（后端令牌）。
-备份进度：`docker compose cp platform:/var/lib/bagu/progress.sqlite3 ./backup.sqlite3`。
-`docker compose down` 保留数据；`down -v` **连数据一起删**。
+**数据**：卷 `gitea-data`（Gitea）、`secrets`（后端令牌）、宿主目录 `${BAGU_DATA_DIR}`（进度库 +
+工作区，绑定挂载）。备份进度就是复制那个目录里的 `progress.sqlite3`；`docker compose down` 保留
+数据，`down -v` 连卷一起删（宿主目录要自己清）。

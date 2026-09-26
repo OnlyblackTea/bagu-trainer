@@ -172,6 +172,13 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
             <dt>路径</dt>
             <dd>
               <code>{workspace.path}</code>
+              {workspace.host_path && workspace.host_path !== workspace.path && (
+                <span className="muted">
+                  {' '}
+                  —— 容器内的路径；在<strong>那台机器</strong>上是{' '}
+                  <code>{workspace.host_path}</code>
+                </span>
+              )}
             </dd>
             <dt>你的分支</dt>
             <dd>
@@ -182,6 +189,14 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
               <code>{workspace.base_ref}</code>
             </dd>
           </dl>
+
+          {!workspace.simulated && (
+            <p className="muted" data-testid="host-path-note">
+              上面这个路径在<strong>后端那台机器</strong>上。你如果在**自己的电脑**上写代码，用下面的
+              clone 命令拉一份、改完 push 上来就行——提交时平台会自动把这份 checkout 对齐到你 push
+              的版本（也可以点「从远端同步」手动对齐）。容器里那份是**阅卷用的**，不必去改它。
+            </p>
+          )}
 
           {workspace.clone_hint && (
             <div className="hint-block" data-testid="clone-hint">

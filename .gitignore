@@ -49,3 +49,7 @@ bagu.sqlite3-shm
 # ---- OS ----
 .DS_Store
 Thumbs.db
+
+# compose 栈的运行时数据（进度库 + 工作区）：绑定挂载到容器 /var/lib/bagu
+deploy/data/
+

@@ -15,16 +15,27 @@ from fastapi import APIRouter, Request
 
 from platform_service.review_diff import generate_diff, preflight_diff_volume
 
+from ..deps import host_visible_path
 from ..schemas import WorkspaceRequest, sync_out, workspace_out
 from ._resolve import apply_sync, bundle_for_instance, must_instance, probe_sync
 
 router = APIRouter(tags=["workspace"])
 
 
+def _with_host_path(ws: Any) -> dict[str, Any]:
+    """工作区响应 + ``host_path``：容器里那条路径在部署者机器上是什么。
+
+    只在 ``BAGU_HOST_DATA_DIR`` 配了（compose 栈会配）且路径落在数据根下时给出；否则 ``None``。
+    为什么值得专门做：容器化之后界面显示的是 ``/var/lib/bagu/ws/...``——那是**容器内**的路径，
+    对在自己机器上写代码的人毫无用处（用户就是照这条反馈的）。
+    """
+    return {**workspace_out(ws), "host_path": host_visible_path(ws.path)}
+
+
 @router.post("/instances/{instance_id}/provision")
 def provision(instance_id: str, request: Request) -> dict[str, Any]:
     instance = must_instance(request, instance_id)
-    return workspace_out(bundle_for_instance(request, instance).forge.provision(instance))
+    return _with_host_path(bundle_for_instance(request, instance).forge.provision(instance))
 
 
 @router.post("/instances/{instance_id}/workspace")
@@ -45,7 +56,7 @@ def attach_workspace(
     bundle = bundle_for_instance(request, instance)
     updated = bundle.service.attach_workspace(instance_id, body.path)
     return {
-        **workspace_out(bundle.forge.provision(updated)),
+        **_with_host_path(bundle.forge.provision(updated)),
         "workspace_path": updated.workspace_path,
     }
 
@@ -67,7 +78,7 @@ def sync_workspace_now(instance_id: str, request: Request) -> dict[str, Any]:
     ws = bundle.forge.provision(instance)
     sync = apply_sync(ws)
     return {
-        **workspace_out(ws),
+        **_with_host_path(ws),
         "sync": sync_out(sync),
     }
 

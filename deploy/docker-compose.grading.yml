@@ -1,25 +1,47 @@
 # 叠加文件：在这个栈里**真跑**阅卷（maven + Track 的 compose 基础设施）。
 #
-#   docker compose build --build-arg WITH_GRADING_TOOLCHAIN=1 platform
+#   docker compose -f docker-compose.yml -f docker-compose.grading.yml build platform
 #   docker compose -f docker-compose.yml -f docker-compose.grading.yml up -d
 #
-# 三件事必须同时成立，少一件就红在"跟你的代码无关的地方"：
+# 四件事必须同时成立，少一件就红在"跟你的代码无关的地方"：
 #
-# 1. **镜像里有 JDK17 + Maven + docker CLI/compose**（靠上面的 build-arg）；
+# 1. **镜像里有 JDK17 + Maven + docker CLI/compose**（`target: grading`，工具链从官方镜像拷，
+#    见 deploy/Dockerfile）；
 # 2. **挂 docker socket**：Track 的基础设施（MySQL/Redis）由 `docker compose up -d` 起，
-#    而那个守护进程在**宿主机**上。socket = 宿主机的 root 等价权限——只在你自己机器上这么做。
-# 3. **工作区在两侧路径一致**：grading 会把 `docker compose -f <工作区>/docker/docker-compose.yml`
-#    交给宿主机的守护进程，里面 `./mysql/init` 这类相对路径是按**宿主机**解析的。所以这里把
-#    `${BAGU_DATA_DIR}` 绑定挂载到同一个绝对路径，而不是用命名卷（命名卷在宿主机的路径是
-#    /var/lib/docker/volumes/... 那串，compose 的相对路径就找不到了）。
+#    而那个守护进程在**宿主机**上。socket = 宿主机的 root 等价权限，只在你自己的机器上这么做；
+# 3. **工作区在两侧路径一致**：grading 会把 `<工作区>/docker/docker-compose.yml` 交给宿主机守护
+#    进程，里面 `./mysql/init` 这类相对路径按**宿主机**解析。基础 compose 用 `${BAGU_DATA_DIR}`
+#    绑定挂载，这条天然成立（命名卷不行——它在宿主机上是 /var/lib/docker/volumes/... 那串）；
+# 4. **测试进程要能找到 MySQL/Redis**：maven 跑在**容器里**，而 `docker compose` 把端口发布在
+#    **宿主机**上（13306 / 16379）。容器里的 `localhost` 是它自己——所以必须把 DB_HOST/REDIS_HOST
+#    指到宿主机（`host.docker.internal`，靠 extra_hosts 映射；Track 的 JDBC 串本来就写成
+#    `jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:13306}/...`）。漏了这一条，真跑出来的是
+#    "连不上数据库"，一个看起来像学员代码问题的环境错。
 services:
   platform:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: grading
+    image: bagu-platform:grading
     environment:
       BAGU_GRADING: docker
       BAGU_GRADING_RESET: "${GRADING_RESET:-auto}"
+      DB_HOST: "${GRADING_DB_HOST:-host.docker.internal}"
+      REDIS_HOST: "${GRADING_DB_HOST:-host.docker.internal}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # 绑定挂载（不是命名卷）：见上面第 3 条——compose 文件里的相对路径要按宿主机解析。
-      - "${BAGU_DATA_DIR:-./data}:/var/lib/bagu"
+      # 同基础文件：**两侧同路径**（X:X）。这条不只是"方便"，它是真阅卷能跑对的前提——
+      # 路径不同时，Track compose 里的 `./mysql/init` 会被解析成宿主机上不存在的路径，
+      # Docker 建一个**空目录**挂进去 ⇒ MySQL 没有表/种子 ⇒ 测试在 @Sql 就炸。
+      - "${BAGU_DATA_DIR:?deploy/.env 里必须有 BAGU_DATA_DIR}:${BAGU_DATA_DIR:?deploy/.env 里必须有 BAGU_DATA_DIR}"
+      # Maven 本地仓库：不挂的话每次重建容器都要重新下载整个依赖树（实测第一次跑测试 128 秒，
+      # 大半花在下载上），而且每次 `up` 之后又白下一遍。
+      - maven-cache:/root/.m2
       - secrets:/run/bagu:ro
       - "${CONTENT_DIR:?deploy/.env 里必须有 CONTENT_DIR}:/content:ro"
+
+volumes:
+  maven-cache:

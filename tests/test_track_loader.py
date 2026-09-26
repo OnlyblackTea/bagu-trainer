@@ -24,6 +24,7 @@ from platform_api.track_loader import (
     DEFAULT_ADMIN_USER,
     LoaderConfig,
     LoadError,
+    add_collaborator,
     delete_repo,
     ensure_default_branch,
     ensure_fork,
@@ -321,6 +322,28 @@ def test_ensure_default_branch_pins_it_and_skips_when_already_right() -> None:
 
 
 @respx.mock
+def test_learner_is_added_as_a_collaborator_so_they_can_merge_their_own_pr() -> None:
+    """PR 的合并按钮在**上游**仓，而学员对它没有写权限——不加协作者就得再登一次内容所有者账号。
+
+    （用户原话："提交 PR 了以后怎么合并？gitea 依旧要登录"。单用户自托管下两个账号是同一个人。）
+    """
+    route = respx.put(
+        f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer"
+    ).mock(return_value=httpx.Response(204))
+    assert add_collaborator(GITEA, "TOK", "trackowner", "seckill-lab", "deployer") is True
+    assert json.loads(route.calls[0].request.content.decode()) == {"permission": "write"}
+
+
+def test_learner_can_merge_can_be_turned_off(tmp_path: Path) -> None:
+    env = {
+        "BAGU_GITEA_URL": GITEA,
+        "BAGU_CONTENT_DIR": str(_content_repo(tmp_path, ["main"])),
+    }
+    assert LoaderConfig.from_env(env).learner_can_merge is True  # 默认开
+    assert LoaderConfig.from_env({**env, "BAGU_LEARNER_CAN_MERGE": "0"}).learner_can_merge is False
+
+
+@respx.mock
 def test_delete_repo_tolerates_a_missing_repo() -> None:
     respx.delete(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
         return_value=httpx.Response(404, json={})
@@ -360,6 +383,9 @@ def test_load_track_pushes_upstream_before_creating_the_fork(
     )
     respx.get(f"{GITEA}/api/v1/repos/trackowner/seckill-lab").mock(
         return_value=httpx.Response(200, json={})
+    )
+    respx.put(f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer").mock(
+        return_value=httpx.Response(204)
     )
     respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
         return_value=httpx.Response(200, json={"default_branch": "main"})
@@ -417,6 +443,9 @@ def test_load_track_backfills_an_old_fork_and_fails_loudly_if_it_cannot(
     _git(stale, "init", "-q", "-b", "main")
     _git(stale, "config", "user.email", "t@example.com")
     _git(stale, "config", "user.name", "t")
+    # 本机全局开着签名时必须显式关掉，否则 commit 会去弹 pinentry、卡一阵后以 128 失败
+    # （与被测代码毫无关系的红）。
+    _git(stale, "config", "commit.gpgsign", "false")
     _git(stale, "commit", "-q", "--allow-empty", "-m", "stale")
     fork = tmp_path / "fork.git"
     subprocess.run(["git", "clone", "-q", "--bare", str(stale), str(fork)], check=True)
@@ -434,6 +463,9 @@ def test_load_track_backfills_an_old_fork_and_fails_loudly_if_it_cannot(
     )
     respx.get(f"{GITEA}/api/v1/repos/trackowner/seckill-lab").mock(
         return_value=httpx.Response(200, json={})
+    )
+    respx.put(f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer").mock(
+        return_value=httpx.Response(204)
     )
     respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
         return_value=httpx.Response(200, json={"default_branch": "main"})

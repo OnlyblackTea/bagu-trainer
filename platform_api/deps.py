@@ -76,6 +76,28 @@ DATABASE_URL_ENV = "BAGU_DATABASE_URL"
 #: 部署的人应当能一眼说出"我的进度存在哪个文件里"，启动横幅会把绝对路径打出来。
 DEFAULT_SQLITE_PATH = "bagu.sqlite3"
 
+#: 容器里那个数据根（进度库 + 工作区）。compose 栈把它绑定挂载自宿主机的一个目录。
+CONTAINER_DATA_DIR = "/var/lib/bagu"
+#: 上面那个目录在**宿主机**上的路径。只在容器里才有意义：设了它，API 就能把工作区的路径翻译成
+#: 部署者在自己机器上看得到的那条（否则界面显示的 `/var/lib/bagu/ws/...` 对容器外的人毫无用处——
+#: 用户就是这么反馈的）。
+HOST_DATA_DIR_ENV = "BAGU_HOST_DATA_DIR"
+
+
+def host_visible_path(path: str | Path) -> str | None:
+    """把容器内的工作区路径翻成宿主机的路径；没配 ``BAGU_HOST_DATA_DIR`` 或不在那个根下则 ``None``。
+
+    只做前缀替换，不猜、不做符号链接解析：容器路径与宿主路径是**同一个目录**（绑定挂载），
+    所以这条映射是忠实的。翻译不出来就返回 ``None``——界面据此不显示那一行，而不是显示一个假的。
+    """
+    host_root = os.environ.get(HOST_DATA_DIR_ENV, "").strip()
+    if not host_root:
+        return None
+    text = str(path)
+    if text == CONTAINER_DATA_DIR or text.startswith(CONTAINER_DATA_DIR + "/"):
+        return host_root.rstrip("/") + text[len(CONTAINER_DATA_DIR):]
+    return None
+
 _TRUTHY = frozenset({"auto", "1", "true", "yes"})
 _FALSY = frozenset({"never", "0", "false", "no"})
 

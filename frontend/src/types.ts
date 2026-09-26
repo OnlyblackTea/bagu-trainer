@@ -106,6 +106,13 @@ export interface WorkspaceOut {
   push_hint: string | null
   /** 学员想在自己的目录里拉取时照抄的命令（指引式 provision）。 */
   clone_hint: string | null
+  /**
+   * `path` 在**部署者机器上**的路径（容器化部署才会给；绑定的同一目录）。
+   *
+   * 界面必须显示它：容器里的 `/var/lib/bagu/ws/...` 对在自己电脑上写代码的人毫无意义。
+   * `null` = 没配（非容器部署，`path` 本身就是真的）。
+   */
+  host_path?: string | null
   simulated: boolean
 }
 
