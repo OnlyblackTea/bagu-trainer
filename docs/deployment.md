@@ -80,6 +80,24 @@ python -m http.server 5173 --directory dist     # 或 nginx / caddy
 
 > 工作区不是架构边界，**"后端能不能读到你的代码"才是**：能 push + 能读回 = 代码写在哪都行。
 
+### 拓扑 D：docker compose 一键起（后端 + Gitea + 前端，Track 自动载入）
+
+**只想要"一条命令起全、别让我手工推分支"的，选这个。** 三个服务进容器，生命周期由 compose 串起来：
+`gitea` 健康 → `gitea-admin`（建管理员）→ `track-loader`（把内容仓的分支**载入** Gitea）→ 后端 → 前端。
+
+```bash
+cd deploy && cp .env.example .env && vi .env    # 至少改 BAGU_PUBLIC_URL
+docker compose up -d
+# 浏览器 → http://<BAGU_PUBLIC_URL 的主机>:8080
+```
+
+它把"手工做 Gitea 那一串事"（建用户、造令牌、建仓、把每个阶段的分支推上去、让 fork 也有这些分支）
+变成了启动步骤——**provision 报 `workspace_ref_missing` 这件事因此从根上消失**。
+细节、约束与真阅卷的可选叠加文件见 [`../deploy/README.md`](../deploy/README.md) 与本文 §11。
+
+**代价**：真阅卷要挂 `/var/run/docker.sock`（等于宿主机 root），且工作区在两侧必须路径一致；
+`BAGU_PUBLIC_URL` 必须是容器与浏览器都能访问的地址（写 `127.0.0.1` 必踩坑，loader 会为此警告）。
+
 ## 2. 存储：进度存在哪
 
 默认后端是 **SQLite**（标准库自带，零依赖），启动横幅会打印**绝对路径**：
@@ -265,3 +283,57 @@ python -m platform_api.serve --content-dir ../seckill-lab \
 # 检查现状
 curl -s localhost:8000/meta | python -m json.tool
 ```
+
+## 11. docker compose 一键起（拓扑 D 的细节）
+
+`deploy/` 里是一套能 `up` 的栈：**Gitea + 后端 + 前端**，并且**启动时自动把 Track 载入 Gitea**。
+
+```bash
+cd deploy
+cp .env.example .env && vi .env      # BAGU_PUBLIC_URL 改成这台机器的可达地址（别用 127.0.0.1）
+docker compose up -d
+docker compose logs -f track-loader  # 看它往 Gitea 里推了哪些阶段分支
+```
+
+**启动顺序就是它解决的问题**（每一步都在修一个真实的坑）：
+
+```
+gitea(healthy) ──► gitea-admin(跑完)  ──┐
+                                       ├──► track-loader(跑完) ──► platform(healthy) ──► web
+gitea(healthy) ────────────────────────┘
+```
+
+| 服务 | 做什么 | 为什么必须这样 |
+|---|---|---|
+| `gitea` | 官方 `gitea/gitea:1.22` + sqlite + `INSTALL_LOCK` | —— |
+| `gitea-admin` | 一次性 `gitea admin user create`（与 gitea 共用数据卷） | 官方镜像**不认** `GITEA_ADMIN_*`：实测 1.22 带着那些变量启动后容器健康，但 `GET /api/v1/user` 回 401 `user does not exist` |
+| `track-loader` | 建用户/仓 → **推全**内容仓的分支 → 建/补齐 fork → 令牌写进共享卷 | Gitea 的 fork 是**创建那一刻**的快照，不会跟着上游长。顺序错了，"新阶段在 fork 里永远缺席"，症状就是 `workspace_ref_missing` |
+| `platform` | 后端；`depends_on: track-loader: service_completed_successfully` | 保证"Gitea 里已经有它要 clone 的阶段分支"再开始接客 |
+| `web` | nginx：SPA + REST 反代（前缀表与 `frontend/vite.config.ts` 一致） | 后端是**纯 REST**、不托管前端；少了它 `up` 完没有浏览器入口 |
+
+**三条约束**：
+
+1. `BAGU_PUBLIC_URL` 必须**容器与浏览器都连得上**（它决定 `clone_url` 与 PR 链接）。写 `127.0.0.1`
+   的话，容器里那是它自己——`provision` 的 clone 会一直超时。loader 启动时会为此打一条 `!!` 警告。
+2. 内容仓（`CONTENT_DIR`）**必须有每个阶段的本地分支**（§C.5 一阶段一 ref）。loader 只推它看得见的：
+   `git branch` 里有几条，Gitea 里就有几条。换机器用 `git bundle create x.bundle --all` 打包——
+   本地分支才是内容的全部（GitHub 上常常只有 `main`）。
+3. `BAGU_FORK_RESET=1` 是**破坏性**的：删掉学员 fork 再重建（`dev` 与历史 PR 一起没）。它的用处正是
+   "把 dev 上不该有的东西（比如一份参考解）清掉"。
+
+**真阅卷**（可选）：默认 `GRADING=stub`。要真跑 maven：
+
+```bash
+docker compose build --build-arg WITH_GRADING_TOOLCHAIN=1 platform
+docker compose -f docker-compose.yml -f docker-compose.grading.yml up -d
+```
+
+叠加文件把 JDK17 + Maven + docker CLI/compose 装进镜像、挂上 docker socket（= 宿主机 root 权限，
+只在你自己的机器上这么做），并把工作区**绑定挂载**到与宿主机一致的路径——因为 grading 会把
+`docker compose -f <工作区>/docker/docker-compose.yml` 交给**宿主机**的守护进程，里面的相对路径
+（`./mysql/init`）是按宿主机解析的；用命名卷的话那条路径是 `/var/lib/docker/volumes/...`，相对
+路径就找不到了。
+
+**数据**：卷 `gitea-data`（Gitea）、`bagu-data`（进度库 + 工作区）、`bagu-secrets`（后端令牌）。
+备份进度：`docker compose cp platform:/var/lib/bagu/progress.sqlite3 ./backup.sqlite3`。
+`docker compose down` 保留数据；`down -v` **连数据一起删**。

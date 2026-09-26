@@ -22,7 +22,8 @@
 > 它会先讲清两件事实：平台**没有认证**（怎么对外暴露是部署者的事），以及**只有阅卷工具链与数据库
 > 必须在后端那台机器上**——工作区（你写代码的那份 clone）可以在任何地方，只要你能把 `dev` push 到
 > 你的 fork、后端能从那个 Forge 读回来（提交时平台会自动把它的 checkout 快进到你的 push）。
-> 懒人版：`bash scripts/quickstart.sh --content-dir ../seckill-lab`。
+> 想**一条命令起全**（Gitea + 后端 + 前端，启动时自动把 Track 载入 Gitea）：`cd deploy && cp .env.example .env && docker compose up -d`，
+> 细节见 [`deploy/README.md`](deploy/README.md)。裸机起步则用 `bash scripts/quickstart.sh --content-dir ../seckill-lab`。
 
 A′ 引擎无关切片已把「发卷 → 工作区 → 提交 → 本地阅卷 → 评审 → 确定性决策（解锁 / 返工）」做成
 **纯 REST 后端 + 学习者 SPA**，全程**不依赖任何 AI / 引擎**。开两个终端：
@@ -329,8 +330,13 @@ bagu-trainer/
 │   ├── store_sqlite.py  store_postgres.py     持久化后端（同一套测试参数化跑）
 │   ├── jobs.py             后台阅卷（单线程 + 落库的运行记录）  grading_docker.py  真阅卷
 │   ├── forge_gitea.py  gitea.py               真 Forge（fork / push 凭据 / PR）
+│   ├── track_loader.py     启动时把 Track 内容载入 Gitea（compose 栈的启动步骤）
 │   ├── demo_repo.py        内置 demo Track（会建一个真本地 git 仓库）
 │   └── routes/             track / progress / workspace（含 /sync）
+├── deploy/                 ★ docker compose 栈：Gitea + 后端 + 前端，Track 自动载入
+│   ├── docker-compose.yml  docker-compose.grading.yml（真阅卷叠加）  .env.example
+│   ├── Dockerfile          Dockerfile.web  nginx.conf  entrypoint.sh
+│   └── bootstrap/admin.sh  一次性建 Gitea 管理员（官方镜像不认 GITEA_ADMIN_*）
 ├── frontend/               ★ 学习者 SPA（React + Vite + TS，从零写，Apache-2.0）
 ├── content/schema/         track.schema.json + ticket.schema.json —— 贡献契约（设计 §4.2/§4.3）
 ├── paper_cli/              脚手架 docstring（CLI 已降级为可选未来项，见设计 §7.2）

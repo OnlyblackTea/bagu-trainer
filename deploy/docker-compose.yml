@@ -1,0 +1,147 @@
+# bagu-trainer 的 compose 栈：Gitea + 后端 + 前端，一次 `up` 起全，**并自动把 Track 载入 Gitea**。
+#
+#   cp .env.example .env && vi .env          # 至少把 BAGU_PUBLIC_HOST 改成这台机器的可达地址
+#   docker compose up -d
+#   docker compose logs -f track-loader      # 看它载入了哪些阶段分支
+#
+# 生命周期是**串起来**的，不是一个一个手动起：
+#
+#   gitea(healthy) ──► gitea-admin(跑完)  ──┐
+#                                          ├──► track-loader(跑完) ──► platform(healthy) ──► web
+#   gitea(healthy) ────────────────────────┘
+#
+# 每个箭头都在表达一条真实的依赖：
+#   * gitea-admin 跑 `gitea admin user create`（官方镜像不认 GITEA_ADMIN_*，见 bootstrap/admin.sh）；
+#   * track-loader 建用户/仓、把内容仓的分支**推全**、再建/补齐 fork，最后把后端要用的令牌写进共享卷；
+#   * platform 靠 depends_on 保证"Gitea 里已经有它要 clone 的阶段分支"——这正是 provision 报
+#     `workspace_ref_missing` 的根因，靠启动顺序从根上避免。
+name: bagu
+
+services:
+  gitea:
+    image: gitea/gitea:1.22
+    restart: unless-stopped
+    environment:
+      # ROOT_URL 决定 clone_url / PR 链接长什么样，所以它必须是**浏览器与容器都能访问**的地址。
+      # 写成 127.0.0.1 的话：容器里那是它自己，provision 的 clone 会超时（真踩过）。
+      GITEA__server__ROOT_URL: "${BAGU_PUBLIC_URL}/"
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__database__PATH: /data/gitea/gitea.db
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__repository__DEFAULT_BRANCH: main
+    volumes:
+      - gitea-data:/data
+    ports:
+      - "${GITEA_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  # 一次性：建管理员。与 gitea 共用数据卷（CLI 要直接写同一个 sqlite 与 app.ini）。
+  gitea-admin:
+    image: gitea/gitea:1.22
+    user: git
+    restart: "no"
+    entrypoint: ["/bin/sh", "/bootstrap/admin.sh"]
+    environment:
+      BAGU_ADMIN_USER: "${BAGU_ADMIN_USER:-baguadmin}"
+      BAGU_ADMIN_PASSWORD: "${BAGU_ADMIN_PASSWORD:-baguadmin123}"
+    volumes:
+      - gitea-data:/data
+      - ./bootstrap:/bootstrap:ro
+    depends_on:
+      gitea:
+        condition: service_healthy
+
+  # 一次性：把 Track 内容载入 Gitea。镜像与 platform 同一个（python + git + httpx）。
+  track-loader:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: bagu-platform:local
+    restart: "no"
+    entrypoint: ["python", "-m", "platform_api.track_loader"]
+    environment:
+      BAGU_GITEA_URL: "${BAGU_PUBLIC_URL}"
+      BAGU_CONTENT_DIR: /content
+      BAGU_SECRETS_DIR: /run/bagu
+      BAGU_TRACK_OWNER: "${TRACK_OWNER:-trackowner}"
+      BAGU_TRACK_NAME: "${TRACK_NAME:-seckill-lab}"
+      BAGU_LEARNER: "${LEARNER:-deployer}"
+      BAGU_ADMIN_USER: "${BAGU_ADMIN_USER:-baguadmin}"
+      BAGU_ADMIN_PASSWORD: "${BAGU_ADMIN_PASSWORD:-baguadmin123}"
+      BAGU_TRACK_OWNER_PASSWORD: "${BAGU_TRACK_OWNER_PASSWORD:-trackowner123}"
+      BAGU_LEARNER_PASSWORD: "${BAGU_LEARNER_PASSWORD:-deployer123}"
+      # =1 时删掉旧 fork 重建：顺手清掉学员 dev 上可能躺着的参考解（内容重写后尤其需要）。
+      BAGU_FORK_RESET: "${BAGU_FORK_RESET:-0}"
+    volumes:
+      # 内容仓**只读**挂进来：loader 只 push，绝不改你的内容。
+      - "${CONTENT_DIR:-../seckill-lab}:/content:ro"
+      - secrets:/run/bagu
+    depends_on:
+      gitea:
+        condition: service_healthy
+      gitea-admin:
+        condition: service_completed_successfully
+
+  platform:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: bagu-platform:local
+    restart: unless-stopped
+    environment:
+      BAGU_FORGE: "${FORGE:-gitea}"
+      BAGU_GITEA_URL: "${BAGU_PUBLIC_URL}"
+      BAGU_GITEA_UPSTREAM: "${TRACK_OWNER:-trackowner}/${TRACK_NAME:-seckill-lab}"
+      BAGU_GITEA_OWNER: "${LEARNER:-deployer}"
+      BAGU_SECRETS_DIR: /run/bagu
+      BAGU_GRADING: "${GRADING:-stub}"
+      BAGU_STORE: sqlite
+      BAGU_DATABASE_URL: /var/lib/bagu/progress.sqlite3
+      BAGU_INSTANCE_ID: "${INSTANCE_ID:-compose}"
+    volumes:
+      # 进度库与工作区都在这里；重开 compose 不丢。
+      - data:/var/lib/bagu
+      - secrets:/run/bagu:ro
+      # 后端自己要读 track.yaml / stages/*/ticket.yaml —— 内容**只读**挂进来（只读也保证了
+      # 平台不可能去改你的内容仓）。漏了这一条，后端会在启动时直接死：
+      # "file not found: /content/track.yaml"（真踩过）。
+      - "${CONTENT_DIR:-../seckill-lab}:/content:ro"
+    ports:
+      - "${PLATFORM_PORT:-8000}:8000"
+    command:
+      - "--content-dir"
+      - "/content"
+      - "--forge-base"
+      - "/var/lib/bagu/ws"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    depends_on:
+      track-loader:
+        condition: service_completed_successfully
+
+  # 浏览器入口：SPA + REST 反代（后端不托管前端，见 Dockerfile.web 的注释）。
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: bagu-web:local
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      platform:
+        condition: service_healthy
+
+volumes:
+  gitea-data:
+  data:
+  secrets:
