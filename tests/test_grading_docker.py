@@ -344,6 +344,118 @@ def test_unresolvable_base_ref_falls_back_to_working_tree(
     assert report.files_changed == ["in_scope.xml"]
 
 
+def test_stage_changes_are_measured_from_the_stage_start(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """跨阶段累积的 dev：**"这一关你改了什么"** 必须相对"开始这一阶段时的自己"算。
+
+    拿阶段基线（内容作者的版本）当这个基准，一进入第二关就会把上一关写的代码全列进来——链式
+    Track 结构下阶段分支本来就不含之前阶段的实现，所以那是必然的，不是学员乱改。而**判定面**
+    那一份必须反过来拿基线比（见下一条）。
+    """
+    repo = tmp_path / "ws"
+    _init_repo(repo, {"stage1.xml": "skeleton", "stage2.xml": "skeleton"})
+    baseline = _git(repo, "rev-parse", "HEAD").strip()  # 内容作者那一版（阶段基线）
+    (repo / "stage1.xml").write_text("my stage-1 work\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "stage 1 done")
+    # provision：记下"开始这一阶段时他自己那条 dev"
+    _git(repo, "config", "bagu.baseRef", baseline)
+    _git(repo, "config", "bagu.stageStart", _git(repo, "rev-parse", "HEAD").strip())
+    (repo / "stage2.xml").write_text("my stage-2 work\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "stage 2 work")
+
+    ticket = _ticket(ticket_factory, files_to_change=["stage2.xml"])
+    report = _ScriptedRunner(proc=_proc(returncode=0)).grade(
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=repo
+    )
+
+    # 给人看的那一份：只有这一关的改动，越界提醒因此是干净的
+    assert report.files_changed == ["stage2.xml"]
+    assert report.out_of_scope_edits == []
+    # 判定面那一份拿内容作者的版本比：上一关的实现同样是"与基线不同"
+    assert report.judged_surface_changes == ["stage1.xml", "stage2.xml"]
+
+
+def test_two_instances_sharing_one_workspace_keep_their_own_stage_start(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """**一个目录做两关**（指引式 provision：登记一次、一路用下去）时，各自的开始线不能串。
+
+    无实例维度的键 = 最近一次 provision；第二个实例若读它，就会拿**上一关的开始线**当基准 ⇒
+    diff 里又混进上一关的代码。所以两个基准都按实例分键。
+    """
+    from platform_api import grading_docker as mod
+
+    repo = tmp_path / "ws"
+    _init_repo(repo, {"stage1.xml": "skeleton", "stage2.xml": "skeleton"})
+    baseline = _git(repo, "rev-parse", "HEAD").strip()
+    # 第一关（ti-1）：开始线 = baseline，做完活提交
+    for key in ("bagu.baseRef.ti-1", "bagu.stageStart.ti-1", "bagu.baseRef", "bagu.stageStart"):
+        _git(repo, "config", key, baseline)
+    (repo / "stage1.xml").write_text("my stage-1 work\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "stage 1 done")
+    stage1_done = _git(repo, "rev-parse", "HEAD").strip()
+    # 第二关（ti-2，同一个目录）：开始线 = 刚交完第一关的样子
+    _git(repo, "config", "bagu.baseRef.ti-2", baseline)
+    _git(repo, "config", "bagu.stageStart.ti-2", stage1_done)
+    (repo / "stage2.xml").write_text("my stage-2 work\n", encoding="utf-8")
+
+    # ti-2：只有本阶段的活（上一关的 stage1.xml 落在他自己的开始线里）
+    assert mod._stage_changed_files(repo, "ti-2") == ["stage2.xml"]
+    # ti-1：它的开始线更早，所以那两处都算"它的改动"（这正是分实例的意义）
+    assert mod._stage_changed_files(repo, "ti-1") == ["stage1.xml", "stage2.xml"]
+    # 判定面与实例无关：都拿内容作者的版本比
+    assert mod._changed_files(repo, "ti-2") == ["stage1.xml", "stage2.xml"]
+
+
+def test_judged_surface_catches_tampering_that_predates_provision(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """**开题之前就把判据改了**也躲不掉：判定面比的是内容作者的版本，与学员的开始线无关。"""
+    repo = tmp_path / "ws"
+    (repo / "src" / "test").mkdir(parents=True, exist_ok=True)
+    _init_repo(repo, {"src/test/judged.java": "v1", "stage2.xml": "skeleton"})
+    baseline = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "src" / "test" / "judged.java").write_text("always green\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "tamper first")  # 先改判据，再 provision
+    _git(repo, "config", "bagu.baseRef", baseline)
+    _git(repo, "config", "bagu.stageStart", _git(repo, "rev-parse", "HEAD").strip())
+    (repo / "stage2.xml").write_text("my work\n", encoding="utf-8")
+
+    ticket = _ticket(ticket_factory, files_to_change=["stage2.xml"])
+    report = _ScriptedRunner(proc=_proc(returncode=0)).grade(
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=repo
+    )
+
+    # 人话那一份（相对他自己的开始线）看不见判据——它早就在他这条线里了
+    assert report.files_changed == ["stage2.xml"]
+    # 判定面那一份看得见，硬门据此 fail
+    assert "src/test/judged.java" in report.judged_surface_changes
+
+
+def test_missing_canonical_test_is_explained_in_plain_words(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """链式 Track 结构下最常见的一种红：本阶段基线没合进来 ⇒ 判据文件压根不在工作区。
+
+    那时 maven 的报错跟学员写的代码毫无关系，所以报告里要先把人话和一行命令放在最前面。
+    """
+    ticket = _ticket(ticket_factory)  # canonical_test = tests/ProductQueryIndexAcceptanceTest.java
+    proc = _proc(returncode=1, stdout="[ERROR] No tests were executed!\n")
+    report = _ScriptedRunner(proc=proc).grade(
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
+    )
+
+    detail = report.correctness.tests[0]["detail"]
+    assert "本阶段的验收测试不在工作区里" in detail
+    assert "git merge origin/" in detail
+    assert "No tests were executed" in detail  # 原始报错仍然留着，可自查
+
+
 # --- 声明的 performance 不被冒充为"已跑" ----------------------------------------
 
 

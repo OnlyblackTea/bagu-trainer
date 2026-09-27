@@ -124,10 +124,83 @@ def test_provision_clones_the_track_repo_and_creates_the_dev_branch(tmp_path: Pa
     # 基线记成 SHA（阅卷据此比出"学员改了什么"，含已提交的改动）
     baseline = git(ws.path, "config", "--get", "bagu.baseRef").stdout.strip()
     assert len(baseline) == 40
+    # 同时记下"开始这一阶段时他自己那条 dev"：刚 provision 出来时它就是基线本身
+    assert git(ws.path, "config", "--get", "bagu.stageStart").stdout.strip() == baseline
+    # 本来就是从这个分支开出来的 dev ⇒ 不需要"先合并基线"这条指令
+    assert ws.merge_hint is None
     # token 不许留在 .git/config 里
     assert git(ws.path, "remote", "get-url", "origin").stdout.strip() == str(fork_repo)
     # 幂等：再 provision 一次不炸、也不重置学员的分支
     assert client.provision(instance).path == ws.path
+
+
+@respx.mock
+def test_stale_baseline_from_a_rewritten_track_is_refreshed(tmp_path: Path) -> None:
+    """Track 被重写过（阶段分支换了 lineage）时，旧工作区里钉的旧 SHA 必须被换掉。
+
+    真踩过：把六条兄弟分支改造成一条链之后，老工作区里记的还是**旧**阶段分支的 SHA——它不是学员
+    ``dev`` 的祖先。判定面按它比，就会把"合并新基线带进来的验收测试"（``src/test/…``）算成"改了
+    判定面"⇒ 硬门 fail，而那次合并完全干净。
+    """
+    repo = _local_repo(tmp_path)
+    git(repo, "checkout", "-q", "-b", "side")  # 另一条 lineage（模拟被重写掉的那条）
+    (repo / "old.txt").write_text("old lineage\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "old lineage")
+    stale = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "checkout", "-q", "main")
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
+        return_value=httpx.Response(200, json={"clone_url": str(repo)})
+    )
+    client = _client(tmp_path)
+    ws = client.provision(_instance())
+    # 人为把记录改成"旧 lineage 的 SHA"（= 重构前 provision 出来的工作区）
+    git(ws.path, "config", "bagu.baseRef", stale)
+    git(ws.path, "config", "bagu.stageStart", stale)
+
+    fresh = client.provision(_instance())
+
+    recorded = git(ws.path, "config", "--get", "bagu.baseRef").stdout.strip()
+    assert recorded != stale
+    assert recorded == git(ws.path, "rev-parse", "origin/main").stdout.strip()
+    assert fresh.merge_hint is None
+
+
+@respx.mock
+def test_merge_hint_appears_only_while_the_stage_baseline_is_unmerged(tmp_path: Path) -> None:
+    """进入下一阶段时，平台要在界面上给出那句 ``git merge origin/<stage>``。
+
+    为什么值得有：链式 Track 结构下**本阶段的验收测试住在阶段分支上**，他的 ``dev`` 是从上一关
+    那条线长出来的、天然不含它。不做这次合并，工作区里就没有判据——``mvn -Dgroups=stage0N`` 一条
+    用例都跑不到，红在一个跟代码无关的地方（真踩过）。合并只加不删，所以这条指令可以照抄；而
+    已经合过的人不该再看到它。
+    """
+    repo = _local_repo(tmp_path)  # main = 骨架
+    skeleton = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "checkout", "-q", "-b", "stage-02")
+    (repo / "stage02-tests.txt").write_text("stage-02 判据\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "stage-02 baseline")
+    git(repo, "checkout", "-q", "-b", "dev", skeleton)  # 学员那条跨阶段累积的线
+    (repo / "work.txt").write_text("my stage-1 work\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "stage 1 done")
+    git(repo, "checkout", "-q", "stage-02")
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
+        return_value=httpx.Response(200, json={"clone_url": str(repo)})
+    )
+    refs = {"db-stage-02": "stage-02"}
+    client = _client(tmp_path, stage_refs=refs)
+
+    ws = client.provision(_instance("db-stage-02"))
+
+    assert ws.merge_hint is not None
+    assert "git merge origin/stage-02" in ws.merge_hint
+
+    # 照做一遍：合进来之后就不该再给这条命令
+    git(ws.path, "fetch", "-q", "origin")
+    git(ws.path, "merge", "-q", "--no-edit", "origin/stage-02")
+    assert client.provision(_instance("db-stage-02")).merge_hint is None
 
 
 @respx.mock

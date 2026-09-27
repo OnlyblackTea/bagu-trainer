@@ -36,9 +36,15 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from .models import TicketInstance
+from .review_diff import drop_baseline_files, generate_diff
 
 #: 学员干活的开发分支名（§C.5：``head_ref`` = 学员的开发 ref）。
 DEV_BRANCH = "dev"
+
+#: 本地 git config 里记的两个基准（用途不同，见 :func:`remember_baseline`）：
+#: 内容作者的版本（阶段分支）与"学员开始这一阶段时的 dev"。
+BASELINE_CONFIG = "bagu.baseRef"
+STAGE_START_CONFIG = "bagu.stageStart"
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,11 @@ class Workspace:
     #: 学员想**在自己的目录里**拉取时照抄的命令（指引式 provision）。``None`` = 这个后端没有可推的
     #: 远端（桩），给了会把人骗去跑一条注定失败的命令。
     clone_hint: str | None = None
+    #: **还没把本阶段基线合进 dev** 时才给的一句命令（``git merge origin/<stage>``）。
+    #: 链式 Track 结构下这条合并只加不删（相对分岔点只有"新增本阶段验收测试"），所以它是可照抄的；
+    #: 不做它的症状很难自查——判据文件根本不在工作区里，``mvn -Dgroups=`` 一条用例都跑不到。
+    #: 已经合过（或本来就从该分支开出来的 dev）就是 ``None``：不给人一条多余的指令。
+    merge_hint: str | None = None
 
 
 class WorkspaceRefMissingError(Exception):
@@ -106,7 +117,7 @@ class ForgeUnavailableError(RuntimeError):
     """
 
 
-# --- 本地 git 工作区（两个 Forge 共用：只有"仓库从哪来"和"PR 怎么建"不同）-----------
+# --- 本地 git 工作区（两个 Forge 共用：只有"仓库从哪来"不同）-------------------------
 
 
 def stage_branch_for(ticket_id: str, stage_refs: Mapping[str, str]) -> str:
@@ -186,18 +197,125 @@ def _absolute_clone_url(clone_url: str) -> str:
     return str(Path(clone_url).resolve())
 
 
-def remember_baseline(repo: Path, base_ref: str) -> str:
+def remember_baseline(repo: Path, base_ref: str, *, instance_id: str | None = None) -> str:
     """把**基线 ref 解析成 SHA** 记进本地 git config（``bagu.baseRef``），返回它。
 
-    为什么必须是解析好的 SHA、不能记 ``HEAD``：``HEAD`` 会随学员的提交一起前移，等于永远比不出
-    东西（这个坑测试里踩过）。幂等：已经记过就不覆盖。
+    为什么要记 SHA、不能记 ``HEAD``：``HEAD`` 会随学员的提交一起前移，等于永远比不出东西
+    （这个坑测试里踩过）。幂等：同一个实例重复 provision 不覆盖。
+
+    记两个基准，用途不同（见 :func:`judged_base` / :func:`diff_base`）：
+
+    * ``bagu.baseRef`` = **内容作者的版本**（那个阶段分支）；
+    * ``bagu.stageStart`` = **开始这一阶段时学员那条 dev 所在的提交**。
+
+    **两个都按实例分键**（``bagu.baseRef.<instance.id>``）：工作区可以被多个实例共用——"指引式"
+    provision 就是学员在自己那个目录里做**每一关**（登记一次、一路用下去）。只用无实例维度的键，
+    第二关就会读到第一关钉下的"开始线"，于是 diff 里又混进上一关的代码——正是这套基准要消灭的东西。
+    无实例维度的键仍然写（= 最近一次 provision），给不认识实例 id 的读者与老工作区兜底。
     """
-    existing = git(repo, "config", "--get", "bagu.baseRef", check=False).stdout.strip()
-    if existing:
-        return existing
+    scoped_base = _scoped(BASELINE_CONFIG, instance_id)
+    recorded = _config_get(repo, scoped_base) or _config_get(repo, BASELINE_CONFIG)
     resolved = git(repo, "rev-parse", base_ref).stdout.strip()
-    git(repo, "config", "bagu.baseRef", resolved)
-    return resolved
+    # **Track 被重写过**（阶段分支换了一条 lineage）时，旧记录已经不是 HEAD 的祖先——它在另一条线上。
+    # 继续拿它当判定面基准，会把"合并新基线带进来的判据文件"（`src/test/…`）误判成"改了判定面"，
+    # 而那是一次干净的合并。所以认出来就**改用当前分支**，并把开始线重设成现在。
+    # （实测来源：把六条兄弟分支改造成一条链之后，旧工作区里钉的正是旧 lineage 的 SHA。）
+    if recorded and not is_ancestor(repo, recorded):
+        recorded = None
+    if recorded is None:
+        recorded = resolved
+        # 开始线**只在第一次 provision 时**钉：重复 provision 不能把它往后推。
+        head = git(repo, "rev-parse", "HEAD", check=False).stdout.strip()
+        start = head or recorded
+        git(repo, "config", _scoped(STAGE_START_CONFIG, instance_id), start)
+        git(repo, "config", STAGE_START_CONFIG, start)
+    git(repo, "config", scoped_base, recorded)
+    git(repo, "config", BASELINE_CONFIG, recorded)
+    return recorded
+
+
+def _config_get(repo: Path, key: str) -> str | None:
+    value = git(repo, "config", "--get", key, check=False).stdout.strip()
+    return value or None
+
+
+def _scoped(key: str, instance_id: str | None) -> str:
+    """按实例分键：同一个工作区被多个实例共用时（指引式 provision），各自的开始线不能串。"""
+    return key if not instance_id else f"{key}.{instance_id}"
+
+
+def merge_base(repo: Path, ref: str) -> str | None:
+    """``ref`` 与 ``HEAD`` 的分岔点（没有共同祖先 ⇒ ``None``）。
+
+    判定面比对要的正是这个点：把"内容作者的版本"和"学员这一侧的改动"放在可比的基准上。
+    直接用分支 tip 会在"学员还没把基线合进来"时把**基线自带的文件**报成"他删了验收测试"。
+    """
+    out = git(repo, "merge-base", ref, "HEAD", check=False).stdout.strip()
+    return out or None
+
+
+def stage_start(repo: Path, instance_id: str | None = None) -> str | None:
+    """provision 时记下的"开始这一阶段时你自己那条 dev"（见 :func:`remember_baseline`）。"""
+    return _config_get(repo, _scoped(STAGE_START_CONFIG, instance_id)) or _config_get(
+        repo, STAGE_START_CONFIG
+    )
+
+
+def baseline_sha(repo: Path, instance_id: str | None = None) -> str | None:
+    """provision 时记下的**内容作者的版本**（阶段分支当时那个 SHA）。"""
+    return _config_get(repo, _scoped(BASELINE_CONFIG, instance_id)) or _config_get(
+        repo, BASELINE_CONFIG
+    )
+
+
+def judged_base(repo: Path, instance_id: str | None = None) -> str | None:
+    """**判定面**比对用的基准：内容作者的版本与 HEAD 的分岔点。"""
+    recorded = baseline_sha(repo, instance_id)
+    if not recorded:
+        return None
+    return merge_base(repo, recorded) or recorded
+
+
+def diff_base(repo: Path, base_ref: str, instance_id: str | None = None) -> str:
+    """**"这一阶段你改了什么"**该拿哪个提交当基准（diff / 评审 / 越界提醒都用它）。
+
+    优先 ``bagu.stageStart``（开始这一阶段时你自己那条 dev）；老工作区没有这个记录时退回
+    ``merge-base(base_ref, HEAD)``（与本阶段基线的分岔点），最后才是 ``base_ref`` 本身。
+    绝不用 ``HEAD``：那会永远比不出东西。
+    """
+    start = stage_start(repo, instance_id)
+    if start:
+        return start
+    return merge_base(repo, base_ref) or base_ref
+
+
+def learner_diff(ws: Workspace, instance_id: str | None = None) -> str:
+    """界面与评审里那个 diff：**"这一阶段你改了什么"**（唯一口径，别再各处自己拼）。
+
+    两件事合起来才构成这个口径：
+
+    * 基准是 :func:`diff_base`（开始这一阶段时他自己那条 dev），不是阶段分支 tip——dev 是跨
+      阶段累积的，拿 tip 比会把上一关写的代码也算进来；
+    * 与阶段基线**逐字节相同**的文件整块剔掉：那是基线自带的东西（本阶段的验收测试），不是学员
+      写的。``src/test/`` 属于判定面，留在 diff 里会被判成"改了判据"。
+
+    只有"和工作区比"（``diff_head_ref is None``）时才剔：桩的 diff 另一端是内容预置的解法 ref，
+    工作区里躺的仍是骨架，按内容剔会把整份 diff 剔空。
+    """
+    base = diff_base(ws.path, ws.base_ref, instance_id)
+    text = generate_diff(ws.path, base=base, head=ws.diff_head_ref)
+    if ws.diff_head_ref is not None:
+        return text
+    return drop_baseline_files(ws.path, text, baseline=ws.base_ref)
+
+
+def is_ancestor(repo: Path, ref: str) -> bool:
+    """``ref`` 是不是 ``HEAD`` 的祖先——即"本阶段的基线已经合进来了"。
+
+    用它决定要不要给 ``merge_hint``：已经合过（或 dev 本来就从阶段分支开出来的）就不给，
+    免得指一条多余的命令。也用于把"判据文件为什么不在工作区里"说清楚。
+    """
+    return git(repo, "merge-base", "--is-ancestor", ref, "HEAD", check=False).returncode == 0
 
 
 def taken_over_workspace(instance: TicketInstance, fallback: Path) -> Path:
@@ -211,12 +329,18 @@ def taken_over_workspace(instance: TicketInstance, fallback: Path) -> Path:
 
 
 def prepare_workspace(
-    *, dest: Path, clone_url: str, base_ref: str, make_dev_branch: bool
+    *,
+    dest: Path,
+    clone_url: str,
+    base_ref: str,
+    make_dev_branch: bool,
+    instance_id: str | None = None,
 ) -> Path:
     """把工作区准备到"学员可以开始写"的状态（两个 Forge 共用，幂等）。
 
     做四件事：clone（已存在就跳过）、校验阶段分支存在、把 ``dev`` 准备好、把基线记进 git config
-    （见 :func:`remember_baseline`）。
+    （见 :func:`remember_baseline`；``instance_id`` 会让它**按实例分键**——同一个目录被多个实例
+    共用时，各自的"开始线"不能串）。
 
     ``dev`` 的优先级是**本地已有 > 远端已有 > 从阶段分支新建**。第二条是必须的：学员的 ``dev``
     是跨阶段累积的那条线（§C.5：通过一关后把下一阶段的分支合入 ``dev``）。若每次都
@@ -246,7 +370,7 @@ def prepare_workspace(
             git(dest, "checkout", "-q", "-b", DEV_BRANCH, remote_dev)
         else:
             git(dest, "checkout", "-q", "-b", DEV_BRANCH, base_ref)
-    remember_baseline(dest, base_ref)
+    remember_baseline(dest, base_ref, instance_id=instance_id)
     return dest
 
 

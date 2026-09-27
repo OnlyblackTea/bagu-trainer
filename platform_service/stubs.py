@@ -84,6 +84,8 @@ class StubGradingRunner:
                 ],
             ),
             files_changed=list(ticket.scope.files_to_change),
+            # 桩没有真工作区可比，两份"改过的文件"只能是同一个（= 该 ticket 让它改的那几个）。
+            judged_surface_changes=list(ticket.scope.files_to_change),
         )
 
 
@@ -197,7 +199,11 @@ class StubForgeClient:
         # 桩**不**建 dev 分支：没有人真的写代码，diff 两端都是内容预置的 ref。
         # 用 prepare_workspace 返回的路径（绝对）建 Workspace，见其 docstring。
         dest = prepare_workspace(
-            dest=dest, clone_url=str(self._source), base_ref=base_ref, make_dev_branch=False
+            dest=dest,
+            clone_url=str(self._source),
+            base_ref=base_ref,
+            make_dev_branch=False,
+            instance_id=instance.id,
         )
         must_have_ref(
             dest,

@@ -107,6 +107,13 @@ export interface WorkspaceOut {
   /** 学员想在自己的目录里拉取时照抄的命令（指引式 provision）。 */
   clone_hint: string | null
   /**
+   * **还没把本阶段基线合进 dev** 时才给：一句 `git merge origin/<stage>`（真 Gitea 才有）。
+   *
+   * 链式 Track 结构下本阶段的验收测试住在阶段分支上，`dev` 是从上一关那条线长出来的、天然不含它；
+   * 不合进来工作区里就没有判据（红在一个跟代码无关的地方）。`null` = 已经合过 / 用不上。
+   */
+  merge_hint: string | null
+  /**
    * `path` 在**部署者机器上**的路径（容器化部署才会给；绑定的同一目录）。
    *
    * 界面必须显示它：容器里的 `/var/lib/bagu/ws/...` 对在自己电脑上写代码的人毫无意义。
@@ -143,6 +150,10 @@ export interface DiffOut {
   base_ref: string
   head_ref: string
   diff_head_ref: string | null
+  /** 真正拿来比的提交：**开始这一阶段时你自己那条 dev**（`base_ref` 是阶段基线，两者不同）。 */
+  diff_base: string
+  /** `'stage_start'` = 上面那个基准；`'stage_branch'` = 老工作区没记录，退回阶段分支。 */
+  diff_base_kind: 'stage_start' | 'stage_branch'
   /** `true` = 比的是工作区（含未提交改动），而不是某条 ref。 */
   worktree: boolean
   diff: string

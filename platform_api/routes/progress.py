@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from platform_service.ai_review import generate_review
-from platform_service.review_diff import generate_diff
+from platform_service.forge import learner_diff
 
 from ..jobs import ERROR_STATUS
 from ..schemas import (
@@ -268,7 +268,8 @@ async def review(
     instance = state.store.get_instance(submission.instance_id)
     bundle = bundle_for_instance(request, instance)
     workspace = bundle.forge.provision(instance)
-    diff = generate_diff(workspace.path, base=workspace.base_ref, head=workspace.head_ref)
+    # 评审看的 diff 与界面上的 diff 是**同一个口径**（"这一阶段你改了什么"，见 learner_diff）。
+    diff = learner_diff(workspace, instance.id)
     engine = state.review_engine(scenario)
     review_obj = await generate_review(
         engine,

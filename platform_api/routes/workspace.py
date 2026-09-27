@@ -13,7 +13,8 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from platform_service.review_diff import generate_diff, preflight_diff_volume
+from platform_service.forge import diff_base, learner_diff, stage_start
+from platform_service.review_diff import preflight_diff_volume
 
 from ..deps import host_visible_path
 from ..schemas import WorkspaceRequest, sync_out, workspace_out
@@ -95,17 +96,27 @@ def diff(instance_id: str, request: Request) -> dict[str, Any]:
     ``sync`` 是**只读**对账：远端若比你这边新，这里会如实报出来（``remote_only_changes``）——
     否则学员在另一台机器上 push 完，回来看 diff 只会看到"没有改动"，而真实原因是这份工作区还没
     拉下来。
+
+    **比的是"你开始这一阶段时的 dev"**（provision 时钉下的 ``bagu.stageStart``），不是阶段分支
+    tip：dev 是跨阶段累积的，拿 tip 比会把上一关写的代码也算成"本阶段的改动"（链式 Track 结构下
+    阶段基线不含之前阶段的实现，所以那是必然的）。与基线逐字节相同的文件（本阶段的验收测试）
+    会被剔掉——那不是学员写的东西，见 ``review_diff.drop_baseline_files``。
     """
     instance = must_instance(request, instance_id)
     bundle = bundle_for_instance(request, instance)
     ws = bundle.forge.provision(instance)  # 幂等：确保已 clone
     sync = probe_sync(ws)
-    text = generate_diff(ws.path, base=ws.base_ref, head=ws.diff_head_ref)
+    text = learner_diff(ws, instance.id)
     volume = preflight_diff_volume(text)
     return {
         "base_ref": ws.base_ref,
         "head_ref": ws.head_ref,
         "diff_head_ref": ws.diff_head_ref,
+        # 与 base_ref 分开报：真正拿来比的是"你开始这一阶段时的那份 dev"，界面据此说人话。
+        "diff_base": diff_base(ws.path, ws.base_ref, instance.id),
+        "diff_base_kind": (
+            "stage_start" if stage_start(ws.path, instance.id) else "stage_branch"
+        ),
         # head 为 None ⇒ 和工作区比。前端据此把"比较的是什么"说清楚，而不是笼统写 base ↔ head。
         "worktree": ws.diff_head_ref is None,
         "diff": text,

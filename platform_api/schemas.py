@@ -83,6 +83,9 @@ def workspace_out(ws: Workspace) -> dict[str, Any]:
         "push_hint": ws.push_hint,
         # 学员想在自己的目录里拉取时照抄的命令（指引式 provision）。
         "clone_hint": ws.clone_hint,
+        # **还没把本阶段基线合进 dev** 时才给：一句 `git merge origin/<stage>`。链式 Track 结构下
+        # 本阶段的验收测试就在那个分支上，不合进来工作区里没有判据（见 Workspace.merge_hint）。
+        "merge_hint": ws.merge_hint,
         "simulated": ws.simulated,
     }
 

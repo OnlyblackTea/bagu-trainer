@@ -254,6 +254,16 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
             </div>
           )}
 
+          {workspace.merge_hint && (
+            <div className="hint-block" data-testid="merge-hint">
+              <p className="muted">
+                进入本阶段前先把<strong>本阶段基线</strong>合进 <code>dev</code>：验收测试就在那个分支上，
+                不合进来工作区里没有判据（照抄下面这条就行，它只加不删、不会和你写的实现打架）：
+              </p>
+              <pre className="cmd">{workspace.merge_hint}</pre>
+            </div>
+          )}
+
           {workspace.push_hint && (
             <div className="hint-block" data-testid="push-hint">
               <p className="muted">
@@ -284,6 +294,8 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
           <p className="muted">
             {diff.base_ref} ↔ {diff.diff_head_ref ?? '工作区（含未提交改动）'}
             {diff.worktree && ' ⇐ 你现在看到的包含还没 commit 的改动'}
+            {diff.diff_base_kind === 'stage_start' &&
+              ' · 比的是「你开始这一阶段时的那份 dev」，所以这里只有本阶段的改动'}
             {diff.truncated_files.length > 0 && ` · 被截断：${diff.truncated_files.join('、')}`}
           </p>
           {diff.diff.trim() === '' ? (

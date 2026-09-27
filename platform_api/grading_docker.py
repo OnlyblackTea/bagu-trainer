@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from platform_service.forge import baseline_sha, judged_base, stage_start
 from platform_service.grading import GradingStep, ProgressReporter, report_progress
 from platform_service.models import (
     GradingReport,
@@ -46,6 +47,7 @@ from platform_service.models import (
     TicketSpec,
     TrackManifest,
 )
+from platform_service.review_diff import changed_files
 
 __all__ = ["DockerGradingRunner", "GradingUnavailableError"]
 
@@ -173,24 +175,71 @@ def _revision(workspace: Path) -> str | None:
     return (out or "").strip() or None
 
 
-def _changed_files(workspace: Path) -> list[str]:
-    """学员在工作区里改了哪些文件（相对仓库根、正斜杠）。
+def _changed_files(workspace: Path, instance_id: str | None = None) -> list[str]:
+    """**判定面**比对用：相对"内容作者的版本"被动过的文件。
 
-    优先按 provision 时记下的基线 ref 比（``git config bagu.baseRef``）——那样**已提交**的改动
-    也算数。**记的必须是一个解析好的 ref/SHA，不能是 ``HEAD``**：``HEAD`` 会随学员的提交一起
-    前移，等于永远比不出东西来（这个坑测试里踩过，见 ``test_recorded_base_ref_...``）。
+    基准取 ``merge-base(bagu.baseRef, HEAD)``（见 :func:`~platform_service.forge.judged_base`）
+    ——那是"学员这一侧"与"内容作者那一版"的分岔点。为什么不用 ``bagu.baseRef`` 本身（阶段分支
+    tip）：链式 Track 结构下，学员还没把本阶段基线合进来时，他的 dev 里**压根没有**那些判据文件，
+    拿 tip 比就会报成"他删了验收测试"——把人送进一个假的判定面告警。分岔点让他合没合过基线都不
+    冤枉他；而"基线没合进来"这件事另有更直白的说法（见 :func:`_missing_canonical_test`）。
+
+    **记的必须是一个解析好的 ref/SHA，不能是 ``HEAD``**：``HEAD`` 会随学员的提交一起前移，等于
+    永远比不出东西来（这个坑测试里踩过，见 ``test_recorded_base_ref_...``）。
 
     没记基线、或记的 ref 在当前仓库里解析不了（克隆换过、分支被删），就退回工作树相对 ``HEAD``
     的改动 + 未跟踪文件。两条路都拿不到证据时返回空列表。
     """
-    base = _git(workspace, "config", "--get", "bagu.baseRef")
-    if base and base.strip():
-        out = _git(workspace, "diff", "--name-only", base.strip())
+    base = judged_base(workspace, instance_id)
+    if base:
+        out = _git(workspace, "diff", "--name-only", base)
         if out is not None:
             return sorted(_parse_name_only(out))
     names = _parse_name_only(_git(workspace, "diff", "--name-only", "HEAD") or "")
     names |= _parse_porcelain(_git(workspace, "status", "--porcelain") or "")
     return sorted(names)
+
+
+def _stage_changed_files(workspace: Path, instance_id: str | None = None) -> list[str]:
+    """**"这一阶段你改了什么"**：相对"开始这一阶段时你自己那条 dev"算。
+
+    与 :func:`_changed_files` 是两个问题，别混：那个问"判定面有没有被动"（基准是内容作者的版本，
+    跟学员自己的历史无关），这个问"这一关你写了什么"（基准是他上一关交卷时的样子）。用错基准的
+    后果都很难看——拿阶段分支 tip 当"我改了什么"，一进入第二关就会把他上一关写的代码全列进来。
+
+    两个基准都**按实例取**（``instance_id``）：同一个工作区被后续阶段的实例复用（指引式
+    provision）时，各自的开始线不能串。
+
+    老工作区（``provision`` 之前记的，没有 ``bagu.stageStart``）退回判定面那一份：宁可多列几个
+    文件，也不要凭空说"没有改动"。
+    """
+    base = stage_start(workspace, instance_id)
+    if not base:
+        return _changed_files(workspace, instance_id)
+    return changed_files(
+        workspace, base=base, baseline=baseline_sha(workspace, instance_id)
+    )
+
+
+def _missing_canonical_test(workspace: Path, ticket: TicketSpec) -> str | None:
+    """本阶段的验收测试是不是**根本不在工作区里**（链式 Track 结构下这是最常见的一种红）。
+
+    在就往回给一句能照抄的命令。起因：阶段分支 = 上一阶段分支 + **本阶段测试**，所以"没把
+    ``origin/<stage>`` 合进 dev"的直接后果是判据文件缺失 —— ``mvn -Dgroups=stage0N`` 一条用例
+    都跑不到，surefire 不出报告，学员只会看到一条 maven 报错，而那跟他写的代码毫无关系。
+    这里把它翻译成人话 + 一行命令。
+    """
+    declared = (ticket.grader.correctness.canonical_test or "").strip()
+    if not declared:
+        return None
+    path = workspace / declared
+    if path.exists():
+        return None
+    return (
+        f"本阶段的验收测试不在工作区里：{declared} —— 你还没把本阶段基线合进 dev。"
+        "跑一句 `git merge origin/<本阶段的分支>`（阶段分支 = 上一阶段分支 + 本阶段测试，"
+        "只加不删，不会和你写的实现打架），再提交。"
+    )
 
 
 class DockerGradingRunner:
@@ -352,20 +401,24 @@ class DockerGradingRunner:
         if not results:
             # 没有 surefire 报告 = 根本没跑到测试（编译失败、依赖拉不下来、超时……）。
             # 这条必须留下，否则学员只看到一个没头没脑的 passed=False。
-            results = [
-                {
-                    "name": " ".join(command),
-                    "status": "error",
-                    "detail": (
-                        stderr.strip()[:_MAX_DETAIL]
-                        if timed_out
-                        else _first_error_line(stdout or stderr)
-                    ),
-                }
-            ]
+            detail = (
+                stderr.strip()[:_MAX_DETAIL]
+                if timed_out
+                else _first_error_line(stdout or stderr)
+            )
+            # 链式 Track 结构下最常见的一种：本阶段的验收测试压根不在工作区里（基线没合进来）。
+            # 那种情况 maven 的报错跟他写的代码毫无关系，所以先把人话放在最前面。
+            missing = _missing_canonical_test(workspace, ticket)
+            if missing:
+                detail = f"{missing}｜maven 原始输出：{detail}"
+            results = [{"name": " ".join(command), "status": "error", "detail": detail}]
         passed = exit_code == 0 and all(r["status"] == "pass" for r in results)
 
-        changed = _changed_files(workspace)
+        # 两份"改过的文件"，问的是两个不同的问题（见两个函数的 docstring）：
+        #   * stage_changed —— "这一关你写了什么"（报告里的人话、越界提醒用它）
+        #   * judged        —— "内容作者的判定面有没有被动"（硬门用它）
+        stage_changed = _stage_changed_files(workspace, instance.id)
+        judged = _changed_files(workspace, instance.id)
         in_scope = {p.replace("\\", "/") for p in ticket.scope.files_to_change}
 
         return GradingReport(
@@ -397,8 +450,11 @@ class DockerGradingRunner:
             ),
             correctness=ReportCorrectness(test_group=group, passed=passed, tests=results),
             performance=self._performance_field(ticket),
-            files_changed=changed,
-            out_of_scope_edits=sorted(set(changed) - in_scope),
+            # "这一关你改了什么"（相对你开始这一阶段时的那份 dev）：报告里给人看的就是它。
+            files_changed=stage_changed,
+            out_of_scope_edits=sorted(set(stage_changed) - in_scope),
+            # "内容作者的判定面有没有被动"：硬门用它。两者基准不同，见上面两个函数。
+            judged_surface_changes=judged,
         )
 
     @staticmethod

@@ -127,6 +127,45 @@ def test_decide_fails_when_the_judged_surface_was_edited(env: Any) -> None:
     assert _live(env.store, "db-stage-00").state is InstanceState.FAILED
 
 
+def test_decide_uses_the_judged_surface_list_not_the_stage_list(env: Any) -> None:
+    """硬门比对的是 ``judged_surface_changes``（相对**内容作者的版本**），不是 ``files_changed``。
+
+    两者问的是不同问题：``files_changed`` = "这一关你写了什么"（基准是学员开始这一阶段时的自己），
+    ``judged_surface_changes`` = "判据有没有被动"（基准与学员自己的历史无关）。用错前者的后果是：
+    学员只要在**开题之前**就把测试改掉，那份改动就落在"开始线"里，从此再也看不见。
+    """
+    env.service.enroll(_LEARNER)
+    inst = _live(env.store, "db-stage-00")
+    env.service.start(inst.id)
+    claim = env.report(
+        passed=True,
+        files_changed=["src/main/ProductMapper.xml"],  # 他自己这一关写的
+        judged_surface_changes=["src/test/java/AcceptanceTest.java"],  # 判据被动过
+    )
+    submission = env.service.submit(inst.id, grading_report=GradingReport.model_validate(claim))
+    env.service.review(submission.id, _make_review(submission.id, Recommendation.APPROVE))
+
+    decision = env.service.decide(submission.id)
+
+    assert decision.inputs.tampering == ["src/test/java/AcceptanceTest.java"]
+    assert decision.verdict is Verdict.FAIL
+
+
+def test_decide_falls_back_to_files_changed_for_reports_from_older_platforms(env: Any) -> None:
+    """本特性之前落的库没有 ``judged_surface_changes``，那时两者本来就是同一个东西。"""
+    env.service.enroll(_LEARNER)
+    inst = _live(env.store, "db-stage-00")
+    env.service.start(inst.id)
+    claim = env.report(passed=True, files_changed=["src/test/java/AcceptanceTest.java"])
+    claim.pop("judged_surface_changes", None)
+    submission = env.service.submit(inst.id, grading_report=GradingReport.model_validate(claim))
+    env.service.review(submission.id, _make_review(submission.id, Recommendation.APPROVE))
+
+    decision = env.service.decide(submission.id)
+
+    assert decision.inputs.tampering == ["src/test/java/AcceptanceTest.java"]
+
+
 def test_decide_ignores_changes_outside_the_judged_surface(env: Any) -> None:
     """越界但不在判定面的改动（比如业务文件、随手笔记）不该硬拦——那只是告警。"""
     env.service.enroll(_LEARNER)

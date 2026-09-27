@@ -122,6 +122,43 @@ def test_generate_diff_uses_git_default_prefix(tmp_path: Path) -> None:
     assert "+++ b/foo.py" in diff
 
 
+def test_drop_baseline_files_removes_only_files_identical_to_the_baseline(
+    tmp_path: Path,
+) -> None:
+    """链式 Track 结构下"本阶段的验收测试"会跟着 merge 进工作区。
+
+    它不是学员写的东西，却会出现在"相对你开始这一阶段"的 diff 里；``src/test/`` 又是判定面，
+    留着会被判成"改了判据"。这条钉住：**内容相同的整块剔掉，内容不同的留下**。
+    """
+    repo = _repo_with_one_change(tmp_path)  # HEAD = "new"，工作区也是 "new"
+    baseline = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "mine.py").write_text("mine\n", encoding="utf-8")  # 新文件（未跟踪）
+
+    # 相对 HEAD~1 的 diff 里两块都有：foo.py（HEAD 带来的）+ mine.py（我新写的）
+    diff = review_diff.generate_diff(repo, base="HEAD~1")
+    assert "foo.py" in diff
+    pruned = review_diff.drop_baseline_files(repo, diff, baseline=baseline)
+    assert "foo.py" not in pruned  # 与基线逐字节相同 ⇒ 不是我写的
+    assert "foo.py" in review_diff.generate_diff(repo, base="HEAD~1")  # 没被改坏
+
+    # 真改了 foo.py（内容与基线不同）⇒ 必须留下，否则"改了判据"就看不见了
+    (repo / "foo.py").write_text("new + tampered\n", encoding="utf-8")
+    tampered = review_diff.drop_baseline_files(
+        repo, review_diff.generate_diff(repo, base="HEAD~1"), baseline=baseline
+    )
+    assert "foo.py" in tampered
+
+
+def test_changed_files_drops_baseline_files_but_keeps_new_ones(tmp_path: Path) -> None:
+    """``changed_files(base=..., baseline=...)``：剔掉基线自带的那份，留下学员真写的。"""
+    repo = _repo_with_one_change(tmp_path)
+    baseline = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "mine.py").write_text("new file\n", encoding="utf-8")
+
+    assert review_diff.changed_files(repo, base="HEAD~1") == ["foo.py", "mine.py"]
+    assert review_diff.changed_files(repo, base="HEAD~1", baseline=baseline) == ["mine.py"]
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [("diff.noprefix", "true"), ("diff.mnemonicPrefix", "true")],

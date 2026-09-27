@@ -22,6 +22,7 @@ const REAL_WS: WorkspaceOut = {
   push_hint: 'git add -A && git commit -m "stage 完成" && git push -u origin dev',
   clone_hint:
     'git clone http://127.0.0.1:3000/deployer/seckill-lab.git ~/my-bagu-stage-01\ncd ~/my-bagu-stage-01\ngit checkout -b dev origin/stage-01-product-query-index',
+  merge_hint: null,
   simulated: false,
 }
 
@@ -40,6 +41,8 @@ function diffOut(over: Partial<DiffOut> = {}): DiffOut {
     base_ref: 'origin/stage-01-product-query-index',
     head_ref: 'dev',
     diff_head_ref: null,
+    diff_base: 'abcdef0123456789',
+    diff_base_kind: 'stage_start',
     worktree: true,
     diff: 'diff --git a/src/x.sql b/src/x.sql\n+CREATE INDEX idx_product_search\n',
     total_chars: 64,
@@ -190,6 +193,22 @@ describe('真 Forge（gitea）', () => {
     const command = push.querySelector('pre')?.textContent ?? ''
     expect(command).toContain('git push -u origin dev')
     expect(command).not.toMatch(/token|oauth|@|:\/\//)
+  })
+
+  it('还没合本阶段基线时，把「先 git merge origin/<stage>」这条命令递到眼前', async () => {
+    await openFlow({
+      '/instances/ti-1/provision': {
+        ...REAL_WS,
+        merge_hint: 'git merge origin/stage-02-order-transaction   # 本阶段的验收测试在这个分支上',
+      },
+      '/instances/ti-1/diff': diffOut({ base_ref: 'origin/stage-02-order-transaction' }),
+    })
+
+    const hint = screen.getByTestId('merge-hint')
+    expect(hint).toHaveTextContent('本阶段基线')
+    expect(hint.querySelector('pre')?.textContent).toContain('git merge origin/stage-02-order-transaction')
+    // 说明里必须点出"验收测试在它上面"：这才是学员非做不可的理由
+    expect(hint).toHaveTextContent('验收测试就在那个分支上')
   })
 
   it('diff 说清"比的是工作区（含未提交）"，而不是笼统 base ↔ head', async () => {

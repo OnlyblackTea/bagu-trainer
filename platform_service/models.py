@@ -363,6 +363,11 @@ class GradingReport(_Strict):
     lint: dict[str, Any] = Field(default_factory=dict)
     files_changed: list[str] = Field(default_factory=list)
     out_of_scope_edits: list[str] = Field(default_factory=list)
+    #: **判定面**：相对"内容作者的版本"（阶段基线）被动过的文件。与 ``files_changed`` 是两个问题
+    #: ——那个问"这一关你写了什么"（基准是学员自己开始这一阶段时的 dev），这个问"判据有没有被动"
+    #: （基准与学员的历史无关，所以"我一开题就把测试改了"躲不掉）。硬门（§11.3 的 ``tampering``）
+    #: 用这一份；旧报告没有这个字段时回落到 ``files_changed``。
+    judged_surface_changes: list[str] = Field(default_factory=list)
 
 
 class ReviewComment(_Strict):

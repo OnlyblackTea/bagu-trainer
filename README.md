@@ -257,8 +257,10 @@ python -m platform_api.serve --content-dir ../seckill-lab --forge gitea
 |---|---|---|
 | `provision` | 本地 clone 源仓，**不建 `dev`** | clone **上游仓**（`BAGU_GITEA_UPSTREAM`），建好 `dev`，配好 push 凭据与 git 身份 |
 | `dev` 的起点 | —— | **本地已有 > 远端已有 > 从阶段分支新建**（学员那条 `dev` 是跨阶段累积的，不该被平台清掉——重建会让下一次 `git push` 被拒） |
-| diff 比什么 | `origin/<stage>` ↔ `origin/<stage>-sol`（预置解法，`simulated=true`） | `origin/<stage>` ↔ **你的工作区**（**含未提交改动**，`simulated=false`） |
-| 报错 | — | Gitea 连不上/认证失败 → **503 `forge_unavailable`**；你还没 push `dev` → 工作区对账会给 `behind`/`missing`，前端提示你先 push（不再是 409） |
+| 进入下一阶段 | —— | 阶段分支是**一条链**（`stage-0N` 的父亲 = `stage-0(N-1)`，每级只多本阶段测试）⇒ 一次**只加不删**的 `git merge origin/<stage>`。没合时 `provision` 会给出 `merge_hint`，界面直接显示这条命令 |
+| diff 比什么 | `origin/<stage>` ↔ `origin/<stage>-sol`（预置解法，`simulated=true`） | **你开始这一阶段时的那份 `dev`** ↔ **工作区**（含未提交改动，`simulated=false`）；与阶段基线逐字节相同的文件会被剔掉（那是基线自带的判据，不是你写的） |
+| 判定面比什么 | —— | **内容作者的版本**（`merge-base(origin/<stage>, HEAD)`）：判据有没有被动，跟学员自己的历史无关——"开题前先改测试"躲不掉 |
+| 报错 | — | Gitea 连不上/认证失败 → **503 `forge_unavailable`**；你还没 push `dev` → 工作区对账会给 `behind`/`missing`，前端提示你先 push（不再是 409）；**没合阶段基线** → 阅卷报告直接说"判据不在工作区里"并给出该跑的命令 |
 
 > 上游仓的写权限由 `deploy/` 里的一次性 `track-loader` 授予（`add_collaborator`，`BAGU_LEARNER_WRITE` 默认开）。
 > 平台自己**不会**替你 push：它只 clone 与只读 diff。

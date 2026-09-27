@@ -166,6 +166,7 @@ def make_grading_report(
     runner_trust: str = "self",
     files_changed: list[str] | None = None,
     out_of_scope_edits: list[str] | None = None,
+    judged_surface_changes: list[str] | None = None,
 ) -> dict[str, Any]:
     """A grading-report claim dict (design §7.4) — an UNTRUSTED self-report.
 
@@ -195,6 +196,10 @@ def make_grading_report(
         "lint": {"passed": True},
         "files_changed": files_changed or [],
         "out_of_scope_edits": out_of_scope_edits or [],
+        # 判定面那一份（相对内容作者的版本）；不给就与 files_changed 同义（旧报告的形状）。
+        "judged_surface_changes": (
+            files_changed or [] if judged_surface_changes is None else judged_surface_changes
+        ),
     }
 
 

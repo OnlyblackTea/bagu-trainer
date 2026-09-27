@@ -73,20 +73,25 @@ def unlock_dependents(
     (plus ``passed_id`` itself). A dependent unlocks only when ALL its prerequisites
     are passed. Returns the instances actually unlocked; already-available ones and
     dependents with no instance are skipped.
+
+    **同一个 ticket 可能有多个实例**（重复报名，或 §9.2 的 reissue 留档）：那就**都**放开。
+    早先这里用 ``{ticket_id: instance}`` 建索引（一个 ticket 只留最后一个），于是一旦存在重复实例，
+    解锁会随机落在其中一个身上、另一个永远停在 ``locked``——而界面把两者都列出来，学员点哪个全看
+    运气（真踩过：探针脚本重复报名，stage-02 一张卡可用、另一张点不动）。
     """
     owned = list(instances)
     passed_ids = {inst.ticket_id for inst in owned if inst.state is InstanceState.PASSED}
     passed_ids.add(passed_id)
-    by_ticket = {inst.ticket_id: inst for inst in owned}
 
     unlocked: list[TicketInstance] = []
     for dependent_id, prereqs in graph.items():
         if passed_id not in prereqs:
             continue
-        instance = by_ticket.get(dependent_id)
-        if instance is None or instance.state is not InstanceState.LOCKED:
+        if not prereqs_satisfied(dependent_id, passed_ids, graph):
             continue
-        if prereqs_satisfied(dependent_id, passed_ids, graph):
+        for instance in owned:
+            if instance.ticket_id != dependent_id or instance.state is not InstanceState.LOCKED:
+                continue
             transition(instance, InstanceState.AVAILABLE)
             unlocked.append(instance)
     return unlocked

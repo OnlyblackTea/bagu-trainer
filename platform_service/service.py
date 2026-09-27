@@ -225,7 +225,12 @@ class PlatformService:
             )
 
         # 判定面被改动 ⇒ 硬门 fail。注意这条**不依赖** AI 评审：它是确定性的（§11.3）。
-        tampering = find_tampering(report.files_changed, self._track.runtime.protected_paths)
+        # 比对的是 ``judged_surface_changes``（相对**内容作者的版本**），不是 ``files_changed``
+        # （相对学员自己开始这一阶段时的那份 dev）：判据有没有被动，跟学员自己的历史无关，否则
+        # "开题之前先把测试改了"就能绕过去。旧报告没有这个字段（本特性之前落的库）时回落到
+        # ``files_changed``——那时两者本来就是同一个东西。
+        changed_for_gate = report.judged_surface_changes or report.files_changed
+        tampering = find_tampering(changed_for_gate, self._track.runtime.protected_paths)
         inputs = AcceptanceInputs(
             correctness_gate=report.correctness.passed,
             review_recommendation=review.recommendation,

@@ -139,3 +139,82 @@ def generate_diff(repo: Path, *, base: str, head: str | None = None) -> str:
         encoding="utf-8",
     )
     return result.stdout
+
+
+def _same_as(repo: Path, ref: str, path: str) -> bool:
+    """工作区里的 ``path`` 与 ``ref`` 里的那一份是否**逐字节相同**（不存在于工作区 ⇒ False）。
+
+    用 :func:`git hash-object` 而不是读文件内容：大文件不该为了比一比就读进内存，而 hash 正是
+    git 自己判断"这份内容有没有变"的方式。
+    """
+    worktree = subprocess.run(
+        ["git", "hash-object", "--", path],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if worktree.returncode != 0:
+        return False  # 工作区里没有这个文件（被删了）⇒ 那是个真实的改动，不能剔
+    in_ref = subprocess.run(
+        ["git", "rev-parse", f"{ref}:{path}"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if in_ref.returncode != 0:
+        return False
+    return worktree.stdout.strip() == in_ref.stdout.strip()
+
+
+def changed_files(repo: Path, *, base: str, baseline: str | None = None) -> list[str]:
+    """相对 ``base`` 改过的文件（正斜杠、排序、去重），**含未跟踪的新文件**。
+
+    未跟踪也要算：学员新加一个文件却忘了 ``git add`` 是很正常的事，而 maven 照样会编译它——
+    "他改了什么"里漏掉它，报告就在说假话。用 ``git ls-files --others --exclude-standard`` 拿，
+    它天生就把忽略的文件排除在外。
+
+    给了 ``baseline`` 就把"与它**逐字节相同**"的剔掉——那正是"基线自带、不是我写的"那些文件
+    （见 :func:`drop_baseline_files` 里的来龙去脉）。没给就是原样的 ``git diff --name-only``。
+    """
+    result = subprocess.run(
+        ["git", "diff", "--name-only", base],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        return []
+    paths = {
+        line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
+    }
+    others = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if others.returncode == 0:
+        paths |= {
+            line.strip().replace("\\", "/") for line in others.stdout.splitlines() if line.strip()
+        }
+    if baseline is not None:
+        paths = {p for p in paths if not _same_as(repo, baseline, p)}
+    return sorted(paths)
+
+
+def drop_baseline_files(repo: Path, diff: str, *, baseline: str) -> str:
+    """把 ``diff`` 里"与基线逐字节相同"的文件整块剔掉（返回新的 diff 文本）。
+
+    只对**内容相同**的文件生效：学员真的改了它，内容就不一样，这一块会留下（判定面照样看得见）。
+    路径来自 diff 自己的 ``+++`` 头，所以不需要调用方再传一份文件列表。
+    """
+    keep: list[str] = []
+    for path, chunk in _file_chunks(diff):
+        if path and _same_as(repo, baseline, path):
+            continue
+        keep.append(chunk)
+    return "".join(keep)

@@ -77,6 +77,26 @@ def test_unlock_dependent_flips_locked_to_available() -> None:
     assert b.state is InstanceState.AVAILABLE
 
 
+def test_every_duplicate_instance_of_a_dependent_unlocks() -> None:
+    """同一个 ticket 有两个实例（重复报名 / reissue 留档）时，**两个都要放开**。
+
+    早先的实现用 ``{ticket_id: instance}`` 建索引（一个 ticket 只留最后一个），于是解锁随机落在
+    其中一个身上、另一个永远停在 ``locked``——界面把两者都列出来，学员点哪个全看运气。
+    """
+    graph = {"b": ["a"], "a": []}
+    a = _instance("a", InstanceState.PASSED)
+    first = _instance("b", InstanceState.LOCKED)
+    first.id = "ti-b-1"
+    second = _instance("b", InstanceState.LOCKED)
+    second.id = "ti-b-2"
+
+    unlocked = unlock_dependents("a", graph, [a, first, second])
+
+    assert {i.id for i in unlocked} == {"ti-b-1", "ti-b-2"}
+    assert first.state is InstanceState.AVAILABLE
+    assert second.state is InstanceState.AVAILABLE
+
+
 def test_diamond_join_waits_for_both_branches() -> None:
     graph = {"d": ["b", "c"], "b": ["a"], "c": ["a"], "a": []}
     a = _instance("a", InstanceState.PASSED)

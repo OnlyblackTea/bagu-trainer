@@ -28,6 +28,7 @@ from platform_service.forge import (
     ForgeUnavailableError,
     Workspace,
     git,
+    is_ancestor,
     prepare_workspace,
     stage_branch_for,
     taken_over_workspace,
@@ -99,6 +100,8 @@ class GiteaForgeClient:
             clone_url=self._api.authenticated_clone_url(clone_url),
             base_ref=base_ref,
             make_dev_branch=True,
+            # 按实例分键记基线：同一目录可以被后续阶段的实例登记复用（指引式 provision）。
+            instance_id=instance.id,
         )
         git(dest, "remote", "set-url", "origin", clone_url)
         self.install_push_credentials(dest, clone_url)
@@ -114,6 +117,22 @@ class GiteaForgeClient:
             diff_head_ref=None,
             push_hint=self.push_hint(),
             clone_hint=self.clone_hint(clone_url, stage),
+            merge_hint=self.merge_hint(dest, base_ref),
+        )
+
+    def merge_hint(self, dest: Path, base_ref: str) -> str | None:
+        """本阶段基线还没合进 ``dev`` 时给出的那一句（见 ``Workspace.merge_hint``）。
+
+        为什么值得出现在界面上：链式 Track 结构下，**本阶段的验收测试住在 ``origin/<stage>``
+        上**（阶段分支 = 上一阶段分支 + 本阶段测试，且不含任何参考解）。不把它合进来，工作区里
+        就压根没有那批判据——``mvn -Dgroups=stage0N`` 一条用例都跑不到，红在一个跟代码无关的
+        地方。相对分岔点这条合并**只加不删**，所以它不会和学员自己的实现打架，可以照抄。
+        """
+        if is_ancestor(dest, base_ref):
+            return None
+        return (
+            f"git merge {base_ref}   "
+            "# 本阶段的验收测试在这个分支上；相对分岔点只加不删，不会和你写的实现打架"
         )
 
     def clone_hint(self, clone_url: str, stage: str) -> str:
