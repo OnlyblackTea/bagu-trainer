@@ -67,18 +67,32 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
   return (
     <section className="card" data-testid="workspace-view">
       <h2 className="card__title">
-        工作区 / 进度
+        工作区
         <span className={`badge badge--${instance.state}`}>{stateLabel(instance.state)}</span>
       </h2>
 
-      <div className="gate" data-testid="gate">
-        <strong>下一步：</strong>
-        {instance.gate}
+      {/*
+        「下一步」不是一个状态描述，而是一条行动指导：所以这里把**当前阶段**（后端给的 gate 文案，
+        它说的是"现在该做什么 git 动作"）与**完成后会发生什么**并排放在一起，读的人不用自己拼。
+      */}
+      <div className="stage-state" data-testid="gate">
+        <div className="stage-state__now">
+          <span className="muted">当前阶段</span>
+          <p className="stage-state__gate">{instance.gate}</p>
+        </div>
+        <p className="muted stage-state__after">
+          这一步做完：在本地跑验收测试 → 提交答案 → 等自动测试与评审的结论。
+        </p>
       </div>
       <p className="muted">
         平台只 <strong>gate + 指示</strong>，不替你跑 git 写操作；commit / push 都由你驱动。
       </p>
 
+      {/*
+        按**使用频率**分主次，而不是把四个动作摊平成等权重的四个按钮：
+        开始/查看 diff 是每次都要做的；「拉取本地工作区」「从远端同步」是特定处境下才用的高级动作
+        ——尤其「从远端同步」会 fetch 并可能快进后端那份 checkout，不该和普通操作长一样重。
+      */}
       <div className="row">
         <button
           className="primary"
@@ -88,12 +102,7 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
           开始本阶段
         </button>
         <button
-          onClick={() => run(async () => setWorkspace(await api.provision(instance.id)))}
-          disabled={disabled || instance.state !== 'in_progress'}
-        >
-          拉取本地工作区
-        </button>
-        <button
+          className="ghost"
           onClick={() =>
             run(async () => {
               const body = await api.diff(instance.id)
@@ -105,21 +114,38 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
         >
           查看 diff
         </button>
-        <button
-          data-testid="sync-remote"
-          title="代码写在别的机器上时用它：fetch 远端 dev，且只在无损时快进"
-          onClick={() =>
-            run(async () => {
-              const body = await api.syncWorkspace(instance.id)
-              setWorkspace(body)
-              setSync(body.sync)
-              setDiff(null) // 同步之后旧的 diff 不作数了
-            })
-          }
-          disabled={disabled}
-        >
-          从远端同步
-        </button>
+
+        <details className="more-actions">
+          <summary>更多操作</summary>
+          <div className="row">
+            <button
+              onClick={() => run(async () => setWorkspace(await api.provision(instance.id)))}
+              disabled={disabled || instance.state !== 'in_progress'}
+            >
+              拉取本地工作区
+            </button>
+            <button
+              data-testid="sync-remote"
+              title="代码写在别的机器上时用它：fetch 远端 dev，且只在无损时快进"
+              onClick={() =>
+                run(async () => {
+                  const body = await api.syncWorkspace(instance.id)
+                  setWorkspace(body)
+                  setSync(body.sync)
+                  setDiff(null) // 同步之后旧的 diff 不作数了
+                })
+              }
+              disabled={disabled}
+            >
+              从远端同步
+            </button>
+          </div>
+          <p className="muted">
+            「拉取本地工作区」看的是后端那份 checkout（在哪台机器上、用什么分支）；
+            「从远端同步」会 fetch 你 push 的 <code>dev</code>，并且<span>只在无损时</span>快进——
+            工作树不干净或本地领先时它一个字都不动。
+          </p>
+        </details>
       </div>
 
       {error && (

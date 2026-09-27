@@ -277,8 +277,10 @@ grader:
 # ── hints：阶梯式提示（默认折叠，展开计入画像）──
 hints:
   - id: H1
+    title: 脚本何时跑        # 可选。折叠标题上的短标签（前端显示成「提示 1：脚本何时跑」）
     text: "@Sql 每次测试方法前自动执行 V1 脚本，脚本幂等，不用手动建索引"
   - id: H2
+    title: 断言看什么
     text: "EXPLAIN 断言的查询形状与 searchProducts 一致"
   # H3/H4...
 
@@ -310,6 +312,8 @@ progression:
 > ①**按 concern 分组**——identity/brief/scope/grader/hints/submission/mentor_policy/progression，平台渲染、验收、防越界、控解锁各取所需，互不串味（`mentor_policy` 已于 v0.5 退休但**保留在 schema 里**，理由见上方 inline 注释）；
 > ②**`unlock_next` 反转为 `progression.prerequisites`**——工单不再"向前指"下一张（那样新增/重排工单要改一片），而是"向后指"自己依赖谁，整体构成 DAG，解锁判定 = "prerequisites 全 passed"（§9.2）；单前置时天然退化为线性，迁移零成本；
 > ③**版本锚点**——`schema_version` / `ticket_version` / `grader.correctness.test_version` 与 `engine_version` 一起在发卷时钉进 `TicketInstance`（§9.1），从而能回答用户提的五个硬问题（"这次提交基于哪个 ticket 版本？""grading report 是哪个 test version 跑的？""题目更新后旧 submission 还有效吗？""平台更新后旧 submission 用哪个平台版本？""retry 是重新发卷还是续上一张？"）——全部在 schema 层解决，不留给运行时扯皮。
+>
+> **2026-09-27 追加：`hints[].title`（可选）**。折叠的提示如果只有正文，页面上只能显示「展开查看」——读者不知道要不要展开它，只能一条条点开试。所以给每条 hint 一个 3～8 字的短标签，前端渲染成「提示 N：标题」。**可选**是为了让已发布的 Track 继续通过校验：缺 `title` 时前端退回正文首行，作者侧约定见 seckill-lab `docs/工单写作规范.md` §5。同一轮还把"题面怎么写"从口头约定升级成了那份规范（叙事优先：自然段承载叙事、标题承载语义层级、列表只表达真正的并列），因为内容碎片化是这类"读文档 → 干活"页面最主要的体验损耗。
 
 
 ### 4.4 track 资产清单（贡献者必须提供）

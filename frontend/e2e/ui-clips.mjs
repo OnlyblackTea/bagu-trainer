@@ -46,7 +46,7 @@ async function clip(selector, name, pad = 8) {
 await clip('.rail--nav', 'nav')
 await clip('.ticket__head', 'ticket-head')
 await clip('#ticket-problem', 'ticket-problem')
-await clip('#ticket-grader', 'ticket-grader')
+await clip('#ticket-accept', 'ticket-accept')
 await clip('#ticket-hints', 'ticket-hints')
 
 // 历史里那次尝试的报告（展开）

@@ -32,13 +32,13 @@ function nextAction(instance: InstanceOut | undefined, boardOnly: boolean): stri
     case 'in_progress':
       return '开发中——改完本地代码再「提交」'
     case 'submitted':
-      return '已提交——等阅卷跑完，再发起评审'
+      return '已提交——等自动测试跑完，再发起评审'
     case 'grading':
       return '评审完成——可以「取确定性结论」了'
     case 'passed':
       return '已通过'
     case 'failed':
-      return '未通过——按评审意见返工，再「返工重来」'
+      return '未通过——按评审意见改完，再「返回工作区修改」'
     case 'stale':
       return '已作废（版本漂移）'
     default:

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 
+import { stateLabel } from '../labels'
 import type {
+  GradingReportOut,
   GradingScenario,
   InstanceOut,
   ReviewOut,
@@ -13,21 +15,38 @@ interface Props {
   instance: InstanceOut
   submission: SubmissionOut | null
   review: ReviewOut | null
+  /** 这次提交的自动测试报告（有它才谈得上"检查过了"）。 */
+  report: GradingReportOut | null
   busy: boolean
   onSubmit: (scenario: GradingScenario) => void
   onReview: (scenario: ReviewScenario) => void
 }
 
 /**
- * 屏幕 4：提交 / 评审（spec §C.6）。
+ * 屏幕 4：提交与评审（spec §C.6）。
  *
- * 两个 `scenario` 选择器是**有意暴露**的：A′ 的桩各备 pass/fail 与
- * approve/request_changes 两套 fixture，只有让使用者能切换，decide 的两条分支才都能被
- * 真跑到（spec §C.4「双分支 fixture」，不能只测 happy path）。
+ * 这一屏要回答的是学员唯一的疑问：**「我提交以后，系统会检查什么？」** 所以它写成一条流程，
+ * 而不是一堆按钮：
  *
- * 阅卷报告与 AI 评审都标「模拟」——它们是占位后端产出的，不是真实结论。
+ * 1. **提交前检查**——用界面**真正知道的事实**逐项打勾（阶段开没开、自动测试出没出结果、
+ *    评审有没有结论）。不做假的进度条，也不假装检查过工作区。
+ * 2. **提交**——一次明确的「提交答案 →」。
+ * 3. **评审**——自动测试之后进入评审，结论是确定性门的一路输入。
+ *
+ * 两个 `scenario` 选择器是**有意保留**的：A′ 的桩各备 pass/fail 与 approve/request_changes
+ * 两套 fixture，只有让使用者能切换，decide 的两条分支才都能被真跑到（spec §C.4「双分支
+ * fixture」，不能只测 happy path）。但它们是**内部夹具**，对"我要交答案"的学员毫无意义，
+ * 所以收进「高级调试选项」里默认折叠，并用面板里的说明讲清它们只在桩后端下有效。
  */
-export function ReviewView({ instance, submission, review, busy, onSubmit, onReview }: Props) {
+export function ReviewView({
+  instance,
+  submission,
+  review,
+  report,
+  busy,
+  onSubmit,
+  onReview,
+}: Props) {
   const [grading, setGrading] = useState<GradingScenario>('pass')
   const [reviewScenario, setReviewScenario] = useState<ReviewScenario>('approve')
 
@@ -40,29 +59,55 @@ export function ReviewView({ instance, submission, review, busy, onSubmit, onRev
   const canSubmit = instance.state === 'in_progress'
   const canReview = submission !== null && instance.state === 'submitted'
 
+  /** 三块检查项**全部**来自界面已知的事实，没有一项是编的。 */
+  const checks: Array<{ label: string; done: boolean; note?: string }> = [
+    {
+      label: '本阶段已开始，可以在本地改代码',
+      done: !['locked', 'available'].includes(instance.state),
+      note: `当前：${stateLabel(instance.state)}`,
+    },
+    { label: '自动测试已出结果', done: report !== null },
+    {
+      label: 'AI 评审已出结论',
+      done: review !== null,
+      note: canReview ? '提交之后可以发起' : undefined,
+    },
+  ]
+
   return (
     <section className="card" data-testid="review-view">
-      <h2 className="card__title">提交 / 评审</h2>
+      <h2 className="card__title">提交与评审</h2>
+
+      <ul className="checklist" data-testid="submit-checklist">
+        {checks.map((c) => (
+          <li key={c.label} className={c.done ? 'check check--done' : 'check'}>
+            <span aria-hidden="true">{c.done ? '✓' : '○'}</span>
+            <span>{c.label}</span>
+            {c.note && <span className="muted">（{c.note}）</span>}
+          </li>
+        ))}
+      </ul>
+
+      <p className="muted">
+        提交后，平台会按本题的判据<b>重置基础设施并跑验收测试</b>（真阅卷跑 Track 的 canonical
+        测试），然后把结果交给评审。两者同时在场，才能取确定性结论——门不是分数，是"证据齐了没有"。
+      </p>
 
       <div className="row">
-        <label className="muted" htmlFor="grading-scenario">
-          阅卷 fixture
-        </label>
-        <select
-          id="grading-scenario"
-          data-testid="grading-scenario"
-          value={grading}
-          onChange={(e) => setGrading(e.target.value as GradingScenario)}
+        <button
+          className="primary"
+          data-testid="submit-answer"
+          disabled={busy || !canSubmit}
+          onClick={() => onSubmit(grading)}
         >
-          <option value="pass">pass（绿）</option>
-          <option value="fail">fail（红）</option>
-        </select>
-        <button className="primary" disabled={busy || !canSubmit} onClick={() => onSubmit(grading)}>
-          提交（跑阅卷桩）
+          提交答案 →
         </button>
-        {!canSubmit && (
+        <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
+          发起 AI 评审
+        </button>
+        {!canSubmit && !canReview && (
           <span className="muted">
-            只有「开发中」的实例能提交；当前是 {instance.state}。
+            只有「开发中」的实例能提交；当前是 {stateLabel(instance.state)}。
           </span>
         )}
       </div>
@@ -73,24 +118,43 @@ export function ReviewView({ instance, submission, review, busy, onSubmit, onRev
         </p>
       )}
 
-      <div className="row" style={{ marginTop: 12 }}>
-        <label className="muted" htmlFor="review-scenario">
-          评审 fixture
-        </label>
-        <select
-          id="review-scenario"
-          data-testid="review-scenario"
-          value={reviewScenario}
-          onChange={(e) => setReviewScenario(e.target.value as ReviewScenario)}
-        >
-          <option value="approve">approve（放行）</option>
-          <option value="request_changes">request_changes（要求修改）</option>
-        </select>
-        <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
-          发起 AI 评审
-        </button>
-        {!canReview && <span className="muted">先提交，且实例处于「已提交」。</span>}
-      </div>
+      {/*
+        内部夹具收进折叠区：它们只是桩后端的开关（fixture），不是学员要理解的流程。
+        真阅卷（--grading docker）下这两个选择器**不影响**结果——报告按 surefire 的真实红绿出。
+      */}
+      <details className="advanced" data-testid="advanced-debug">
+        <summary>高级调试选项</summary>
+        <p className="muted">
+          下面是占位后端（`--grading stub`）的两套测试夹具，用来演示"红/绿"与
+          "放行/要求修改"两条分支；换成真阅卷后它们不再影响任何结果。
+        </p>
+        <div className="row">
+          <label className="muted" htmlFor="grading-scenario">
+            测试场景
+          </label>
+          <select
+            id="grading-scenario"
+            data-testid="grading-scenario"
+            value={grading}
+            onChange={(e) => setGrading(e.target.value as GradingScenario)}
+          >
+            <option value="pass">pass（绿）</option>
+            <option value="fail">fail（红）</option>
+          </select>
+          <label className="muted" htmlFor="review-scenario">
+            评审场景
+          </label>
+          <select
+            id="review-scenario"
+            data-testid="review-scenario"
+            value={reviewScenario}
+            onChange={(e) => setReviewScenario(e.target.value as ReviewScenario)}
+          >
+            <option value="approve">approve（放行）</option>
+            <option value="request_changes">request_changes（要求修改）</option>
+          </select>
+        </div>
+      </details>
 
       {review && (
         <div style={{ marginTop: 14 }} data-testid="review-info">

@@ -37,7 +37,7 @@ async function run(base, tag, { stage, submit }) {
   await page.waitForTimeout(900)
   await shoot(page, `${tag}-2-ticket`)
   // 题面下半部分（改动面/判据/提示）单独拍一张：长题面的可读性主要看这里
-  await page.locator('#ticket-grader').scrollIntoViewIfNeeded().catch(() => {})
+  await page.locator('#ticket-accept').scrollIntoViewIfNeeded().catch(() => {})
   await page.waitForTimeout(300)
   await shoot(page, `${tag}-2b-ticket-lower`)
 
@@ -47,12 +47,14 @@ async function run(base, tag, { stage, submit }) {
         await page.getByRole('button', { name: '开始本阶段' }).click()
         await page.waitForTimeout(700)
       }
+      // 低频动作收在「更多操作」折叠里
+      await page.getByText('更多操作').first().click()
       await page.getByRole('button', { name: '拉取本地工作区' }).click()
       await page.waitForTimeout(1500)
       await page.getByRole('button', { name: '查看 diff' }).click()
       await page.waitForTimeout(900)
       await shoot(page, `${tag}-3-workspace`)
-      await page.getByRole('button', { name: /提交（跑阅卷桩）/ }).click()
+      await page.getByRole('button', { name: /提交答案/ }).click()
       // 桩是瞬时的；真阅卷要等，给它更长时间
       await page.waitForTimeout(tag === 'demo' ? 2000 : 150_000)
       await shoot(page, `${tag}-4-graded`)

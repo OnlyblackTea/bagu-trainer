@@ -273,7 +273,7 @@ describe('App · 提交后的轮询', () => {
     render(<App />)
 
     await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
-    await user.click(await screen.findByRole('button', { name: /提交（跑阅卷桩）/ }))
+    await user.click(await screen.findByRole('button', { name: /提交答案/ }))
 
     // 第一轮进度：进行中，报告还没好。
     await waitFor(() =>

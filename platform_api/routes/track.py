@@ -80,7 +80,7 @@ def _ticket_out(ticket: TicketSpec) -> dict[str, Any]:
         "problem": ticket.brief.problem,
         "concepts": list(ticket.brief.concepts),
         "files_to_change": list(ticket.scope.files_to_change),
-        "hints": [{"id": h.id, "text": h.text} for h in ticket.hints],
+        "hints": [{"id": h.id, "title": h.title, "text": h.text} for h in ticket.hints],
         "grader": {
             "test_group": correctness.test_group,
             "canonical_test": correctness.canonical_test,

@@ -282,7 +282,12 @@ def _scan_spoilers(root: Path, tickets: list[TicketSpec]) -> list[str]:
     leaks: list[str] = []
     for ticket in tickets:
         revealed = " ".join(
-            [ticket.brief.problem, *ticket.brief.concepts, *(hint.text for hint in ticket.hints)]
+            [
+                ticket.brief.problem,
+                *ticket.brief.concepts,
+                *(hint.title or "" for hint in ticket.hints),
+                *(hint.text for hint in ticket.hints),
+            ]
         )
         for secret in secrets:
             if secret in revealed:

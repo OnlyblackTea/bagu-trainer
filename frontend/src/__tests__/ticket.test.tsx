@@ -41,6 +41,42 @@ describe('TicketView（屏幕 2 · 发卷）', () => {
     expect(screen.getByText(/只上榜、不出卷/)).toBeInTheDocument()
   })
 
+  // --- 信息层级（UX 评审 §7/§8）--------------------------------------------------
+
+  it('正文只保留三层：一级是任务说明/改动面/验收标准/提示，标题不再造第三层', async () => {
+    stubTicket(ticket)
+    const { container } = render(<TicketView stage={assessed} trackId={track.id} />)
+    await waitFor(() => expect(screen.getByText(ticket.problem)).toBeInTheDocument())
+
+    for (const label of ['任务说明', '改动面', '验收标准', '提示']) {
+      expect(screen.getByRole('heading', { level: 3, name: new RegExp(label) })).toBeInTheDocument()
+    }
+    // 每个语义区块只用一个 h3 标签；h2 只留给工单标题本身，不再有卡片套卡片
+    expect(container.querySelectorAll('h1, h4')).toHaveLength(0)
+    expect(container.querySelectorAll('h2')).toHaveLength(1)
+  })
+
+  it('提示默认全折叠，标题是「提示 N：标题」；没写 title 时退回正文首行', async () => {
+    stubTicket({
+      ...ticket,
+      hints: [
+        { id: 'H1', title: '从哪看起', text: '先看 EXPLAIN，再决定索引列序。' },
+        { id: 'H2', text: '这是一条没有标题的提示，至少要让人看见它在讲什么。' },
+      ],
+    })
+    const { container } = render(<TicketView stage={assessed} trackId={track.id} />)
+    await waitFor(() => expect(screen.getByText('提示 1')).toBeInTheDocument())
+
+    const hints = container.querySelectorAll('details.hint')
+    expect(hints).toHaveLength(2)
+    // 默认折叠：提示是"卡住了再看"的辅助信息，不该在第一次读题时抢注意力
+    for (const h of hints) expect(h).not.toHaveAttribute('open')
+    expect(hints[0]).toHaveTextContent('提示 1')
+    expect(hints[0]).toHaveTextContent('从哪看起')
+    expect(hints[1]).toHaveTextContent('提示 2')
+    expect(hints[1]).toHaveTextContent('这是一条没有标题的提示')
+  })
+
   it('取卷失败时把后端短码翻成人话，而不是裸短码', async () => {
     stubTicket({ detail: 'not_found' }, 404)
     render(<TicketView stage={assessed} trackId={track.id} />)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { api, ApiError, STALE_RESOURCE_CODES } from './api'
+import { stateLabel } from './labels'
 import { DecisionView } from './components/DecisionView'
 import { GradingView } from './components/GradingView'
 import { HistoryView } from './components/HistoryView'
@@ -203,6 +204,17 @@ export default function App() {
    * 压掉），要么把非空这件事在类型上一次性说清。这里选后者。
    */
   function pane(t: TrackDetail) {
+    /**
+     * 已解锁的下一题：「进入下一题 →」的落点。
+     *
+     * 取第一个**可开始**（`available`）的已出卷阶段——那正是 DAG 刚解锁的那一个。
+     * 找不到就不渲染那个按钮（没有下一题时给一个点了没反应的按钮最糟）。
+     */
+    const nextUnlocked = t.stages.find(
+      (s) =>
+        s.kind !== 'board_only' && s.stage !== selected?.stage && instanceOf(s)?.state === 'available',
+    )
+
     return (
       <>
         {/* 左栏：去哪（导航）。窄、紧凑、一屏看完整条解锁链。 */}
@@ -238,6 +250,7 @@ export default function App() {
                     instance={current}
                     submission={submission}
                     review={review}
+                    report={report}
                     busy={busy}
                     onSubmit={(scenario: GradingScenario) =>
                       run(async () => {
@@ -295,6 +308,10 @@ export default function App() {
                     decision={decision}
                     report={report}
                     busy={busy}
+                    nextStage={
+                      nextUnlocked ? { stage: nextUnlocked.stage, title: nextUnlocked.title } : null
+                    }
+                    onGoNext={() => selectStage(nextUnlocked ?? null)}
                     onDecide={() =>
                       run(async () => {
                         const out = await api.decide(submission!.id)
@@ -349,7 +366,11 @@ export default function App() {
         <aside className="rail rail--state">
           {current && (
             <section className="card status-card" data-testid="instance-status">
-              <h2 className="card__title">当前实例</h2>
+              <h2 className="card__title">
+                当前实例
+                {/* 状态词只有一套（labels.ts）：左栏看板、工作区、决策结果与这里说的是同一个词。 */}
+                <span className={`badge badge--${current.state}`}>{stateLabel(current.state)}</span>
+              </h2>
               <dl className="kv kv--tight">
                 <dt>工单</dt>
                 <dd>

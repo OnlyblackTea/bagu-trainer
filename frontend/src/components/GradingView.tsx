@@ -25,18 +25,28 @@ const STATUS_LABEL: Record<string, string> = {
   failed: '失败',
 }
 
+/** 阶段链左侧的记号：完成 ✓ / 在跑 ● / 还没到 ○ / 失败 ✕。 */
+const STEP_MARK: Record<string, string> = {
+  pending: '○',
+  running: '●',
+  done: '✓',
+  failed: '✕',
+}
+
 function seconds(ms: number | null): string {
   if (ms === null) return ''
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`
 }
 
 /**
- * 屏幕 4a：提交后的阅卷进度与报告（spec §C.3 步骤 6）。
+ * 屏幕 4a：提交后的自动测试进度与报告（spec §C.3 步骤 6）。
  *
  * 提交是**异步**的：真阅卷要 `docker compose down -v` 再 `mvn test`，实测整次 120 秒（其中重置
  * 基础设施占 109 秒）。没有这一屏，学员点完提交只能对着一个不动的界面猜"在跑还是在死"。所以这里
  * 给出**完整阶段链**（含还没到的那几步，画得出进度条）、当前步的补充说明、已耗时，以及**每阶段**
  * 各自花了多久——"慢在哪一段"就是从这里读出来的。
+ *
+ * 标题用「自动测试」而不是「阅卷」：这一屏讲的是"系统替你跑了什么"，学员嘴里的"跑没跑过"就是它。
  */
 export function GradingView({ submission, progress, report }: Props) {
   if (!submission) return null
@@ -50,7 +60,7 @@ export function GradingView({ submission, progress, report }: Props) {
   return (
     <section className="card" data-testid="grading-view">
       <h2 className="card__title">
-        阅卷
+        自动测试
         <span className="badge">{submission.id}</span>
         {progress && <span className="badge">{STEP_LABEL[progress.step] ?? progress.step}</span>}
         {progress?.elapsed_ms != null && (
@@ -68,10 +78,11 @@ export function GradingView({ submission, progress, report }: Props) {
         <ol className="steps" data-testid="grading-progress">
           {progress.steps.map((s) => (
             <li key={s.step} className={`step step--${s.status}`}>
-              <span className="step__name">{STEP_LABEL[s.step] ?? s.step}</span>
-              <span className={`badge badge--${s.status === 'done' ? 'passed' : 'stale'}`}>
-                {STATUS_LABEL[s.status] ?? s.status}
+              <span className="step__mark" aria-hidden="true">
+                {STEP_MARK[s.status] ?? '·'}
               </span>
+              <span className="step__name">{STEP_LABEL[s.step] ?? s.step}</span>
+              <span className="badge">{STATUS_LABEL[s.status] ?? s.status}</span>
               {s.elapsed_ms != null && <span className="badge">{seconds(s.elapsed_ms)}</span>}
               {s.detail && <span className="muted"> {s.detail}</span>}
             </li>

@@ -72,8 +72,16 @@ def make_ticket(
             "concurrency": None,
         },
         "hints": [
-            {"id": "H1", "text": "@Sql 每次测试方法前自动执行 V1 脚本，脚本幂等。"},
-            {"id": "H2", "text": "EXPLAIN 断言的查询形状与 searchProducts 一致。"},
+            {
+                "id": "H1",
+                "title": "脚本何时跑",
+                "text": "@Sql 每次测试方法前自动执行 V1 脚本，脚本幂等。",
+            },
+            {
+                "id": "H2",
+                "title": "断言看什么",
+                "text": "EXPLAIN 断言的查询形状与 searchProducts 一致。",
+            },
         ],
         "submission": {
             "template": {

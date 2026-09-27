@@ -94,6 +94,11 @@
         "required": ["id", "text"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short label shown on the collapsed summary ('提示 1：事务边界'). Optional: without it the UI falls back to '提示 N'. A hint nobody can label is a hint nobody opens."
+          },
           "text": { "type": "string", "minLength": 1 }
         }
       }

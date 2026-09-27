@@ -6,7 +6,7 @@ import { DecisionView } from '../components/DecisionView'
 import { ReviewView } from '../components/ReviewView'
 import { WorkspaceView } from '../components/WorkspaceView'
 import type { DecisionOut, SubmissionOut } from '../types'
-import { makeInstance, review } from './fixtures'
+import { makeInstance, gradingReport, review } from './fixtures'
 
 function stubJson(body: unknown, status = 200) {
   const fn = vi.fn(async () => ({
@@ -35,12 +35,34 @@ const submission: SubmissionOut = {
 // --- 屏幕 3：工作区 / 进度 ------------------------------------------------------
 
 describe('WorkspaceView（屏幕 3）', () => {
-  it('把 gate 文案当作"下一步"显示出来（平台只 gate + 指示）', () => {
+  it('把 gate 文案当作"当前阶段该做什么"显示出来（平台只 gate + 指示）', () => {
     render(
       <WorkspaceView instance={makeInstance()} busy={false} onStart={() => {}} />,
     )
-    expect(screen.getByTestId('gate')).toHaveTextContent('可开始：start 本实例')
+    const gate = screen.getByTestId('gate')
+    // 状态词与左栏看板同源（labels.ts），并给出"这一步做完会发生什么"。
+    expect(gate).toHaveTextContent('当前阶段')
+    expect(gate).toHaveTextContent('可开始')
+    expect(gate).toHaveTextContent('可开始：start 本实例')
+    expect(gate).toHaveTextContent('提交答案')
     expect(screen.getByText(/不替你跑 git 写操作/)).toBeInTheDocument()
+  })
+
+  it('按钮按使用频率分主次：低频且有副作用的动作收进「更多操作」', async () => {
+    render(
+      <WorkspaceView
+        instance={makeInstance({ state: 'in_progress' })}
+        busy={false}
+        onStart={() => {}}
+      />,
+    )
+    // 每次都用的两个留在外面：开始 / 查看 diff
+    expect(screen.getByRole('button', { name: '开始本阶段' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看 diff' })).toHaveClass('ghost')
+    // 「从远端同步」会 fetch 并可能快进后端那份 checkout：不许和普通操作长一样重
+    const more = screen.getByText('更多操作').closest('details')
+    expect(more).not.toBeNull()
+    expect(more!.querySelector('[data-testid="sync-remote"]')).not.toBeNull()
   })
 
   it('只有 available 能「开始」，只有 in_progress 能「拉取工作区」', () => {
@@ -142,6 +164,7 @@ describe('ReviewView（屏幕 4）', () => {
         instance={makeInstance()}
         submission={null}
         review={null}
+        report={null}
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
@@ -151,7 +174,27 @@ describe('ReviewView（屏幕 4）', () => {
     expect(screen.getByRole('button', { name: /发起 AI 评审/ })).toBeDisabled()
   })
 
-  it('两个 scenario 选择器把所选 fixture 传给上层（双分支都要能演示）', async () => {
+  it('用界面**真正知道**的事实做提交前检查（不编进度）', () => {
+    render(
+      <ReviewView
+        instance={makeInstance({ state: 'submitted' })}
+        submission={submission}
+        review={null}
+        report={gradingReport}
+        busy={false}
+        onSubmit={() => {}}
+        onReview={() => {}}
+      />,
+    )
+    const list = screen.getByTestId('submit-checklist')
+    const items = list.querySelectorAll('li')
+    expect(items[0]).toHaveClass('check--done') // 阶段已开始
+    expect(items[1]).toHaveClass('check--done') // 自动测试已出结果
+    expect(items[2]).not.toHaveClass('check--done') // 评审还没结论
+    expect(list).toHaveTextContent('AI 评审已出结论')
+  })
+
+  it('两个 fixture 选择器收进「高级调试选项」，且仍把所选值传给上层', async () => {
     const onSubmit = vi.fn()
     const onReview = vi.fn()
     render(
@@ -159,11 +202,17 @@ describe('ReviewView（屏幕 4）', () => {
         instance={makeInstance({ state: 'submitted' })}
         submission={submission}
         review={null}
+        report={null}
         busy={false}
         onSubmit={onSubmit}
         onReview={onReview}
       />,
     )
+    const advanced = screen.getByTestId('advanced-debug')
+    expect(advanced.tagName).toBe('DETAILS')
+    expect(advanced).not.toHaveAttribute('open') // 默认折叠：夹具不该抢占注意力
+    expect(advanced).toHaveTextContent('占位后端')
+
     await userEvent.selectOptions(screen.getByTestId('grading-scenario'), 'fail')
     await userEvent.selectOptions(screen.getByTestId('review-scenario'), 'request_changes')
     await userEvent.click(screen.getByRole('button', { name: /发起 AI 评审/ }))
@@ -177,6 +226,7 @@ describe('ReviewView（屏幕 4）', () => {
         instance={makeInstance({ state: 'submitted' })}
         submission={submission}
         review={null}
+        report={null}
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
@@ -191,6 +241,7 @@ describe('ReviewView（屏幕 4）', () => {
         instance={makeInstance({ state: 'grading' })}
         submission={submission}
         review={review}
+        report={null}
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
@@ -210,6 +261,7 @@ describe('ReviewView（屏幕 4）', () => {
         instance={makeInstance({ state: 'grading' })}
         submission={submission}
         review={{ ...review, truncated_files: ['Huge.java'] }}
+        report={null}
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
@@ -242,7 +294,7 @@ function decision(verdict: 'pass' | 'fail', tampering: string[] = []): DecisionO
 }
 
 describe('DecisionView（屏幕 5）', () => {
-  it('缺阅卷或评审时门不可用，并说明缺什么', () => {
+  it('缺自动测试或评审时门不可用，并说明缺什么', () => {
     render(
       <DecisionView
         instance={makeInstance({ state: 'in_progress' })}
@@ -256,17 +308,17 @@ describe('DecisionView（屏幕 5）', () => {
       />,
     )
     expect(screen.getByRole('button', { name: /取确定性结论/ })).toBeDisabled()
-    expect(screen.getByText(/还缺：提交（跑阅卷）、发起 AI 评审/)).toBeInTheDocument()
+    expect(screen.getByText(/还缺：提交（跑自动测试）、发起 AI 评审/)).toBeInTheDocument()
   })
 
-  it('阅卷 + 评审齐了且处于 grading 时可以决策', async () => {
+  it('自动测试 + 评审齐了且处于 grading 时可以决策', async () => {
     const onDecide = vi.fn()
     render(
       <DecisionView
         instance={makeInstance({ state: 'grading' })}
         submission={submission}
         review={review}
-        report={null}
+        report={gradingReport}
         decision={null}
         busy={false}
         onDecide={onDecide}
@@ -277,41 +329,74 @@ describe('DecisionView（屏幕 5）', () => {
     expect(onDecide).toHaveBeenCalled()
   })
 
-  it('pass 显示解锁与推进指示，并说明这是确定性门', () => {
+  it('pass：给出结论、逐条自动测试、评审摘要与「进入下一题」出口', async () => {
+    const onGoNext = vi.fn()
     render(
       <DecisionView
         instance={makeInstance({ state: 'passed' })}
         submission={submission}
         review={review}
-        report={null}
+        report={gradingReport}
+        decision={decision('pass')}
+        busy={false}
+        onDecide={() => {}}
+        onRetry={() => {}}
+        nextStage={{ stage: 'stage-01-product-query-index', title: '商品搜索查询慢' }}
+        onGoNext={onGoNext}
+      />,
+    )
+    const verdict = screen.getByTestId('verdict')
+    expect(verdict).toHaveTextContent('✓')
+    expect(verdict).toHaveTextContent('通过：下一阶段已解锁')
+    expect(verdict).toHaveTextContent(/cherry-pick/)
+    // 自动测试逐条列出报告里真实存在的用例（不是在复述"应该绿"）
+    expect(verdict).toHaveTextContent('自动测试')
+    expect(verdict).toHaveTextContent('acceptanceTestCase')
+    // 评审结论与摘要
+    expect(verdict).toHaveTextContent('AI 评审')
+    expect(verdict).toHaveTextContent('模拟评审结论')
+    // 审计信息折叠，不占正文
+    expect(verdict).toHaveTextContent(/非 LLM 打分/)
+    await userEvent.click(screen.getByTestId('go-next'))
+    expect(onGoNext).toHaveBeenCalled()
+  })
+
+  it('没有已解锁的下一题时不给「进入下一题」按钮（点了没反应的按钮最糟）', () => {
+    render(
+      <DecisionView
+        instance={makeInstance({ state: 'passed' })}
+        submission={submission}
+        review={review}
+        report={gradingReport}
         decision={decision('pass')}
         busy={false}
         onDecide={() => {}}
         onRetry={() => {}}
       />,
     )
-    const verdict = screen.getByTestId('verdict')
-    expect(verdict).toHaveTextContent('通过：下一阶段已解锁')
-    expect(verdict).toHaveTextContent(/cherry-pick/)
-    expect(verdict).toHaveTextContent(/非 LLM 打分/)
+    expect(screen.queryByTestId('go-next')).not.toBeInTheDocument()
   })
 
-  it('fail 给出 retry 指示，且只有 failed 能返工', async () => {
+  it('fail：给出失败原因、建议检查的文件与「返回工作区修改」，且只有 failed 能返工', async () => {
     const onRetry = vi.fn()
     const { rerender } = render(
       <DecisionView
         instance={makeInstance({ state: 'failed' })}
         submission={submission}
         review={review}
-        report={null}
+        report={{ ...gradingReport, correctness: { ...gradingReport.correctness, passed: false } }}
         decision={decision('fail')}
         busy={false}
         onDecide={() => {}}
         onRetry={onRetry}
       />,
     )
-    expect(screen.getByTestId('verdict')).toHaveTextContent('未通过：请按评审意见返工')
-    const retry = screen.getByRole('button', { name: /返工重来/ })
+    const verdict = screen.getByTestId('verdict')
+    expect(verdict).toHaveTextContent('✕')
+    expect(verdict).toHaveTextContent('未通过：请按评审意见返工')
+    expect(verdict).toHaveTextContent('建议先检查这次改动过的文件')
+    expect(verdict).toHaveTextContent('src/db-stage-00/Solution.java')
+    const retry = screen.getByTestId('retry')
     expect(retry).toBeEnabled()
     await userEvent.click(retry)
     expect(onRetry).toHaveBeenCalled()
@@ -321,14 +406,15 @@ describe('DecisionView（屏幕 5）', () => {
         instance={makeInstance({ state: 'passed' })}
         submission={submission}
         review={review}
-        report={null}
+        report={gradingReport}
         decision={decision('pass')}
         busy={false}
         onDecide={() => {}}
         onRetry={onRetry}
       />,
     )
-    expect(screen.getByRole('button', { name: /返工重来/ })).toBeDisabled()
+    // 通过之后没有"返回工作区修改"（pass 是终点，下一步是下一题）
+    expect(screen.queryByTestId('retry')).not.toBeInTheDocument()
   })
 
   it('判定面被改动时点名文件，并解释为什么"绿也不算绿"', () => {

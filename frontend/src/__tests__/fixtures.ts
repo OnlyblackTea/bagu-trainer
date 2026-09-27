@@ -1,4 +1,11 @@
-import type { InstanceOut, ReviewOut, Ticket, TrackDetail, TrackSummary } from '../types'
+import type {
+  GradingReportOut,
+  InstanceOut,
+  ReviewOut,
+  Ticket,
+  TrackDetail,
+  TrackSummary,
+} from '../types'
 
 export const trackId = 'database-bagu'
 
@@ -71,7 +78,9 @@ export const ticket: Ticket = {
   problem: '按工单完成本阶段任务（占位内容）。',
   concepts: ['最左前缀', '覆盖索引', 'EXPLAIN'],
   files_to_change: ['src/db-stage-00/Solution.java'],
-  hints: [{ id: 'H1', text: '先看 EXPLAIN，再决定索引列序。' }],
+  // 提示带 `title`：折叠标题显示成「提示 1：从哪看起」。作者侧约定见
+  // seckill-lab `docs/工单写作规范.md` §5。
+  hints: [{ id: 'H1', title: '从哪看起', text: '先看 EXPLAIN，再决定索引列序。' }],
   grader: {
     test_group: 'db-stage-00',
     canonical_test: 'tests/db-stage-00/AcceptanceTest.java',
@@ -98,4 +107,32 @@ export const review: ReviewOut = {
   dimension_findings: [{ dimension: 'correctness', commentary: 'correctness：模拟评语。' }],
   truncated_files: [],
   created_at: '2026-09-10T00:00:00Z',
+}
+
+/**
+ * 最小阅卷报告：`provenance.host_env.simulated=false` ⇒ **真**阅卷（不盖「模拟」章）。
+ * 视图层只关心"有没有报告 / 报告里有哪些用例"，所以这里不铺满字段。
+ */
+export const gradingReport: GradingReportOut = {
+  submission_id: 'sub-1',
+  ticket: 'db-stage-00',
+  ticket_version: 1,
+  test_version: 1,
+  engine_version: 'a-prime-0.1.0',
+  learner: 'deployer',
+  provenance: {
+    generated_at: '2026-09-10T00:00:00Z',
+    generated_by: 'docker-grading/a-prime',
+    host_env: { simulated: false },
+    runner_trust: 'self',
+  },
+  correctness: {
+    test_group: 'db-stage-00',
+    passed: true,
+    tests: [{ name: 'acceptanceTestCase', status: 'pass' }],
+  },
+  performance: null,
+  lint: {},
+  files_changed: ['src/db-stage-00/Solution.java'],
+  out_of_scope_edits: [],
 }

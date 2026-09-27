@@ -335,8 +335,192 @@ button.primary {
   font-weight: 600;
 }
 
+/* 次级动作：看得见、点得到，但不与主行动抢注意力（「查看 diff」）。 */
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-underline-offset: 3px;
+  padding: 7px 8px;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
 button.block {
   width: 100%;
+}
+
+/* 三级动作（低频 / 有副作用）：收进「更多操作」折叠里，默认不参与视觉竞争。 */
+.more-actions,
+.advanced {
+  font-size: 13px;
+}
+
+.more-actions > summary,
+.advanced > summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 6px 2px;
+  list-style-position: inside;
+}
+
+.more-actions > summary:hover,
+.advanced > summary:hover {
+  color: var(--accent);
+}
+
+.more-actions[open] > summary,
+.advanced[open] > summary {
+  color: var(--text);
+}
+
+.more-actions > .row,
+.advanced > .row {
+  margin-top: 8px;
+}
+
+/* --- 主行动清单（提交前检查 / 自动测试逐条结果）--- */
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.check {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.check > span:first-child {
+  width: 1.1em;
+  flex: none;
+  text-align: center;
+}
+
+.check--done {
+  color: var(--text);
+}
+
+.check--done > span:first-child {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.check--bad {
+  color: var(--text);
+}
+
+.check--bad > span:first-child {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* --- 判决横幅（训练闭环的终点：给结论 + 给下一步）--- */
+
+.verdict {
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  margin-top: 12px;
+}
+
+.verdict--pass {
+  background: var(--ok-soft);
+  border-color: #bfe6cf;
+}
+
+.verdict--fail {
+  background: var(--danger-soft);
+  border-color: #f6c9c5;
+}
+
+.verdict__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 16px;
+}
+
+.verdict__mark {
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.verdict--pass .verdict__mark {
+  color: var(--ok);
+}
+
+.verdict--fail .verdict__mark {
+  color: var(--danger);
+}
+
+.verdict__block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.12);
+}
+
+.verdict__label {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.verdict__block p,
+.verdict__block ul {
+  max-width: var(--measure);
+}
+
+.verdict__next .row {
+  margin-top: 8px;
+}
+
+.verdict .advanced {
+  margin-top: 12px;
+}
+
+/* --- 当前阶段（工作区顶部：状态 + 下一步 + 做完之后）--- */
+
+.stage-state {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+
+.stage-state__now {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.stage-state__gate {
+  margin: 0;
+  font-size: 14px;
+  flex: 1 1 100%;
+}
+
+.stage-state__after {
+  margin: 6px 0 0;
 }
 
 /* --- 选方向（多 Track）--- */
@@ -396,6 +580,27 @@ button.block {
 .step__name {
   min-width: 6em;
   font-weight: 600;
+}
+
+.step__mark {
+  width: 1.1em;
+  flex: none;
+  text-align: center;
+  color: var(--muted);
+}
+
+.step--done .step__mark {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.step--running .step__mark {
+  color: var(--accent);
+}
+
+.step--failed .step__mark {
+  color: var(--danger);
+  font-weight: 700;
 }
 
 .step--pending {
@@ -723,8 +928,16 @@ button.block {
   gap: 8px;
 }
 
-.hint__first {
+/* 折叠标题：「提示 N」+ 作者写的标题。学员靠这一行决定要不要展开它。 */
+.hint__index {
+  font-size: 12px;
+  color: var(--muted);
+  flex: none;
+}
+
+.hint__title {
   font-size: 13.5px;
+  font-weight: 600;
 }
 
 .hint[open] summary {
@@ -964,15 +1177,6 @@ pre.diff {
   background: var(--ok-soft);
   border-color: #bfe6cf;
   color: var(--ok);
-}
-
-.gate {
-  background: var(--accent-soft);
-  border-left: 3px solid var(--accent);
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 14px;
-  margin: 10px 0;
 }
 
 .comment {

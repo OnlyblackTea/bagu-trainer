@@ -83,10 +83,22 @@ function stubFetch(routes: Record<string, unknown>) {
   return { fn, calls: seen }
 }
 
+/**
+ * 「拉取本地工作区」「从远端同步」是**低频/有副作用**的动作，收在「更多操作」折叠里
+ * （不与「开始本阶段」「查看 diff」抢视觉权重）。所以点它们之前先展开。
+ */
+async function openMoreActions(user: ReturnType<typeof userEvent.setup>) {
+  const summary = screen.getByText('更多操作')
+  const details = summary.closest('details')
+  if (details && !details.open) await user.click(summary)
+  return user
+}
+
 async function openFlow(routes: Record<string, unknown>) {
   stubFetch(routes).fn
   const user = userEvent.setup()
   render(<WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />)
+  await openMoreActions(user)
   await user.click(screen.getByRole('button', { name: '拉取本地工作区' }))
   await screen.findByTestId('workspace-info')
   await user.click(screen.getByRole('button', { name: '查看 diff' }))
@@ -126,6 +138,7 @@ describe('指引式 provision（在**你自己**的目录里做这一题）', ()
     render(
       <WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />,
     )
+    await openMoreActions(user)
     await user.click(screen.getByRole('button', { name: '拉取本地工作区' }))
     await screen.findByTestId('workspace-info')
 
@@ -153,6 +166,7 @@ describe('指引式 provision（在**你自己**的目录里做这一题）', ()
     render(
       <WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />,
     )
+    await openMoreActions(user)
     await user.click(screen.getByRole('button', { name: '拉取本地工作区' }))
     await screen.findByTestId('workspace-info')
     await user.type(screen.getByTestId('workspace-path'), '/tmp/not-a-repo')
@@ -291,6 +305,7 @@ describe('代码写在**另一台机器**上（与远端对账）', () => {
     render(
       <WorkspaceView instance={makeInstance({ state: 'in_progress' })} busy={false} onStart={() => {}} />,
     )
+    await openMoreActions(user)
     await user.click(screen.getByTestId('sync-remote'))
 
     const info = await screen.findByTestId('sync-info')
@@ -321,10 +336,11 @@ describe('工作区就绪', () => {
     expect(info).toHaveTextContent('origin/stage-01-product-query-index')
   })
 
-  it('gate 文案是"下一步"，且始终声明平台不代跑 git 写操作', async () => {
+  it('gate 文案是"当前阶段该做什么"，且始终声明平台不代跑 git 写操作', async () => {
     stubFetch({})
     render(<WorkspaceView instance={makeInstance()} busy={false} onStart={() => {}} />)
     expect(screen.getByTestId('gate')).toHaveTextContent('可开始')
+    expect(screen.getByTestId('gate')).toHaveTextContent('当前阶段')
     await waitFor(() =>
       expect(screen.getByTestId('workspace-view')).toHaveTextContent('不替你跑 git 写操作'),
     )

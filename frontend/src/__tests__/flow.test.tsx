@@ -318,7 +318,7 @@ describe('App 装配：跑通整条自习闭环', () => {
     await user.click(screen.getByRole('button', { name: '开始本阶段' }))
     await waitFor(() => expect(within(board()).getByText('开发中')).toBeInTheDocument())
 
-    await user.click(screen.getByRole('button', { name: /提交（跑阅卷桩）/ }))
+    await user.click(screen.getByRole('button', { name: /提交答案/ }))
     expect(await screen.findByTestId('submission-info')).toHaveTextContent('sub-1')
 
     await user.click(await screen.findByRole('button', { name: /发起 AI 评审/ }))
@@ -336,9 +336,13 @@ describe('App 装配：跑通整条自习闭环', () => {
     await waitFor(() =>
       expect(screen.getByTestId('history-view')).toHaveTextContent('第 1 次'),
     )
+
+    // 训练闭环的出口：通过之后不必回左栏找下一题——按钮直接把中栏切过去
+    await user.click(screen.getByTestId('go-next'))
+    await waitFor(() => expect(nextStage()).toHaveAttribute('aria-current', 'true'))
   })
 
-  it('决策前门不可用并说明缺什么；fail 分支可 retry 回到开发中且清空旧结论', async () => {
+  it('决策前门不可用并说明缺什么；fail 分支可返回工作区修改且清空旧结论', async () => {
     vi.stubGlobal('fetch', vi.fn(fakeBackend()))
     const user = userEvent.setup()
     render(<App />)
@@ -347,18 +351,18 @@ describe('App 装配：跑通整条自习闭环', () => {
     await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
 
     expect(screen.getByRole('button', { name: /取确定性结论/ })).toBeDisabled()
-    expect(screen.getByText(/还缺：提交（跑阅卷）、发起 AI 评审/)).toBeInTheDocument()
+    expect(screen.getByText(/还缺：提交（跑自动测试）、发起 AI 评审/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '开始本阶段' }))
     await user.selectOptions(screen.getByTestId('grading-scenario'), 'fail')
-    await user.click(screen.getByRole('button', { name: /提交（跑阅卷桩）/ }))
+    await user.click(screen.getByRole('button', { name: /提交答案/ }))
     await user.click(await screen.findByRole('button', { name: /发起 AI 评审/ }))
     await user.click(await screen.findByRole('button', { name: /取确定性结论/ }))
 
     expect(await screen.findByTestId('verdict')).toHaveTextContent('未通过：请按评审意见返工')
     await waitFor(() => expect(within(board()).getByText('未通过')).toBeInTheDocument())
 
-    await user.click(screen.getByRole('button', { name: /返工重来/ }))
+    await user.click(screen.getByTestId('retry'))
     await waitFor(() => expect(within(board()).getByText('开发中')).toBeInTheDocument())
     // retry 后清空旧结论，避免拿上一次的提交/结论糊弄人
     expect(screen.queryByTestId('verdict')).not.toBeInTheDocument()
@@ -377,7 +381,7 @@ describe('App 装配：跑通整条自习闭环', () => {
     await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
     await user.click(screen.getByRole('button', { name: '开始本阶段' }))
     await user.selectOptions(screen.getByTestId('grading-scenario'), 'pass')
-    await user.click(screen.getByRole('button', { name: /提交（跑阅卷桩）/ }))
+    await user.click(screen.getByRole('button', { name: /提交答案/ }))
     await waitFor(() => expect(within(board()).getByText('已提交')).toBeInTheDocument())
     // 此刻他已经无法再提交（状态机只允许 submitted → grading/passed/failed）
     expect(screen.getByTestId('instance-status')).toHaveTextContent('ti-0')

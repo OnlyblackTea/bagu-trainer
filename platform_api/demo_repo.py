@@ -142,7 +142,7 @@ def _ticket_dict(
             "performance": {"type": "explain", "assert": "type != 'ALL'"},
             "concurrency": None,
         },
-        "hints": [{"id": "H1", "text": "先看 EXPLAIN，再决定索引列序。"}],
+        "hints": [{"id": "H1", "title": "从哪看起", "text": "先看 EXPLAIN，再决定索引列序。"}],
         "submission": {
             "template": {"require": ["改后的代码", "一句话理由"]},
             "bagu_map_ref": _BAGU_MAP_REF,

@@ -35,11 +35,13 @@ test.describe.serial('学习者闭环（真后端 + 真浏览器）', () => {
     await page.getByRole('button', { name: '开始本阶段' }).click()
     await expect(stage00).toContainText('开发中')
 
-    // 工作区（屏幕 3）：gate 文案 + provision + 真本地 git diff
+    // 工作区（屏幕 3）：当前阶段 + provision + 真本地 git diff
     const workspace = page.getByTestId('workspace-view')
-    await expect(workspace.getByTestId('gate')).toContainText('下一步')
+    await expect(workspace.getByTestId('gate')).toContainText('当前阶段')
     await expect(workspace).toContainText('不替你跑 git 写操作')
 
+    // 低频/有副作用的动作收在「更多操作」折叠里，先展开再用
+    await workspace.getByText('更多操作').click()
     await page.getByRole('button', { name: '拉取本地工作区' }).click()
     const wsInfo = page.getByTestId('workspace-info')
     await expect(wsInfo).toBeVisible()
@@ -51,8 +53,9 @@ test.describe.serial('学习者闭环（真后端 + 真浏览器）', () => {
     await expect(diffInfo).toContainText('diff --git')
     await expect(diffInfo).toContainText('模拟')
 
-    // 提交 / 评审（屏幕 4）：两条 fixture 分支都可选
-    await page.getByRole('button', { name: /提交（跑阅卷桩）/ }).click()
+    // 提交 / 评审（屏幕 4）：两套 fixture 收在「高级调试选项」里，两条分支仍都能演示
+    await page.getByTestId('advanced-debug').getByText('高级调试选项').click()
+    await page.getByRole('button', { name: /提交答案/ }).click()
     await expect(page.getByTestId('submission-info')).toContainText('第 1 次')
 
     // 提交是**异步**的（202 + 轮询进度），报告随后渲染出来（屏幕 4a）
@@ -84,6 +87,8 @@ test.describe.serial('学习者闭环（真后端 + 真浏览器）', () => {
     const verdict = page.getByTestId('verdict')
     await expect(verdict).toContainText('通过：下一阶段已解锁')
     await expect(verdict).toContainText('非 LLM 打分')
+    // 闭环的出口就在判决里：不用回左栏找下一题
+    await expect(page.getByTestId('go-next')).toBeVisible()
 
     await expect(stage00).toContainText('已通过')
     await expect(page.getByTestId('stage-stage-01-product-query-index')).toContainText('可开始')
@@ -100,9 +105,10 @@ test.describe.serial('学习者闭环（真后端 + 真浏览器）', () => {
     await page.getByRole('button', { name: '开始本阶段' }).click()
     await expect(stage01).toContainText('开发中')
 
-    // 阅卷给绿、评审要求改：门仍然 fail（评审是证据之一，不是分数）
+    // 自动测试给绿、评审要求改：门仍然 fail（评审是证据之一，不是分数）
+    await page.getByTestId('advanced-debug').getByText('高级调试选项').click()
     await page.getByTestId('grading-scenario').selectOption('pass')
-    await page.getByRole('button', { name: /提交（跑阅卷桩）/ }).click()
+    await page.getByRole('button', { name: /提交答案/ }).click()
     await page.getByTestId('review-scenario').selectOption('request_changes')
     await page.getByRole('button', { name: /发起 AI 评审/ }).click()
 
@@ -115,8 +121,8 @@ test.describe.serial('学习者闭环（真后端 + 真浏览器）', () => {
     await expect(page.getByTestId('verdict')).toContainText('未通过：请按评审意见返工')
     await expect(stage01).toContainText('未通过')
 
-    // retry → 回到开发中，且旧结论被清空
-    await page.getByRole('button', { name: /返工重来/ }).click()
+    // 返回工作区修改 → 回到开发中，且旧结论被清空
+    await page.getByTestId('retry').click()
     await expect(stage01).toContainText('开发中')
     await expect(page.getByTestId('verdict')).toHaveCount(0)
     await expect(page.getByTestId('submission-info')).toHaveCount(0)
