@@ -54,7 +54,7 @@ export interface Hint {
   id: string
   /**
    * 折叠标题上的短标签（「提示 1：事务边界」）。可选：已发布的 Track 没有它，
-   * 那时退回「提示 N」。作者侧约定见 seckill-lab `docs/工单写作规范.md` §5。
+   * 那时退回「提示 N」。作者侧约定见平台仓 `docs/工单写作规范.md` §5。
    */
   title?: string | null
   text: string

@@ -112,7 +112,7 @@ AI 评审结论 → **下一步**（通过则给「进入下一题 →」与要�
 
 > 题面本身的**写法**也是一等公民：`brief.problem` / `grader.correctness.expect` / `hints` 会被
 > 渲染成一个有层级的页面，所以 Track 作者要按内容规范写（叙事优先，别"一句话一个 Card"）——
-> 规范正文在内容仓里：seckill-lab `docs/工单写作规范.md`。
+> 规范正文在本仓 [`docs/工单写作规范.md`](docs/工单写作规范.md)，内容仓只放指针、不复制第二份。
 
 > 代价：这三个依赖（marked / katex / dompurify）让前端 JS 产物从 ~250 KB 涨到 ~612 KB
 > （gzip 190 KB）。自托管单用户场景下不值一提，介意的话可以按需拆包。

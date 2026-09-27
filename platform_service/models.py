@@ -135,8 +135,8 @@ class Hint(_Strict):
 
     ``title`` is the short label rendered on the collapsed summary
     ('提示 1：事务边界'). It is optional so that already-published Tracks keep
-    validating; the UI falls back to '提示 N' when it is absent. See
-    seckill-lab ``docs/工单写作规范.md`` §5 for the authoring convention.
+    validating; the UI falls back to '提示 N' when it is absent. See this repo's
+    ``docs/工单写作规范.md`` §5 for the authoring convention.
     """
 
     id: str

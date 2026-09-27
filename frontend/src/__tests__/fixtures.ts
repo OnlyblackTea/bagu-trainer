@@ -78,8 +78,8 @@ export const ticket: Ticket = {
   problem: '按工单完成本阶段任务（占位内容）。',
   concepts: ['最左前缀', '覆盖索引', 'EXPLAIN'],
   files_to_change: ['src/db-stage-00/Solution.java'],
-  // 提示带 `title`：折叠标题显示成「提示 1：从哪看起」。作者侧约定见
-  // seckill-lab `docs/工单写作规范.md` §5。
+  // 提示带 `title`：折叠标题显示成「提示 1：从哪看起」。作者侧约定见平台仓
+  // `docs/工单写作规范.md` §5。
   hints: [{ id: 'H1', title: '从哪看起', text: '先看 EXPLAIN，再决定索引列序。' }],
   grader: {
     test_group: 'db-stage-00',
