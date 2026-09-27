@@ -35,7 +35,6 @@ class EnrollRequest(_Strict):
 
 
 class SubmitRequest(_Strict):
-    pr_url: str | None = None
     defense: str | None = Field(default=None, max_length=20000)
 
 
@@ -59,7 +58,7 @@ _GATE: dict[InstanceState, str] = {
     InstanceState.IN_PROGRESS: "开发中：在本地 dev 分支完成本阶段，再 submit（平台不代写代码）。",
     InstanceState.SUBMITTED: "已提交：对其发起 review。",
     InstanceState.GRADING: "评审中：发起 decide 取确定性结论。",
-    InstanceState.PASSED: "已通过：下一阶段已解锁——从其分支 cherry-pick / 提 PR 合入 dev 后继续。",
+    InstanceState.PASSED: "已通过：下一阶段已解锁——把它的分支合入你的 dev（cherry-pick / merge）。",
     InstanceState.FAILED: "未通过：按评审意见在本地改 dev，再 retry 重新提交。",
     InstanceState.STALE: "已作废（版本漂移）：用 reissue 重发新实例。",
 }

@@ -47,7 +47,7 @@
             "skeleton_repo": {
               "type": "string",
               "minLength": 1,
-              "description": "Skeleton forked when the exam is issued."
+              "description": "Skeleton the learner starts from (one branch per stage)."
             },
             "bagu_map": {
               "type": "string",

@@ -294,7 +294,7 @@ export function HomeView({
             <dd>
               <span className="badge">{meta.forge_backend}</span>
               <span className="muted">
-                {meta.forge_backend === 'stub' ? '桩：本地 clone + 占位 PR' : '真 Gitea：真 fork/PR'}
+                {meta.forge_backend === 'stub' ? '桩：本地 clone + 预置解法 ref' : '真 Gitea：真仓库，学员直推 dev'}
               </span>
             </dd>
           </dl>

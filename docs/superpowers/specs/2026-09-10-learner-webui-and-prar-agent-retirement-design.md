@@ -226,13 +226,13 @@ platform_api/
 | POST | `/instances/{id}/start` | available→in_progress | `service.start` |
 | POST | `/instances/{id}/provision` | 本地 clone track-repo fixture → 返回 workspace 路径 + dev 分支指示 | `ForgeClient`(Stub) |
 | GET | `/instances/{id}/diff?base=` | **真本地 git diff**（`review_diff.generate_diff`） | `review_diff` |
-| POST | `/instances/{id}/pr` | 占位：返回模拟 PR URL | `ForgeClient`(Stub) |
-| POST | `/instances/{id}/submit` | 跑阅卷桩→GradingReport；in_progress→submitted | `GradingRunner`(Stub) + `service.submit` |
+| ~~POST~~ | ~~`/instances/{id}/pr`~~ | **已删（L3 / 设计 v0.6）**：不再有 PR；提交走 `submit` | — |
+| POST | `/instances/{id}/submit` | 对账（fetch + 无损快进到学员 `dev`）→ 跑阅卷桩→GradingReport；in_progress→submitted | `GradingRunner`(Stub) + `service.submit` |
 | POST | `/submissions/{id}/review` | 跑评审桩→Review；submitted→grading | `ai_review.generate_review` + `service.review` |
 | POST | `/submissions/{id}/decide` | 确定性门；grading→passed\|failed；pass 则 unlock 下一阶段 | `service.decide` |
 | POST | `/instances/{id}/retry` | failed→in_progress | `service.retry` |
 
-**gate 指示**：平台不替学员跑 git 写操作（不 commit/merge/cherry-pick）。它在 `GET /instances/{id}` 与 provision/diff/pr 响应里返回**文案指示**："请在本地 `dev` 分支完成 Stage00；完成后从 `stage-01` 分支 cherry-pick / 提 PR 合入，再开始 Stage01"。学员驱动，平台 gate（用 decide 的结果决定下一阶段是否解锁）+ 指示（告诉学员下一步 git 动作）。
+**gate 指示**：平台不替学员跑 git 写操作（不 commit/merge/cherry-pick/push）。它在 `GET /instances/{id}` 与 provision/diff 响应里返回**文案指示**："请在本地 `dev` 分支完成 Stage00；完成后把 `stage-01` 分支合入 `dev`（cherry-pick / merge 都行），再开始 Stage01"。学员驱动，平台 gate（用 decide 的结果决定下一阶段是否解锁）+ 指示（告诉学员下一步 git 动作）。
 
 **错误形状**：HTTP 错误统一 `{ "detail": "<短码>" }`（机器可判定），沿用平台既有约定。pydantic 校验失败时 `detail` 为标准数组。状态码：400 语义不可用 / 404 资源不存在 / 409 状态冲突（非法转移，映射 `IllegalTransitionError`）/ 422 形状不可用 / 500 内部。
 
@@ -268,13 +268,19 @@ track-repo（fixture，将来=Gitea 上的真实 track 仓库）
         │ ④ submit→grade（桩）→review（桩）→decide（真门）
         ▼
   decide=pass ⇒ unlock stage-01 实例；平台指示：
-        "从 stage-01 分支 cherry-pick / 提 PR 合入你的 dev，再开发 Stage01"
+        "把 stage-01 分支合入你的 dev（cherry-pick / merge），再开发 Stage01"
   decide=fail ⇒ retry；平台指示：按 review 意见修改 dev，重新 submit
 ```
 
-**防剧透（D2，与设计 §8 一致）**：未解锁阶段的分支内容**不暴露**给学员 UI；`GET /tickets/{id}` 对 locked 实例只给元信息（标题/考点名词），不给该阶段起始代码或答案。stage 分支是独立 ref，fork/clone 只检出已解锁阶段。
+> **L3 更新（设计 v0.6，本节仍是权威契约）**：真 Gitea 下**没有 fork、没有 PR**——只有**一个上游内容仓**，
+> 学员直接把自己的 `dev` push 上去（loader 给他开写权限），平台 `provision` 就是 clone 那个仓。
+> 上面流程图里"提 PR"的位置一律读作"push `dev`"；阅卷只需要"后端读得到那个 commit"，PR 从未参与
+> 裁决（设计 §11.3 的输入是阅卷报告 + 评审建议 + 信任级 + 判定面篡改检测）。理由与代价见设计稿 §8.3。
+> 因此 `§C.5` 在代码注释里指的是**本节这段 git 进度模型**：一阶段一 ref、平台只读、`head_ref` = `dev`。
 
-**平台不跑 git 写操作**：clone（provision）是只读拉取，可由桩代执行（本地 fixture）；commit/merge/cherry-pick/PR 合并是**学员在自己机器上**做的（gate+指示）。diff 是只读 `git diff`，平台跑（已在 `review_diff`）。
+**防剧透（D2，与设计 §8 一致）**：未解锁阶段的分支内容**不暴露**给学员 UI；`GET /tickets/{id}` 对 locked 实例只给元信息（标题/考点名词），不给该阶段起始代码或答案。stage 分支是独立 ref，clone 只检出已解锁阶段。
+
+**平台不跑 git 写操作**：clone（provision）是只读拉取；commit/merge/cherry-pick 与 push 是**学员在自己机器上**做的（gate+指示）。diff 是只读 `git diff`，平台跑（已在 `review_diff`）。
 
 ### C.6 前端 `frontend/`
 

@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> None:
         choices=("stub", "gitea"),
         default=None,
         help="Forge 后端：stub=本地 clone + 占位 PR URL（默认；也可用 BAGU_FORGE）；"
-        "gitea=真 fork + 真 PR（需要 BAGU_GITEA_URL/TOKEN/UPSTREAM/OWNER）",
+        "gitea=真 Gitea（需要 BAGU_GITEA_URL/TOKEN/UPSTREAM；学员直接 push dev 到内容仓）",
     )
     parser.add_argument(
         "--store",

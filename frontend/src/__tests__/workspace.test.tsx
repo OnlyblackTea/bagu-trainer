@@ -3,13 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { WorkspaceView } from '../components/WorkspaceView'
-import type { DiffOut, PullRequestOut, WorkspaceOut, WorkspaceSyncOut } from '../types'
+import type { DiffOut, WorkspaceOut, WorkspaceSyncOut } from '../types'
 import { makeInstance } from './fixtures'
 
 /**
- * 「PR / diff 不再只是模拟」在界面上的落点：**逐项**跟着后端真实的 `simulated` 走。
+ * 「工作区 / diff 不再只是模拟」在界面上的落点：**逐项**跟着后端真实的 `simulated` 走。
  *
- * 这条规则两头都会犯错：真 fork / 真 diff / 真 PR 上盖「模拟」章，会把真结果说成假的（§15 风险 5）；
+ * 这条规则两头都会犯错：真仓库 / 真 diff 上盖「模拟」章，会把真结果说成假的（§15 风险 5）；
  * 桩产出上没有徽标，则是骗人。所以这里把两种后端各钉一遍。
  */
 
@@ -66,15 +66,6 @@ function syncOut(over: Partial<WorkspaceSyncOut> = {}): WorkspaceSyncOut {
   }
 }
 
-function prOut(simulated: boolean): PullRequestOut {
-  return {
-    pr_url: simulated
-      ? 'https://gitea.local/deployer/simulated/pulls/ti-1'
-      : 'http://127.0.0.1:3000/trackowner/seckill-lab/pulls/3',
-    simulated,
-  }
-}
-
 function stubFetch(routes: Record<string, unknown>) {
   const seen: Array<{ url: string; init?: RequestInit }> = []
   const fn = vi.fn(async (url: string, init?: RequestInit) => {
@@ -97,8 +88,6 @@ async function openFlow(routes: Record<string, unknown>) {
   await screen.findByTestId('workspace-info')
   await user.click(screen.getByRole('button', { name: '查看 diff' }))
   await screen.findByTestId('diff-info')
-  await user.click(screen.getByRole('button', { name: '开 PR' }))
-  await screen.findByTestId('pr-info')
   return user
 }
 
@@ -111,7 +100,6 @@ describe('指引式 provision（在**你自己**的目录里做这一题）', ()
     await openFlow({
       '/instances/ti-1/provision': REAL_WS,
       '/instances/ti-1/diff': diffOut(),
-      '/instances/ti-1/pr': prOut(false),
     })
     const hint = screen.getByTestId('clone-hint')
     expect(hint).toHaveTextContent('git clone')
@@ -129,7 +117,6 @@ describe('指引式 provision（在**你自己**的目录里做这一题）', ()
         },
         '/instances/ti-1/provision': REAL_WS,
         '/instances/ti-1/diff': diffOut(),
-      '/instances/ti-1/pr': prOut(false),
     })
 
     const user = userEvent.setup()
@@ -177,26 +164,25 @@ describe('指引式 provision（在**你自己**的目录里做这一题）', ()
     await openFlow({
       '/instances/ti-1/provision': STUB_WS,
       '/instances/ti-1/diff': diffOut({ simulated: true, worktree: false }),
-      '/instances/ti-1/pr': prOut(true),
     })
     expect(screen.queryByTestId('clone-hint')).not.toBeInTheDocument()
   })
 })
 
 describe('真 Forge（gitea）', () => {
-  it('不盖「模拟」章，PR 是可点的真链接，并给出可照抄的 git 命令', async () => {
+  it('不盖「模拟」章，并给出可照抄的 git 命令与「推完就能提交」的说明', async () => {
     await openFlow({
       '/instances/ti-1/provision': REAL_WS,
       '/instances/ti-1/diff': diffOut(),
-      '/instances/ti-1/pr': prOut(false),
     })
 
     // 真 Gitea ⇒ 一个「模拟」徽标都不该有
     expect(screen.queryByTestId('simulated-badge')).not.toBeInTheDocument()
-    expect(screen.getAllByText('真 Gitea').length).toBeGreaterThanOrEqual(2)
+    // 工作区面板一处（PR 面板已随 L3 废弃，不再有第二处）
+    expect(screen.getAllByText('真 Gitea').length).toBeGreaterThanOrEqual(1)
 
-    const link = screen.getByTestId('pr-link')
-    expect(link).toHaveAttribute('href', 'http://127.0.0.1:3000/trackowner/seckill-lab/pulls/3')
+    // PR 已废弃（L3）：真 Gitea 下给的是「推完就能提交」的说明，而不是一个开单入口
+    expect(screen.getByTestId('push-hint')).toHaveTextContent('推完就能回平台')
 
     const push = screen.getByTestId('push-hint')
     expect(push).toHaveTextContent('git push -u origin dev')
@@ -210,7 +196,6 @@ describe('真 Forge（gitea）', () => {
     await openFlow({
       '/instances/ti-1/provision': REAL_WS,
       '/instances/ti-1/diff': diffOut(),
-      '/instances/ti-1/pr': prOut(false),
     })
 
     const info = screen.getByTestId('diff-info')
@@ -223,14 +208,13 @@ describe('真 Forge（gitea）', () => {
     await openFlow({
       '/instances/ti-1/provision': REAL_WS,
       '/instances/ti-1/diff': diffOut({ diff: '', total_chars: 0 }),
-      '/instances/ti-1/pr': prOut(false),
     })
     expect(screen.getByTestId('diff-empty')).toHaveTextContent('还没有改动')
   })
 })
 
 describe('桩 Forge（stub）', () => {
-  it('逐项标「模拟」：工作区 / diff 来源 / PR，且 PR 不是链接、不给 push 命令', async () => {
+  it('逐项标「模拟」：工作区 / diff 来源，且不给 push 命令', async () => {
     await openFlow({
       '/instances/ti-1/provision': STUB_WS,
       '/instances/ti-1/diff': diffOut({
@@ -240,15 +224,12 @@ describe('桩 Forge（stub）', () => {
         worktree: false,
         simulated: true,
       }),
-      '/instances/ti-1/pr': prOut(true),
     })
 
-    // 三处都有徽标（Forge ×2 + diff 来源）
-    expect(screen.getAllByTestId('simulated-badge').length).toBeGreaterThanOrEqual(3)
+    // 两处都有徽标（Forge + diff 来源；PR 面板已随 L3 废弃）
+    expect(screen.getAllByTestId('simulated-badge').length).toBeGreaterThanOrEqual(2)
     // 桩没有可推的远端 ⇒ 不给一条注定失败的 push 命令
     expect(screen.queryByTestId('push-hint')).not.toBeInTheDocument()
-    // 桩的 PR 是占位 URL，不做成链接（点开是死的）
-    expect(screen.queryByTestId('pr-link')).not.toBeInTheDocument()
     expect(screen.getByTestId('diff-info')).toHaveTextContent('origin/stage-00-onboarding-sol')
     expect(screen.getByTestId('diff-info')).not.toHaveTextContent('还没 commit')
   })
@@ -267,7 +248,6 @@ describe('代码写在**另一台机器**上（与远端对账）', () => {
           note: '远端 dev 领先这份工作区 2 个提交：你多半是在另一台机器上写的。',
         }),
       }),
-      '/instances/ti-1/pr': prOut(false),
     })
 
     const behind = screen.getByTestId('diff-behind')
@@ -305,7 +285,6 @@ describe('代码写在**另一台机器**上（与远端对账）', () => {
     await openFlow({
       '/instances/ti-1/provision': STUB_WS,
       '/instances/ti-1/diff': diffOut({ simulated: true, worktree: false, sync: null }),
-      '/instances/ti-1/pr': prOut(true),
     })
     expect(screen.queryByTestId('sync-info')).not.toBeInTheDocument()
   })
@@ -316,7 +295,6 @@ describe('工作区就绪', () => {
     await openFlow({
       '/instances/ti-1/provision': REAL_WS,
       '/instances/ti-1/diff': diffOut(),
-      '/instances/ti-1/pr': prOut(false),
     })
     const info = screen.getByTestId('workspace-info')
     expect(info).toHaveTextContent('/home/lqz/bagu-trial/ws/database-bagu/ti-1')

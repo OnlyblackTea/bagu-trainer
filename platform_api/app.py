@@ -21,11 +21,7 @@ from fastapi.responses import JSONResponse
 
 from platform_service.ai_review import ReviewDiffTooLargeError
 from platform_service.errors import GateNotReadyError, NotFoundError, WorkspacePathError
-from platform_service.forge import (
-    ForgeUnavailableError,
-    RemoteBranchMissingError,
-    WorkspaceRefMissingError,
-)
+from platform_service.forge import ForgeUnavailableError, WorkspaceRefMissingError
 from platform_service.lifecycle import IllegalTransitionError
 
 from .deps import (
@@ -129,24 +125,6 @@ def _register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=503,
             content={"detail": "forge_unavailable", "reason": str(exc)[:300]},
-        )
-
-    @app.exception_handler(RemoteBranchMissingError)
-    async def _no_remote_branch(
-        request: Request, exc: RemoteBranchMissingError
-    ) -> JSONResponse:
-        """远端还没有学员的 dev 分支，所以开不了 PR。
-
-        409（不是 500）：**预期内**的普通状况——学员只是还没 push。带着分支名回去，
-        前端才能说清"你要先 push 哪个分支"。
-        """
-        return JSONResponse(
-            status_code=409,
-            content={
-                "detail": "remote_branch_missing",
-                "repo": exc.repo,
-                "branch": exc.branch,
-            },
         )
 
     @app.exception_handler(GradingUnavailableError)

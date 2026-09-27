@@ -1,4 +1,4 @@
-"""provision 返回工作区、diff 真本地 git 非空、pr 占位 URL；未知实例 → 404。"""
+"""provision 返回工作区、diff 真本地 git 非空；未知实例 → 404。"""
 
 from __future__ import annotations
 
@@ -82,9 +82,6 @@ def test_real_forge_diff_compares_the_learners_worktree(tmp_path: Path) -> None:
                 ),
             )
 
-        def create_pr(self, instance: Any, *, base: str, head: str) -> str:
-            return "http://gitea.local/trackowner/track/pulls/7"
-
     bundle = app.state.tracks["database-bagu"]
     app.state.tracks["database-bagu"] = replace(bundle, forge=_RealForge())
 
@@ -103,18 +100,6 @@ def test_real_forge_diff_compares_the_learners_worktree(tmp_path: Path) -> None:
     assert body["diff_head_ref"] is None
     assert body["simulated"] is False
     assert "学员手写的改动" in body["diff"]
-
-    # PR 给的是真 URL，且不再标 simulated
-    pr = client.post(f"/instances/{iid}/pr").json()
-    assert pr["pr_url"] == "http://gitea.local/trackowner/track/pulls/7"
-    assert pr["simulated"] is False
-
-
-def test_pr_is_placeholder(client: Any) -> None:
-    iid = _enroll_start(client)
-    r = client.post(f"/instances/{iid}/pr")
-    assert r.status_code == 200
-    assert r.json()["pr_url"].startswith("https://") and r.json()["simulated"] is True
 
 
 def test_provision_unknown_instance_404(client: Any) -> None:

@@ -12,7 +12,8 @@
 #
 # 每个箭头都在表达一条真实的依赖：
 #   * gitea-admin 跑 `gitea admin user create`（官方镜像不认 GITEA_ADMIN_*，见 bootstrap/admin.sh）；
-#   * track-loader 建用户/仓、把内容仓的分支**推全**、再建/补齐 fork，最后把后端要用的令牌写进共享卷；
+#   * track-loader 建用户/仓、把内容仓的分支**推全**、给学员开内容仓写权限，最后把后端要用的令牌
+#     写进共享卷；
 #   * platform 靠 depends_on 保证"Gitea 里已经有它要 clone 的阶段分支"——这正是 provision 报
 #     `workspace_ref_missing` 的根因，靠启动顺序从根上避免。
 name: bagu
@@ -22,7 +23,7 @@ services:
     image: gitea/gitea:1.22
     restart: unless-stopped
     environment:
-      # ROOT_URL 决定 clone_url / PR 链接长什么样，所以它必须是**浏览器与容器都能访问**的地址。
+      # ROOT_URL 决定 clone_url 长什么样，所以它必须是**浏览器与容器都能访问**的地址。
       # 写成 127.0.0.1 的话：容器里那是它自己，provision 的 clone 会超时（真踩过）。
       # `:?` 是故意的：.env 缺失时**立刻失败并说明原因**，而不是拿默认值把 Gitea 重建成一个
       # ROOT_URL 为空的实例——那样整栈"看起来在跑"，clone_url 却是坏的（也真踩过）。
@@ -80,8 +81,8 @@ services:
       BAGU_ADMIN_PASSWORD: "${BAGU_ADMIN_PASSWORD:-baguadmin123}"
       BAGU_TRACK_OWNER_PASSWORD: "${BAGU_TRACK_OWNER_PASSWORD:-trackowner123}"
       BAGU_LEARNER_PASSWORD: "${BAGU_LEARNER_PASSWORD:-deployer123}"
-      # =1 时删掉旧 fork 重建：顺手清掉学员 dev 上可能躺着的参考解（内容重写后尤其需要）。
-      BAGU_FORK_RESET: "${BAGU_FORK_RESET:-0}"
+      # =1 时把学员加为上游仓的协作者（他才能直接 push `dev` 交卷）。0 = 不给写权限。
+      BAGU_LEARNER_WRITE: "${BAGU_LEARNER_WRITE:-1}"
     volumes:
       # 内容仓**只读**挂进来：loader 只 push，绝不改你的内容。
       - "${CONTENT_DIR:?deploy/.env 里必须有 CONTENT_DIR（Track 内容仓的路径）}:/content:ro"
@@ -103,7 +104,6 @@ services:
       BAGU_FORGE: "${FORGE:-gitea}"
       BAGU_GITEA_URL: "${BAGU_PUBLIC_URL:?deploy/.env 里必须有 BAGU_PUBLIC_URL}"
       BAGU_GITEA_UPSTREAM: "${TRACK_OWNER:-trackowner}/${TRACK_NAME:-seckill-lab}"
-      BAGU_GITEA_OWNER: "${LEARNER:-deployer}"
       BAGU_SECRETS_DIR: /run/bagu
       # 数据根在**两侧同路径**（见下面 volumes 的注释）：所以既不需要翻译，也不会出现
       # "容器里那条路径在宿主机上不存在"这种把 bind 变成空目录的事故。
@@ -113,6 +113,8 @@ services:
       # 阅卷后端**固定 stub**：真阅卷要 JDK17+Maven+compose 与 docker socket，那些由
       # docker-compose.grading.yml 叠加文件提供（`GRADING` 之类的开关不放在 .env 里，免得
       # "设了 docker 却忘了叠加文件"变成一堆看起来像学员代码问题的环境错）。
+      # ⚠ 反过来说：**只带这个基础文件跑一次 `up -d`，会把已经开着的真阅卷换回 stub**
+      #   （不是空操作）。开了 grading 之后，每次 up/build 都要带 -f docker-compose.grading.yml。
       BAGU_GRADING: stub
       BAGU_STORE: sqlite
       BAGU_INSTANCE_ID: "${INSTANCE_ID:-compose}"

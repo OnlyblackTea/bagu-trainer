@@ -121,7 +121,7 @@ export function DecisionView({
           )}
           {verdict === 'pass' && (
             <p style={{ marginBottom: 0 }}>
-              下一步：从<strong>下一阶段的分支</strong> cherry-pick / 提 PR 合入你的 dev，
+              下一步：把<strong>下一阶段的分支</strong>合入你的 dev（cherry-pick / merge 都行），
               再「开始」下一阶段。平台不替你跑这些 git 写操作。
             </p>
           )}

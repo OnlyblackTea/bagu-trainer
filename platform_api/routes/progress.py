@@ -109,9 +109,7 @@ def submit(
     workspace = bundle.forge.provision(instance)
     # 阅卷看的是**这份** checkout，所以先确认它是不是学员最新推上去的那份（见 docstring）。
     sync = apply_sync(workspace)
-    submission = bundle.service.submit(
-        instance_id, pr_url=body.pr_url, defense=body.defense
-    )
+    submission = bundle.service.submit(instance_id, defense=body.defense)
     run = state.grading_jobs.start(
         submission_id=submission.id,
         instance=instance,

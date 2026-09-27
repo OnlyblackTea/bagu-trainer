@@ -27,7 +27,6 @@ from platform_api.stubs_wiring import (
 from platform_service.forge import (
     DEV_BRANCH,
     ForgeUnavailableError,
-    RemoteBranchMissingError,
     git,
 )
 from platform_service.models import InstanceState, TicketInstance
@@ -35,7 +34,7 @@ from platform_service.stubs import StubForgeClient
 
 _BASE = "https://gitea.test"
 _UPSTREAM = "upstream/track"
-_FORK_OWNER = "deployer"
+_LEARNER = "deployer"  # 学员账号：他直接 push 到内容仓（没有 fork）
 _TOKEN = "tok-123"
 
 
@@ -78,7 +77,6 @@ def _client(tmp_path: Path, *, stage_refs: dict[str, str] | None = None) -> Gite
     return GiteaForgeClient(
         api=_api(),
         upstream=_UPSTREAM,
-        fork_owner=_FORK_OWNER,
         base_dir=tmp_path / "ws",
         stage_refs=stage_refs if stage_refs is not None else {"db-stage-01": "main"},
     )
@@ -88,132 +86,12 @@ def _client(tmp_path: Path, *, stage_refs: dict[str, str] | None = None) -> Gite
 
 
 @respx.mock
-def test_ensure_fork_reuses_an_existing_fork() -> None:
-    """已经 fork 过就直接用——学员会在同一条工单上反复 provision。"""
-    get = respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
-        return_value=httpx.Response(200, json={"clone_url": f"{_BASE}/{_FORK_OWNER}/track.git"})
-    )
-    post = respx.post(f"{_BASE}/api/v1/repos/upstream/track/forks").mock(
-        return_value=httpx.Response(201, json={})
-    )
-
-    fork = _api().ensure_fork(upstream=_UPSTREAM, fork_owner=_FORK_OWNER)
-
-    assert fork["clone_url"].endswith("deployer/track.git")
-    assert get.called and not post.called
-
-
-@respx.mock
-def test_ensure_fork_creates_when_absent() -> None:
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
-        return_value=httpx.Response(404, json={"message": "not found"})
-    )
-    respx.post(f"{_BASE}/api/v1/repos/upstream/track/forks").mock(
-        return_value=httpx.Response(201, json={"clone_url": f"{_BASE}/{_FORK_OWNER}/track.git"})
-    )
-
-    fork = _api().ensure_fork(upstream=_UPSTREAM, fork_owner=_FORK_OWNER)
-
-    assert fork["clone_url"].endswith("deployer/track.git")
-
-
-@respx.mock
-def test_create_pull_returns_the_html_url() -> None:
-    respx.post(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
-        return_value=httpx.Response(201, json={"html_url": f"{_BASE}/upstream/track/pulls/7"})
-    )
-    url = _api().create_pull(
-        upstream=_UPSTREAM,
-        fork_owner=_FORK_OWNER,
-        head_branch=DEV_BRANCH,
-        base_branch="main",
-        title="t",
-        body="b",
-    )
-    assert url == f"{_BASE}/upstream/track/pulls/7"
-
-
-@respx.mock
-def test_create_pull_without_a_remote_branch_is_not_a_500() -> None:
-    """学员还没 push：这是**预期内**的普通状况，要翻译成能让前端说清"先 push"的错误。"""
-    respx.post(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
-        return_value=httpx.Response(404, json={"message": "head branch not found"})
-    )
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track/branches/{DEV_BRANCH}").mock(
-        return_value=httpx.Response(404, json={"message": "not found"})
-    )
-
-    with pytest.raises(RemoteBranchMissingError) as exc:
-        _api().create_pull(
-            upstream=_UPSTREAM,
-            fork_owner=_FORK_OWNER,
-            head_branch=DEV_BRANCH,
-            base_branch="main",
-            title="t",
-            body="b",
-        )
-    assert exc.value.branch == DEV_BRANCH and exc.value.repo == f"{_FORK_OWNER}/track"
-
-
-@respx.mock
-def test_reopening_the_same_pull_is_idempotent() -> None:
-    """重复开 PR 不是错误：Gitea 给 409/422，我们应找回已有 PR 并返回同一个 URL。
-
-    实测（Gitea 1.22）fork PR 的 ``head.label`` 就是分支名 ``dev``，**不是** ``owner:branch``；
-    按后者去比会找不到已有 PR，然后带着原始 409 抛出去、退化成 503
-    ——这个 bug 是 VM 上的端到端才暴露出来的，所以这里补一条回归。
-    """
-    respx.post(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
-        return_value=httpx.Response(409, json={"message": "pull request already exists"})
-    )
-    respx.get(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
-        return_value=httpx.Response(
-            200,
-            json=[
-                {
-                    "html_url": "https://gitea.test/upstream/track/pulls/9",
-                    "head": {"label": DEV_BRANCH, "ref": DEV_BRANCH},
-                },
-                {"html_url": "https://gitea.test/other", "head": {"label": "feature"}},
-            ],
-        )
-    )
-
-    url = _api().create_pull(
-        upstream=_UPSTREAM,
-        fork_owner=_FORK_OWNER,
-        head_branch=DEV_BRANCH,
-        base_branch="main",
-        title="t",
-        body="b",
-    )
-
-    assert url == "https://gitea.test/upstream/track/pulls/9"
-
-
-@respx.mock
-def test_create_pull_auth_failure_is_unavailable() -> None:
-    respx.post(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
-        return_value=httpx.Response(401, json={"message": "token is invalid"})
-    )
-    with pytest.raises(ForgeUnavailableError, match="401"):
-        _api().create_pull(
-            upstream=_UPSTREAM,
-            fork_owner=_FORK_OWNER,
-            head_branch=DEV_BRANCH,
-            base_branch="main",
-            title="t",
-            body="b",
-        )
-
-
-@respx.mock
 def test_unreachable_gitea_is_unavailable() -> None:
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
         side_effect=httpx.ConnectError("refused")
     )
     with pytest.raises(ForgeUnavailableError, match="unreachable"):
-        _api().ensure_fork(upstream=_UPSTREAM, fork_owner=_FORK_OWNER)
+        _api().repo(*_UPSTREAM.split("/", 1))
 
 
 def test_authenticated_clone_url_injects_the_token_but_leaves_ssh_alone() -> None:
@@ -228,9 +106,9 @@ def test_authenticated_clone_url_injects_the_token_but_leaves_ssh_alone() -> Non
 
 
 @respx.mock
-def test_provision_clones_the_fork_and_creates_the_dev_branch(tmp_path: Path) -> None:
+def test_provision_clones_the_track_repo_and_creates_the_dev_branch(tmp_path: Path) -> None:
     fork_repo = _local_repo(tmp_path)
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
         return_value=httpx.Response(200, json={"clone_url": str(fork_repo)})
     )
     client = _client(tmp_path)
@@ -253,13 +131,13 @@ def test_provision_clones_the_fork_and_creates_the_dev_branch(tmp_path: Path) ->
 
 
 @respx.mock
-def test_provision_against_a_local_fork_needs_no_credentials(tmp_path: Path) -> None:
+def test_provision_against_a_local_path_needs_no_credentials(tmp_path: Path) -> None:
     """fork 的 clone_url 是**本地路径**时不装凭据——本地仓库本来就不需要认证。
 
     （真 Gitea 走的是 http，那条路径由下面那条测试与 VM 实测覆盖。）
     """
     fork_repo = _local_repo(tmp_path)
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
         return_value=httpx.Response(200, json={"clone_url": str(fork_repo)})
     )
     ws = _client(tmp_path).provision(_instance())
@@ -306,7 +184,7 @@ def test_real_forge_preview_diffs_the_worktree_and_offers_a_push_command(
 ) -> None:
     """真 Forge 的预览 diff 比的是工作区（含未提交改动），并给出可照抄的 push 命令（不含凭据）。"""
     fork_repo = _local_repo(tmp_path)
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
         return_value=httpx.Response(200, json={"clone_url": str(fork_repo)})
     )
     ws = _client(tmp_path).provision(_instance())
@@ -346,7 +224,7 @@ def test_reprovision_continues_the_remote_dev_and_the_push_fast_forwards(
         check=True,
         capture_output=True,
     )
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
         return_value=httpx.Response(200, json={"clone_url": str(fork)})
     )
 
@@ -354,8 +232,7 @@ def test_reprovision_continues_the_remote_dev_and_the_push_fast_forwards(
         return GiteaForgeClient(
             api=_api(),
             upstream=_UPSTREAM,
-            fork_owner=_FORK_OWNER,
-            base_dir=base_dir,
+                base_dir=base_dir,
             stage_refs={"db-stage-01": "main"},
         )
 
@@ -384,30 +261,11 @@ def test_reprovision_continues_the_remote_dev_and_the_push_fast_forwards(
 
 @respx.mock
 def test_provision_without_a_clone_url_is_unavailable(tmp_path: Path) -> None:
-    respx.get(f"{_BASE}/api/v1/repos/{_FORK_OWNER}/track").mock(
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
         return_value=httpx.Response(200, json={"name": "track"})
     )
     with pytest.raises(ForgeUnavailableError, match="clone_url"):
         _client(tmp_path).provision(_instance())
-
-
-@respx.mock
-def test_create_pr_uses_the_fork_prefix_and_strips_origin(tmp_path: Path) -> None:
-    """本地 ref 是 ``origin/<stage>`` / ``dev``；Gitea 要 ``<owner>:<branch>`` / ``<branch>``。"""
-    route = respx.post(f"{_BASE}/api/v1/repos/upstream/track/pulls").mock(
-        return_value=httpx.Response(201, json={"html_url": "https://gitea.test/pulls/1"})
-    )
-    url = _client(tmp_path).create_pr(_instance(), base="origin/main", head=DEV_BRANCH)
-
-    assert url == "https://gitea.test/pulls/1"
-    sent = route.calls[0].request
-    import json
-
-    body = json.loads(sent.content)
-    assert body["head"] == f"{_FORK_OWNER}:{DEV_BRANCH}" and body["base"] == "main"
-
-
-# --- 装配与配置 ---------------------------------------------------------------
 
 
 def test_resolve_forge_backend_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,9 +306,7 @@ def test_build_forge_selects_the_backend(tmp_path: Path) -> None:
         base_dir=tmp_path / "ws2",
         stage_refs={},
         backend="gitea",
-        settings=GiteaSettings(
-            base_url=_BASE, token="t", upstream=_UPSTREAM, fork_owner=_FORK_OWNER
-        ),
+        settings=GiteaSettings(base_url=_BASE, token="t", upstream=_UPSTREAM),
     )
     assert isinstance(real, GiteaForgeClient) and forge_backend_name(real) == "gitea"
 

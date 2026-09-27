@@ -1,17 +1,27 @@
-"""Forge 缝（A′）：fork/clone 与 PR 的抽象。
+"""Forge 缝（A′）：git 远端与工作区的抽象。
 
 学员驱动本地 git，平台只 gate + 指示（设计 spec §C.5）：provision 把 track-repo 拉到本地
-工作区（占位 = 本地 clone；未来 = Gitea fork），diff 用 :mod:`platform_service.review_diff`
-跑真本地 git，PR 是占位 URL（未来 = Gitea PR）。平台**不替学员跑 git 写操作**。
+工作区（占位 = 本地 clone；真 = Gitea），diff 用 :mod:`platform_service.review_diff` 跑真本地 git。
+平台**不替学员跑 git 写操作**。
+
+**这里没有 fork，也没有 PR。** 早期设计照搬 GitHub 的 ``fork → 开发 → 提 PR → 过关``，Forge 缝上
+因此挂过一个 ``create_pr``。实测下来 fork 是纯负债：它是**创建那一刻的快照**（Track 后来长出新阶段，
+旧 fork 里永远缺席 ⇒ provision 报 ``workspace_ref_missing``）；Gitea 把程序化建出的 fork 标成
+``empty``（它的分支 API 对任何分支都回 404）；学员第一次 push 会抢走 fork 的默认分支（此后删不掉）；
+再加上"自己开的 PR 自己合不了"的权限摩擦。而**阅卷与判词一个都不需要 PR**——判词的输入是报告 +
+评审 + 判定面（见 :meth:`~platform_service.service.PlatformService.decide`）。
+
+所以现在必需的东西只有一件：**一个后端读得到的 git 远端**。学员把 ``dev`` 直接 push 上去，
+后端 clone 它、在里面跑测试、把 ``revision`` 记进报告。
 
 **git 进度模型（§C.5，本缝的契约）：** track-repo 里每个阶段（stage）有**自己的分支**，
 分支名就是该阶段在 ``manifest.stages`` / ``stages/<name>/`` 里的名字——**不是 ticket 的
 ``identity.id``**（阶段名与 ticket 身份是两个命名空间，见 Plan 1 Task 0）。
 
 * ``base_ref`` = 该 ticket 所属 **stage 的分支**（阶段起始代码，即"骨架"）；
-* ``head_ref`` = 学员的开发 ref（真实模型里是学员自己的 dev 分支）。
+* ``head_ref`` = 学员的开发 ref（真实模型里是 ``dev``；推进下一关时把下一阶段的分支并进 ``dev``）。
 
-**防剧透（§8 / D2）就建立在这条上**：未解锁阶段是独立 ref，clone/fork 只检出已解锁阶段。
+**防剧透（§8 / D2）就建立在这条上**：未解锁阶段是独立 ref，clone 只检出已解锁阶段。
 若把多个阶段的解法塞进同一个 ref（例如真 Track 样板目前那个单一 ``solutions`` 分支），
 一次 clone 就泄露全部答案——那不符合本模型，应由 Track 侧修，而不是让平台去适配。
 """
@@ -36,7 +46,7 @@ class Workspace:
     """一个实例的本地工作区。
 
     ``base_ref`` 是所属 stage 的分支（骨架）；``head_ref`` 是学员的开发 ref（真 Forge 下就是
-    ``dev``，PR 从它开）。``simulated`` 供 UI 标"模拟"。
+    ``dev``，学员 push 的就是它）。``simulated`` 供 UI 标"模拟"。
 
     ``diff_head_ref`` 是**预览/评审时拿什么和 base 比**，与 ``head_ref`` 分开是因为两者的正确
     答案不同：
@@ -85,8 +95,6 @@ class ForgeClient(Protocol):
 
     def provision(self, instance: TicketInstance) -> Workspace: ...
 
-    def create_pr(self, instance: TicketInstance, *, base: str, head: str) -> str: ...
-
 
 # --- Forge 侧的错误（真 Gitea 才会抛；桩永远不会）--------------------------------
 
@@ -96,19 +104,6 @@ class ForgeUnavailableError(RuntimeError):
 
     这是**平台/基础设施**问题（§C.8），路由应给 5xx + 短码——不能让它看起来像"学员的代码没过"。
     """
-
-
-class RemoteBranchMissingError(RuntimeError):
-    """远端还没有学员的 dev 分支，所以开不了 PR。
-
-    这是**预期内的普通状况**（学员还没 push），所以给 409 + 短码告诉他"先 push"，
-    而不是 500：它既不是故障，也不是学员做错了什么。
-    """
-
-    def __init__(self, *, repo: str, branch: str) -> None:
-        self.repo = repo
-        self.branch = branch
-        super().__init__(f"{repo} has no remote branch {branch!r} — push it before opening a PR")
 
 
 # --- 本地 git 工作区（两个 Forge 共用：只有"仓库从哪来"和"PR 怎么建"不同）-----------
@@ -224,7 +219,7 @@ def prepare_workspace(
     （见 :func:`remember_baseline`）。
 
     ``dev`` 的优先级是**本地已有 > 远端已有 > 从阶段分支新建**。第二条是必须的：学员的 ``dev``
-    是跨阶段累积的那条线（§C.5：通过一关后从下一阶段分支 cherry-pick/提 PR 合入 dev）。若每次都
+    是跨阶段累积的那条线（§C.5：通过一关后把下一阶段的分支合入 ``dev``）。若每次都
     从阶段分支重建，学员第二次 ``provision`` 就会得到一个**落后于自己远端**的本地分支，``git push``
     直接被拒（"tip of your current branch is behind its remote counterpart"）——而那跟他这题写得
     对不对毫无关系。本地已有就 checkout 它（重复 provision 不该把学员切到别处去）。

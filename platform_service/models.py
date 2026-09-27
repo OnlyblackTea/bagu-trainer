@@ -264,6 +264,9 @@ class Submission(_Strict):
     id: str
     instance_id: str
     seq: int = Field(ge=1, default=1)
+    #: 遗留字段：早期设计把 PR 当「答辩载体」，link 记在这里。**PR 已废弃**（L3：阅卷与判词都不
+    #: 需要它），现在恒为 ``None``。留着是为了让**旧 payload** 仍能被解析（模型 extra=forbid，
+    #: 删掉这个字段会让历史提交读不出来）。
     pr_url: str | None = None
     diff_ref: str | None = None
     defense_text: str | None = None

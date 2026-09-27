@@ -1,16 +1,17 @@
 # 发卷平台 (Paper Platform) · 总体设计稿
 
-> **一句话**：一个**开源、可自托管**的"八股实战演练所"，供部署者（也是唯一用户）自习、刷题。平台从 seckill-lab 这类内容轨里**发工单**，部署者当程序员（**亲手写代码**），在**自己的设备**上跑 canonical 测试完成**本地阅卷**，类 GitHub 地 fork → 开发 → 提 PR → 过关 → 解锁下一张工单。AI 评审是**未来可选的挂件**，不在闭环的必经路径上（D4）。
+> **一句话**：一个**开源、可自托管**的"八股实战演练所"，供部署者（也是唯一用户）自习、刷题。平台从 seckill-lab 这类内容轨里**发工单**，部署者当程序员（**亲手写代码**），在**自己的设备**上跑 canonical 测试完成**本地阅卷**，在内容仓的 `dev` 分支上开发 → push → 提交（含答辩）→ 过关 → 解锁下一张工单。AI 评审是**未来可选的挂件**，不在闭环的必经路径上（D4）。
 >
 > **定位**：供部署者（=用户）自习/刷题的**交互式演练所**，是 seckill-lab 的延伸；接受社区贡献（提交新 Track、扩展八股面）。**不含班级 / 排名 / 得分**，不是多租户 SaaS。
 >
-> **状态**：总体设计稿 v0.5（2026-09-10），实现期。**引擎无关**——A′ 引擎无关切片（`platform_api/` REST 控制面 + `frontend/` 学习者 SPA）已落地并验证。
+> **状态**：总体设计稿 v0.6（2026-09-10），实现期。**引擎无关**——A′ 引擎无关切片（`platform_api/` REST 控制面 + `frontend/` 学习者 SPA）已落地并验证。
 >
 > **变更记录**（v0.2–v0.4 条目中的 prar-agent / GPL / 契约冻结是**当时**的决策，v0.5 已退休，见 §6 决策记录）：
 > - **v0.2** — 落定三层许可拓扑与 GPL 边界（§6.7），prar-agent 打 `v0.1.0` tag、补 GPL-3.0；seckill-lab=MIT。
 > - **v0.3** — 据评审补强五处：① **评估版本钉 / 数据模型**：新增 `TicketInstance`（learner×ticket×engine×test×seed 版本钉）与 `AcceptanceDecision`（确定性验收门），重连实体关系（§9）。② **证据信任 + 评审/验收分离**：本地阅卷报告定性为**不可信 claim**（带 provenance），AI Review（咨询、非确定）与 AcceptanceDecision（确定、可审计）解耦（§7.4/§11）。③ **社区 track 供应链信任与安全模型**：track.yaml 拆 `manifest`(inert)/`runtime`(可执行)，引入 `trust_level` 一等概念 + 披露/digest 钉/sandbox 纵深防御（§4.2/§4.6/§13）。④ **prar-agent 契约面分级**：区分 v0.1.0 真稳定 API 与 planned API（§6.6）。⑤ **ticket schema**：`unlock_next`→`prerequisites` DAG、按 concern 命名空间分组（§4.3）。⑥ **许可措辞降调**为工程意图而非法律定论（§6.7/附录 A）。
 > - **v0.4** — 据主人指示收缩范围 + 重定位：平台定位为**供部署者（=用户）自习/刷题的交互式演练所**（seckill-lab 延伸、接受社区 Track 贡献），删除班级/排名/得分相关冗余——**删** 参数化试卷（原 §12.3）、排行榜（原 §12.4）、认证模式 runner（原 §7.6）、rubric 权重判分（§11.2）、teacher-confirm 老师终审（§11.3）、`fixture_seed` 版本钉（§9.1/§9.2）与 `parametric` schema 命名空间（§4.3）；§2.3 部署拓扑三档→两档。**保留** AI Review 建议（approve/request_changes）+ AcceptanceDecision 确定性硬门（解锁不塌陷）+ `runner_trust`（恒 `self` 的诚实标记）+ 学习者画像（§10，剥排名耦合）+ AI 口试（§12.2）。
 > - **v0.5** — **引擎退休 + 全稿契约对齐**：平台从"prar-agent 引擎驱动"改写为 **Track 内容 + git + 本地阅卷 + 自有 UI + 未来可选轻量 AI**。逐章处置：§0 增 **D4（引擎无关）** 支柱、D1 改述为结构性保证；§1 删"AI 经理 / Executor 六阶段映射"叙事，改述平台自有 `InstanceState`；§2 组件视图 / 算力表 / 部署拓扑去掉引擎；§3 三层解耦改为「内容 / 工具链 / 平台」，引擎模块对照表退役；§4 发卷措辞去 AI 味、`mentor_policy` 退役、`solutions` 改为**一阶段一 ref**；§5 流程表按平台状态与 REST 重写；**§6 整章退休**（保留一段决策记录）；§7 形态由 paper-cli 改为 `platform_api/`(REST) + `frontend/`(SPA)，报告格式对齐 `models.GradingReport`；§8 细化为「一阶段一 ref」；§9 `MentorSession` 退役；§10 学习者画像降为**未来切片**（不再声称复用 pgvector LTM）；§11 评审改为 `ReviewEngine` 缝；§12 口试降为**可选 harness**；§14/§15 路线图与风险重写；附录 A 亮点重拣、附录 B 退役、附录 C Q1/Q2 标记已决。决策依据：`docs/superpowers/specs/2026-09-10-learner-webui-and-prar-agent-retirement-design.md`。
+> - **v0.6** — **L3：废弃 fork 与 PR**。真 Gitea 的落地形态改为**一个内容仓 + 学员直接 push `dev`**（平台侧只 clone 与只读 diff）；`ForgeClient` 只剩 `workspace_path` / `provision`，`POST /instances/{id}/pr`、`create_pr`、`ensure_fork`、`fork_reset`、`remote_branch_missing` 短码一并删除，`BAGU_FORK_RESET`/`BAGU_LEARNER_CAN_MERGE` 换成 `BAGU_LEARNER_WRITE`（loader 给学员开内容仓写权限）。理由：阅卷只需要"后端读得到那个 commit"，PR 从未参与裁决（§11.3 的输入是阅卷报告 + 评审建议 + 信任级 + 判定面篡改检测），而 fork 带来两个真实故障——Gitea 对程序化 fork 返回 `empty` 导致分支 API 全 404、第一条推送会劫持默认分支。代价：失去"类 GitHub 的过程叙事"与"合并即门"的仪式感（§11 改为**提交即答辩**），以及上游仓直接承载学员的 `dev` 分支。逐章处置见 §1.2 / §2.1 / §2.2 / §5 / §7 / §8 / §9 / §11 / §14 / §15 / 附录 C.5。
 
 ---
 
@@ -21,11 +22,11 @@
 | # | 决策 | 对设计的硬约束 |
 |---|------|---------------|
 | **D1** | **角色反转**：AI 不代写。平台从 seckill-lab 内容里**提出需求**，学员完成；AI 评审（可选挂件）只给建议 | 平台里**不存在** Executor 这个座位——不是"禁用了写代码的动作空间"，而是**根本没有会写业务代码的组件**。D1 因此是**结构性保证**，不靠 guardrail 守（§1.2） |
-| **D2** | **fork 防剧透走君子协定**：让答案/后续进度"不那么方便"被看到即可，基于"用户主动参与"，防剧透**可少做甚至不做** | 只加**轻摩擦**（不 surfaced、需刻意操作），**不建硬墙**，不为藏答案牺牲架构简洁；落地形态 = **一阶段一 ref**（§8） |
+| **D2** | **防剧透走君子协定**：让答案/后续进度"不那么方便"被看到即可，基于"用户主动参与"，防剧透**可少做甚至不做** | 只加**轻摩擦**（不 surfaced、需刻意操作），**不建硬墙**，不为藏答案牺牲架构简洁；落地形态 = **一阶段一 ref**（§8） |
 | **D3** | **阅卷用使用方自己的算力**，不用平台云 | **本地优先阅卷**：学员设备跑 canonical 测试；平台中心**零阅卷算力**。LLM 推理（若将来启用挂件）也由部署方自带 key/本地模型——平台中心**零强制 LLM 成本** |
 | **D4** | **引擎无关**：平台的依赖面只有 **Track 内容 + git + 本地工具链**；AI 只作为**可选挂件**接在缝上 | 平台不得把任何 AI/LLM 放在闭环的**必经路径**上。AI 评审缺席时，确定性验收门（§11.3）依然能独立裁决、独立解锁；反之，接上再强的模型也不能越过硬门 |
 
-补充承继的前提（来自上一轮）：**自建 Gitea（或任意 git 服务器）** 承载 git/fork/PR，平台只**指示**、不代跑 git 写操作；**内容标准化 + track 脚手架生成器是开源社区能否贡献的命脉**，列为一等公民。
+补充承继的前提（来自上一轮）：**自建 Gitea（或任意 git 服务器）** 承载 git —— 上游内容仓与学员那条 `dev` 分支都住在它上面，平台只**指示**、不代跑 git 写操作（v0.6 去掉了 fork/PR，见变更记录）；**内容标准化 + track 脚手架生成器是开源社区能否贡献的命脉**，列为一等公民。
 
 > **D2 与 D3 的协同**：既然阅卷在学员本机、防剧透走荣誉制，整个平台就**不需要中心化的可信计算**——这让"开源自托管"在成本和信任模型上都成立。代价是：平台**不提供"防铁了心作弊"的强保证**，详见 §13。
 >
@@ -60,9 +61,9 @@ User                     →  review 动作结果
 Track 内容(ticket.yaml) →  平台渲染「工单」：线上问题 / 考点 / 限定改动面 / 阶梯提示
 学员                    →  读工单 → 在本地 IDE 亲手写代码（在 git 开发分支上留痕）
 本地工具链              →  runtime 测试 / EXPLAIN / 并发 sim 跑在**学员自己的机器**上
-学员                    →  提 PR + 填答辩模板（= 交卷）
+学员                    →  push `dev` + 填答辩文本（= 交卷）
 确定性验收门            →  硬门（测试绿 + 证据信任级）→ pass/fail → 解锁下一张
-[可选挂件] AI 评审      →  读 PR diff + 答辩 + 阅卷报告，锚定 diff 出**建议**（不置 passed、不参与解锁）
+[可选挂件] AI 评审      →  读 diff + 答辩 + 阅卷报告，锚定 diff 出**建议**（不置 passed、不参与解锁）
 ```
 
 > **为什么这个反转优雅**：不是"给自治 agent 加约束防止它代写"，而是**从角色定义上就让人占据执行位**。
@@ -78,7 +79,7 @@ v0.4 把 prar-agent 的 6 阶段逐阶段映射到平台语义。v0.5 退休引�
 | `locked` | 前置未过，不可接取 | 发卷时默认（`progression.prerequisites` 未全 `passed`，§4.3） |
 | `available` | 已解锁，可接取 | 依赖的 `prerequisites` **全部** `passed`（DAG 判定，§9.2） |
 | `in_progress` | 学员开发中 | 学员 `start`：工作区 provision 出本阶段的开发 ref（§8） |
-| `submitted` | 已交卷：PR + 答辩 + 阅卷报告齐 | 学员 `submit`（同 Instance 内第 N 次 attempt 记为 `seq=N`） |
+| `submitted` | 已交卷：答辩 + 阅卷报告齐 | 学员 `submit`（同 Instance 内第 N 次 attempt 记为 `seq=N`） |
 | `grading` | 评审 / 裁决进行中 | `review` 被调用（跑阅卷 + 可选 AI 评审） |
 | `passed` | 通过 → 解锁下游 | **确定性验收门**判 pass（§11.3） |
 | `failed` | 打回 → 可 retry | 验收门判 fail；retry = 同 Instance 新 Submission（`failed → in_progress`） |
@@ -101,17 +102,17 @@ v0.4 把 prar-agent 的 6 阶段逐阶段映射到平台语义。v0.5 退休引�
                          └──────────────────────┬───────────────────────────┘
                                                 │ 启动时读入（只读；惰性声明）
                                                 ▼
-┌────────────────┐   fork/PR   ┌────────────────────────────────┐   REST   ┌──────────────────┐
+┌────────────────┐  clone/diff  ┌────────────────────────────────┐   REST   ┌──────────────────┐
 │   自建 Gitea     │◄───────────►│  平台服务 (FastAPI · 纯 REST)      │◄────────►│   学习者 SPA       │
-│  git / fork/PR  │  平台只「指示」│  platform_service/  纯领域逻辑    │          │  frontend/       │
-│  refs           │  不代跑 git 写 │  platform_api/      组合根       │          │  看板·发卷·工作区   │
+│  上游内容仓       │  平台只「指示」│  platform_service/  纯领域逻辑    │          │  frontend/       │
+│  + 学员 dev 分支  │  不代跑 git 写 │  platform_api/      组合根       │          │  看板·发卷·工作区   │
 └───────┬────────┘               └───────────────┬────────────────┘          │  提交评审·决策     │
-        │ clone / pull / push                   │ 发卷 / 收 PR + 阅卷报告      └──────────────────┘
+        │ clone / fetch / push                  │ 发卷 / 收提交 + 阅卷报告      └──────────────────┘
         ▼                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                学员设备（自带算力）· 本地 IDE + Track runtime 工具链               │
 │  dev(在 stage 开发 ref 上写代码) → grade(运行时注入 canonical 测试，本地跑)         │
-│  → push 分支 + 开 PR(答辩模板 + 阅卷报告) → 平台裁决 → 解锁下一阶段                  │
+│  → push dev(答辩文本 + 阅卷报告) → 平台裁决 → 解锁下一阶段                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -119,7 +120,7 @@ v0.4 把 prar-agent 的 6 阶段逐阶段映射到平台语义。v0.5 退休引�
 
 | 计算 | 谁出算力 | 说明 |
 |------|---------|------|
-| git 托管 / fork / PR | 部署方的 Gitea（一台小机器即可） | 不是"我们的云"，是**自托管** |
+| git 托管（上游内容仓 + 学员 `dev`） | 部署方的 Gitea（一台小机器即可） | 不是"我们的云"，是**自托管**。v0.6 起不再有 fork/PR：学员直接推上游仓的 `dev` |
 | **阅卷（跑 canonical 测试 / EXPLAIN / 并发 sim）** | **学员自己的设备** | docker compose 起 MySQL(13306)+Redis(16379)+app，本地 `mvn test` |
 | **AI 评审（可选挂件）** | **部署方自带** API key 或本地模型 | 平台中心**零强制 LLM 成本**（D4）：挂件缺席时闭环照走。挂件经 `ReviewEngine` 缝注入（§11.2） |
 | 平台编排（状态机 / 解锁 / 发卷渲染 / 报告留痕） | 部署方平台服务（轻量） | 无重计算 |
@@ -141,7 +142,7 @@ v0.4 把 prar-agent 的 6 阶段逐阶段映射到平台语义。v0.5 退休引�
 |----|--------|------|-----------|
 | **内容层** | 题库：track / stage / ticket + 骨架 + canonical 测试 + 八股地图 + hints + 参考解 | seckill-lab = 第一个 Track（数据库八股），已有 stage 设计、验收测试、并发 sim、八股地图 | 把 seckill-lab 的**隐式约定显式建模**为 schema（`content/schema/`）+ 准入门 `validate_track`（§4.6）；脚手架生成器待做（§4.5） |
 | **工具链层** | 阅卷：docker compose + maven + canonical 测试 + EXPLAIN + 并发 sim | seckill-lab 学员本来就在本地跑（§7.1） | **不改**，只把它**标准化 + 工具化**（`GradingRunner` 缝，§7） |
-| **平台层** | 发卷 / 接卷 / fork-PR 指示 / 状态机 / 解锁 / 报告留痕 / 看板 | 无 | **全部新建**（本设计主体）——纯领域逻辑 + 纯 REST 控制面 + 学习者 SPA |
+| **平台层** | 发卷 / 接卷 / push 指示 / 状态机 / 解锁 / 报告留痕 / 看板 | 无 | **全部新建**（本设计主体）——纯领域逻辑 + 纯 REST 控制面 + 学习者 SPA |
 
 > **v0.5 删掉了第四层（引擎层）**：v0.4 曾把"AI 经理 / 导师 / 评审"当独立一层、由 prar-agent 承担。
 > 退休后 AI 降为**可选挂件**，接在 `ReviewEngine` 缝上（§11.2），不再是一层架构——挂件缺席时，
@@ -160,11 +161,11 @@ v0.4 的"prar-agent 模块级复用对照表"已随引擎退休。平台当前�
 | `platform_api/store_postgres.py` | **真持久化后端**：`bagu_documents`（`kind,id` 主键 + 抽出被查询的键列建索引 + `payload jsonb`）+ `bagu_id_seq`；psycopg3 同步驱动（服务层是同步的），每操作单开连接故线程安全 | **新建**（`--store postgres`；§9.1） |
 | `platform_api/jobs.py` | 后台阅卷登记处：单线程排队 + 运行记录写穿到 store + 启动时把**自己名下**卡在 queued/running 的孤儿记录收成 `interrupted`（崩掉的进程没法给自己写墓志铭） | **新建**（§C.3 步骤 6） |
 | `platform_service/history.py` | 历史投影 + **纯函数**比对：逐条测试的状态迁移（红→绿/绿→红/新增/消失）与耗时变化；耗时优先取运行记录（含重置环境那一段） | **新建**（§11） |
-| `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git / fork / PR） | 存活（§7 / §8） |
+| `platform_service/grading.py` · `forge.py` | 两个 Protocol 缝：`GradingRunner`（阅卷）/ `ForgeClient`（git：`workspace_path` + `provision`，另带只读的 `sync_workspace` / `remote_branches`） | 存活（§7 / §8） |
 | `platform_api/grading_docker.py` | **真阅卷后端**：跑测试前按 `runtime.compose` 重置基础设施（`down -v` + `up -d --wait`），再在工作区跑 canonical 测试，把 surefire 的真实结果映成 `GradingReport`（真实 provenance、真 `git diff` 物证）；环境故障抛 `GradingUnavailableError` → 503 | **新建**（`--grading docker`；§7.1） |
-| `platform_api/gitea.py` · `forge_gitea.py` | **真 Forge 后端**：`GiteaApi`（最小 REST 封装：仓库在不在 / 确保 fork / 开 PR）+ `GiteaForgeClient`（provision = 真 fork + clone + 建 `dev` 分支 + 记基线；create_pr = 真开 PR 返回 `html_url`） | **新建**（`--forge gitea`；§8.1） |
+| `platform_api/gitea.py` · `forge_gitea.py` | **真 Forge 后端**：`GiteaApi`（最小 REST 封装：认领管理员 / 生成带凭据的 clone URL / 查仓）+ `GiteaForgeClient`（provision = clone **上游内容仓** + 决定并建 `dev` 分支 + 记基线 + 装 push 凭据） | **新建**（`--forge gitea`；§8.1） |
 | `platform_service/ai_review.py` · `review_diff.py` | `ReviewEngine` Protocol + 评审前 diff 预处理（体积预检、整文件截断） | 存活（§11.2） |
-| `platform_service/stubs.py` | 三个"诚实占位"桩：Stub 阅卷 / Stub 评审 / Stub Forge（真本地 clone + 真本地 git diff，PR 为占位） | **新建**（真假逐项标注见 spec §C.9） |
+| `platform_service/stubs.py` | 三个"诚实占位"桩：Stub 阅卷 / Stub 评审 / Stub Forge（真本地 clone + 真本地 git diff，diff 来源仍为预置解 ref） | **新建**（真假逐项标注见 spec §C.9） |
 | `platform_api/` | 组合根 + 适配层：FastAPI 纯 REST 控制面（`app` / `deps` / `schemas` / `routes/*` / `serve`）与真实后端实现（`grading_docker`） | **新建**（§5） |
 | `frontend/` | 学习者 SPA（React + Vite + TS，**从零写**，Apache-2.0） | **新建**（§7.2） |
 | 脚手架生成器 / 准入门 CLI / 学习者画像 / PG 存储 / 真实 Forge / canonical 测试运行时注入 | 未来切片 | 见 spec §2 后续切片表与 §14 路线图 |
@@ -203,7 +204,7 @@ track:
     requires:                    # 学员设备前置（仅声明，平台据此做环境体检，不代装）
       java: "17"
       build: maven
-    skeleton_repo: ./skeleton    # 发卷时 fork 的骨架
+    skeleton_repo: ./skeleton    # 阶段起始代码（各阶段有自己的分支，§8）
     bagu_map: ./bagu-map.md      # 八股地图（讲解锚点）
     stages:                      # 渐进解锁；每张 ticket 用 progression.prerequisites 表达依赖
       - stage-00-onboarding
@@ -240,7 +241,7 @@ track:
 把 seckill-lab 的 `stage-NN.md` **结构化**，平台才能渲染、验收、控解锁：
 
 ```yaml
-# ── identity：身份 + 版本锚点（钉进 §9.1 TicketInstance，回答"这 PR 基于哪个版本"）──
+# ── identity：身份 + 版本锚点（钉进 §9.1 TicketInstance，回答"这次提交基于哪个版本"）──
 identity:
   id: db-stage-01
   schema_version: 1              # ticket.yaml 结构版本（schema 演进用）
@@ -281,7 +282,7 @@ hints:
     text: "EXPLAIN 断言的查询形状与 searchProducts 一致"
   # H3/H4...
 
-# ── submission：PR 即答辩（§11）──
+# ── submission：提交即答辩（§11）──
 submission:
   template:
     require:
@@ -308,7 +309,7 @@ progression:
 > **v0.3 结构变更（namespace 分组 + unlock_next→prerequisites + 版本锚点）**：
 > ①**按 concern 分组**——identity/brief/scope/grader/hints/submission/mentor_policy/progression，平台渲染、验收、防越界、控解锁各取所需，互不串味（`mentor_policy` 已于 v0.5 退休但**保留在 schema 里**，理由见上方 inline 注释）；
 > ②**`unlock_next` 反转为 `progression.prerequisites`**——工单不再"向前指"下一张（那样新增/重排工单要改一片），而是"向后指"自己依赖谁，整体构成 DAG，解锁判定 = "prerequisites 全 passed"（§9.2）；单前置时天然退化为线性，迁移零成本；
-> ③**版本锚点**——`schema_version` / `ticket_version` / `grader.correctness.test_version` 与 `engine_version` 一起在发卷时钉进 `TicketInstance`（§9.1），从而能回答用户提的五个硬问题（"这 PR 基于哪个 ticket 版本？""grading report 是哪个 test version 跑的？""题目更新后旧 submission 还有效吗？""平台更新后旧 submission 用哪个平台版本？""retry 是重新发卷还是续上一张？"）——全部在 schema 层解决，不留给运行时扯皮。
+> ③**版本锚点**——`schema_version` / `ticket_version` / `grader.correctness.test_version` 与 `engine_version` 一起在发卷时钉进 `TicketInstance`（§9.1），从而能回答用户提的五个硬问题（"这次提交基于哪个 ticket 版本？""grading report 是哪个 test version 跑的？""题目更新后旧 submission 还有效吗？""平台更新后旧 submission 用哪个平台版本？""retry 是重新发卷还是续上一张？"）——全部在 schema 层解决，不留给运行时扯皮。
 
 
 ### 4.4 track 资产清单（贡献者必须提供）
@@ -373,7 +374,7 @@ paper new-track --topic "JVM 八股" --concepts "GC,类加载,内存模型,JIT"
 ## 5. 端到端流程
 
 ```
-选方向 → 接工单 → 发卷 → 开发(本地 IDE + runtime) → 本地阅卷 → 提交 PR(=答辩)
+选方向 → 接工单 → 发卷 → 开发(本地 IDE + runtime) → 本地阅卷 → push dev + 提交(=答辩)
        → [可选]AI 评审 → 确定性裁决 → 过关 → 讲八股 → 解锁下一张 → (循环)
 ```
 
@@ -382,10 +383,10 @@ paper new-track --topic "JVM 八股" --concepts "GC,类加载,内存模型,JIT"
 | **1 选方向** | 浏览已部署的 Track 与其 stage 看板（可部署多个，前端出切换条） | `GET /tracks` · `GET /tracks/{id}`（board 含 `board_only` 阶段，不取卷） | 平台 |
 | **2 报名 + 接工单** | 看 stage 看板（🔒/🟥/✅，沿用 seckill-lab TASKS 看板语义），点"接取" | `POST /enrollments`（**带 track**；多 Track 下省略 ⇒ 400 `enroll_needs_track`）建 Enrollment 并**批量发卷**（按 `progression.prerequisites` 算 DAG 初始状态：无前置 ⇒ `available`，否则 `locked`）；实例盖 `track` 戳；`GET /instances?learner=&track=` 出看板 | 平台 |
 | **3 发卷** | 读工单：线上问题 / 考点 / `files_to_change` / 阶梯提示 | `GET /tracks/{track_id}/tickets/{ticket_id}`（权威地址：ticket id 只在 Track 内唯一；**只给题面**，答案与参考解**不 surfaced**，§8）；`POST /instances/{id}/start` → `in_progress` | 平台 |
-| **4 起工作区** | 在本地 IDE 写代码；需要时 `docker compose up` 起 runtime 依赖 | `POST /instances/{id}/provision`：clone 骨架仓、checkout 本阶段 `base_ref`，落到 `head_ref` 开发分支 | 平台（指示）+ **学员设备** |
-| **5 开发** | 在 `head_ref` 上提交；随时看平台给出的 diff 概览 | 平台**不跑** git 写操作，只指示（§8）；`GET /instances/{id}/diff` 出 base↔head diff（真本地 git） | **学员设备** |
+| **4 起工作区** | 在本地 IDE 写代码；需要时 `docker compose up` 起 runtime 依赖 | `POST /instances/{id}/provision`：clone **上游内容仓**、按"本地已有 > 远端已有 > 阶段分支"定出 `dev`、装 push 凭据 | 平台（指示）+ **学员设备** |
+| **5 开发** | 在 `dev` 上提交并 **push 到内容仓**（这就是"交卷投递"）；随时看平台给出的 diff 概览 | 平台**不跑** git 写操作，只指示（§8）；`GET /instances/{id}/diff` 出 base↔工作区 diff（真本地 git，含未提交改动） | **学员设备** |
 | **6 本地阅卷** | 跑 canonical 测试 / EXPLAIN / 并发 sim，产出**结构化阅卷报告** | 收报告（`GradingRunner` 缝）。**报告是不可信证据**：自带 `provenance` + `runner_trust`（§7.4） | **学员设备** |
-| **7 提交 PR** | 填**答辩模板** + 附阅卷报告 → 开 PR | `POST /instances/{id}/pr` 生成 PR 描述 + 体积预检；`POST /instances/{id}/submit` → **202** + `submitted`，阅卷转后台；`GET /instances/{id}/history` 回看历次尝试与逐条测试迁移 | 学员设备 + Gitea |
+| **7 提交（=答辩）** | 填**答辩文本** → 提交 | `POST /instances/{id}/submit`：先对账（fetch + 无损快进到你的 `dev`）→ **202** + `submitted`，阅卷转后台；`GET /instances/{id}/history` 回看历次尝试与逐条测试迁移。（v0.6 删掉了 `POST /instances/{id}/pr`） | 学员设备 + Gitea |
 | **8 [可选] AI 评审** | 收到锚定 diff 的**点评** + approve/request_changes 建议 | `POST /submissions/{id}/review`：跑阅卷 + 可选评审 → `grading`。**挂件缺席时照常产出结论，闭环不中断**（§11.2 / D4） | 平台（+ 可选部署方 LLM） |
 | **9 裁决** | 看是否通过；不过则按点评改 → `POST /instances/{id}/retry` 回到 4 | `POST /submissions/{id}/decide` → **确定性验收门**（§11.3）：`correctness` 硬门 ∧ `review=approve` ∧ 证据信任级 ∧ `auto` ⇒ `passed` / `failed` | 平台 |
 | **10 讲八股** | 过关后读 `bagu-map.md` 对应章节，对照参考解 | 渲染 `submission.bagu_map_ref` 指向的章节 + `<stage>-sol` 参考解（§8） | 平台 |
@@ -450,7 +451,7 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 | `paper dev` | 用自己的 IDE；SPA 只提示工作区路径与分支 | `POST /instances/{id}/provision` |
 | `paper mentor` | **退休**（无导师引擎）；未来可选挂件，见 §11.2 | — |
 | `paper grade` | 本地跑测试 → 提交阅卷报告 | `POST /submissions/{id}/review` |
-| `paper submit` | SPA 填答辩模板 + 开 PR | `POST /instances/{id}/pr` · `POST /instances/{id}/submit` |
+| `paper submit` | SPA 填答辩文本 + 提交 | `POST /instances/{id}/submit` |
 | `paper sim` | 本地跑并发模拟器，结果并入阅卷报告 | —（本地工具链，§7.5） |
 
 > 端点的权威清单以代码为准（`platform_api/routes/{track,progress,workspace}.py`）；错误一律是
@@ -459,7 +460,7 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 ### 7.3 canonical 测试的运行时注入（轻摩擦防篡改，呼应 D2）
 
 - 学员的考卷仓**不含** canonical 测试（`src/test` 里只有冒烟测试占位）。
-- 本地阅卷工具（脚本 / 未来的 CLI / SPA 触发的本地任务）运行时从**学员 PR 改不到的来源**拉 canonical 测试注入：
+- 本地阅卷工具（脚本 / 未来的 CLI / SPA 触发的本地任务）运行时从**学员提交改不到的来源**拉 canonical 测试注入：
   - 来源选项：题库私有 ref（推荐）/ 本地内置模板；
   - 注入到一次性目录，跑完即清，**不落进学员可提交的 working tree**。
 - 学员对 `src/test`、`pom.xml`、fixture 的改动**一律不参与阅卷**（grader 只认 canonical 版本 + `files_to_change` 白名单内的业务改动）。
@@ -549,7 +550,7 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 
 - 平台只**解析**这些 ref 是否存在（`git rev-parse --verify`），**不创建**它们（Track 侧负责）。
   ref 缺失时接口返回短码 `workspace_ref_missing`，并把仓库里**实际可用的 ref 列表**一并告诉学习者，而不是抛一个裸 500。
-- `base_ref` / `head_ref` 由平台按阶段推导（`content_loader.load_stage_refs`）：`base_ref` = 阶段分支，`head_ref` = 学员自己的开发分支。
+- `base_ref` / `head_ref` 由平台按阶段推导（`content_loader.load_stage_refs`）：`base_ref` = 阶段分支，`head_ref` = 学员自己的开发分支（真 Gitea 下就是 `dev`，落在**上游内容仓**上——v0.6 起没有 fork，§8.3）。
   **绝不用 `ticket.identity.id` 当分支名**——身份（DAG 的键）与分支（内容发布单位）是两个命名空间，混用会让解锁判定与实际 checkout 的内容悄悄错位。
 
 > **为什么必须一阶段一 ref**：防剧透的全部机制都建立在这上面。学员 clone 时只检出**已解锁阶段**的 ref，
@@ -579,6 +580,30 @@ v0.4 的判断是：平台的"AI 经理 / 导师 / 评审"三种角色与 prar-a
 
 > 与 seckill-lab 现有哲学一致："强烈建议先自己做完再看；你面试时要能讲出自己的思路。" 平台把这句话**产品化**为：默认不递到眼前，但你想看、做完了看，都允许。
 
+### 8.3 为什么不 fork、也不开 PR（v0.6 / L3）
+
+v0.5 的真 Forge 落地形态是"平台用 API 建 fork → 学员 clone 自己的 fork → 开发 → 提 PR → 平台收 PR"。
+v0.6 把它**删掉**了：现在只有**一个上游内容仓**，学员把自己的 `dev` 直接 push 上去（loader 在启动时
+把他加为协作者），平台 `provision` 就是 clone 那个仓、`diff` 是只读的 base↔工作区比对。
+
+理由有三条，按分量排序：
+
+1. **PR 从未参与裁决。** 验收门的输入是 `grading-report.correctness.passed` ∧ `review.recommendation`
+   ∧ `evidence_trust` ∧ 判定面篡改检测（§11.3）——**没有一项读 PR**。交卷这件事在 v0.5 就已经由
+   `submit` + 对账（fetch + 无损快进）完成了，PR 只是一个没人看的仪式。
+2. **fork 带来两个真实故障。** ① Gitea 会把**程序化创建**的 fork 标成 `empty`，于是它的
+   `/branches` API 对**任何**分支都回 404/`null`（同一个 commit 上 `git ls-remote` 列得出全部 14 条分支）
+   ——平台因此只能"以 git 为准"，等于绕开了一个 API；② fork 是**创建那一刻的快照**，不会跟着上游长，
+   顺序错了就是"新阶段在 fork 里永远缺席"（症状 `workspace_ref_missing`）；③ 在"空"仓上第一条推送
+   会**劫持默认分支**，把学员的 `dev` 钉成默认分支后连删都删不掉。
+3. **少一个活动部件。** 没有 fork 就没有"fork 与上游同步"的问题，也没有 `fork_reset` 这种破坏性开关；
+   `ForgeClient` 缝因此收窄到 `workspace_path` + `provision`（外加只读的 `sync_workspace` / `remote_branches`）。
+
+**代价（认了）**：失去"类 GitHub 的过程叙事"，以及 §11 原本"PR 即答辩"的说法——现在叫**提交即答辩**，
+答辩是 `submit` 的一个字段（`defense`），不是 PR 描述。另外上游仓会直接承载学员的 `dev` 分支：
+单人自托管下这无所谓（部署者就是唯一学员）；将来若真要多学员共用一套上游，这条要重新考虑
+（要么回到 fork，要么给每人一条命名空间分支）。
+
 ---
 
 ## 9. 数据模型
@@ -594,7 +619,7 @@ Enrollment        学员 × Track 的注册（含当前进度、已解锁集合�
 TicketInstance    ★v0.3 新：一次"发卷"的版本冻结快照
                   = (learner, ticket_id, ticket_version, engine_version, test_version)
                   engine_version 现装平台版本（遗留命名，见 §3.1）
-Submission        ★v0.3 改名（原"答卷"）：TicketInstance 内的一次 attempt = PR + diff + 答辩文本
+Submission        ★v0.3 改名（原"答卷"）：TicketInstance 内的一次 attempt = dev 上的那次提交 + diff + 答辩文本
 GradingReport     阅卷结果（正确性/性能/并发/lint/越界告警 + provenance + runner_trust）= 不可信"证据声明"（§7.4）
 Review            ★v0.3 定位变更：AI 评审 = 顾问性、非确定性（rubric 维度点评 + 锚定点评 + 建议），不直接置 passed
 AcceptanceDecision ★v0.3 新：确定性、可审计的验收裁决
@@ -620,7 +645,7 @@ Ticket(db-stage-01, v1)
 
 | 硬问题 | schema 层答案 |
 |--------|--------------|
-| 这个 PR 基于哪个 ticket 版本？ | `Submission → TicketInstance.ticket_version` |
+| 这次提交基于哪个 ticket 版本？ | `Submission → TicketInstance.ticket_version` |
 | 这个 grading report 是哪个 test version 跑的？ | `GradingReport → TicketInstance.test_version`（+ report 自带 provenance） |
 | 题目更新后，旧 submission 还有效吗？ | 旧 Instance 标 `stale`（保留不删）；新 `ticket_version` → re-issue 新 Instance（§9.2） |
 | 平台升级后，旧 submission 用哪个平台版本？ | `TicketInstance.engine_version` 冻结（字段名遗留，装的是平台版本）；升级只影响新建 Instance |
@@ -635,7 +660,7 @@ locked → available → in_progress → submitted → grading
 ```
 
 - `available`：本 ticket 的 `progression.prerequisites`（§4.3）**全部 passed**（DAG 判定，非单一线性"上一张过了"）。
-- `submitted`：PR 已开 + 答辩 + 阅卷报告（证据声明）已附。
+- `submitted`：答辩 + 阅卷报告（证据声明）已附。
 - `grading → passed/failed`：由 **AcceptanceDecision**（确定性策略门，§11.3）裁决，**不是 AI Review 直接置位**——Review 只给建议。
 - `passed` 触发解锁：所有把本 ticket 列为 prerequisite 的**下游 TicketInstance** 由 `locked → available`。
 - **retry（同一 Instance）**：`ticket_version`/`engine_version`/`test_version` 全部不变，仅新增 Submission；每次 attempt 留痕不覆盖（画像可看"几次过"）。
@@ -687,11 +712,12 @@ locked → available → in_progress → submitted → grading
 
 ---
 
-## 11. 评审与答辩（PR 即答辩）
+## 11. 评审与答辩（提交即答辩）
 
 ### 11.1 答辩模板（强制，承继 seckill-lab "做完之后三件套"）
 
-PR 描述模板由 `ticket.yaml.submission.template` 生成，学员必填：
+答辩模板由 `ticket.yaml.submission.template` 生成，学员必填（v0.6 起落成 `POST /instances/{id}/submit` 的
+`defense` 文本，而不是 PR 描述——没有 PR 可挂了）：
 1. 改后的关键实现（如 searchProducts SQL）；
 2. 设计决策 + 一句话理由（如索引列序为什么这么排）；
 3. 客观证据（建索引前后 EXPLAIN 对比 / sim 前后超卖数）——由阅卷报告自动附。
@@ -748,7 +774,7 @@ AcceptanceDecision = f(
 不引入引擎，反而少了一层"引擎替我提交"的间接性。
 
 - **过程证据 → 喂给 §11.2 思路质量维度**：即使 correctness 硬门已绿，若过程显示"反复试错撞对""抄了又删""改完讲不出理由"，评审仍可返回 `request_changes`，经 §11.3 拦下"蒙对"。
-- **绿 ≠ 懂**：把"结果对"与"过程真懂"分开评，正是面试要考的能力——这也是过程回放相对单看 PR diff 的增量价值。
+- **绿 ≠ 懂**：把"结果对"与"过程真懂"分开评，正是面试要考的能力——这也是过程回放相对单看 diff 的增量价值。
 - **状态**：A′ 已实现 diff 生成与体积预检（`review_diff.py`）；把提交历史整理成"过程视图"是后续切片。
 
 ---
@@ -814,7 +840,7 @@ AcceptanceDecision = f(
 | 阶段 | 目标 | 交付 | 状态 |
 |------|------|------|------|
 | **A′ 引擎无关切片** | 单 Track + 单机跑通完整闭环，**不依赖任何引擎** | `platform_api/`（纯 REST 控制面）+ `frontend/`（学习者 SPA）+ 三个 Protocol 缝与"诚实占位"桩 + 内置 demo Track；`content/schema/` + `admission.validate_track` | ✅ **已完成**（后端全量测试 + ruff 绿；前端单测 + 真浏览器 e2e 绿） |
-| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ **真 Forge**（`GiteaForgeClient` + `--forge gitea`：真 fork + 真 PR，VM 端到端实测过）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`，前端也渲染了）、✅ **判定面硬门**（§11.3）、✅ **PostgreSQL `Store`**（`--store postgres`：真库上跑一致性套件，并起两次 uvicorn 证明重启后进度还在、取号接着走）、✅ **多 Track 部署**（`--content-dir` 可重复）、✅ **提交异步化 + 进度反馈**（`submit` 立刻 202，后台单线程阅卷，阶段链含每阶段耗时）、✅ **运行记录落库 + 历史查询与比对**（`GradingRun` 实体按 submission 落库；`GET /instances/{id}/history` 给全部尝试与逐条测试迁移；重启孤儿记录收成 `interrupted`）；⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
+| **P1 真实化** | 把三个桩换成真实现，接上真 Track | ✅ 真实阅卷（`DockerGradingRunner` + `--grading docker`，JDK17 + Maven）、✅ **跑测试前重置 Track 环境**（关掉"库里残留 ⇒ 半道题白送"的绕过，§15 风险 6）、✅ **真 Forge**（`GiteaForgeClient` + `--forge gitea`：真上游仓 + 学员直推 `dev`，VM 端到端实测过；v0.6 之前是「真 fork + 真 PR」）、✅ seckill-lab 补齐**一阶段一 ref**（§8.1）、✅ 报告可读（`GET /submissions/{id}/report`，前端也渲染了）、✅ **判定面硬门**（§11.3）、✅ **PostgreSQL `Store`**（`--store postgres`：真库上跑一致性套件，并起两次 uvicorn 证明重启后进度还在、取号接着走）、✅ **多 Track 部署**（`--content-dir` 可重复）、✅ **提交异步化 + 进度反馈**（`submit` 立刻 202，后台单线程阅卷，阶段链含每阶段耗时）、✅ **运行记录落库 + 历史查询与比对**（`GradingRun` 实体按 submission 落库；`GET /instances/{id}/history` 给全部尝试与逐条测试迁移；重启孤儿记录收成 `interrupted`）；⬜ canonical 测试运行时注入（§7.3） | 🔶 **进行中** |
 | **P2 教学增强** | 让"刷题"更像"带教" | 学习者画像（§10）、过程回放视图（§11.4）、（可选）AI 评审 / 口试挂件（§11.2 / §12.2） | ⬜ |
 | **P3 社区可贡献**（开源命脉） | 让别人也能出题 | `paper new-track` 脚手架生成器、`paper validate-track` CLI + CI 接线、贡献工作流与文档；第二个 Track（JVM / 并发）打样 | ⬜ |
 
@@ -829,7 +855,7 @@ AcceptanceDecision = f(
 2. **本地阅卷天然可伪造**：荣誉制下接受，靠答辩（+ 可选口试）交叉暴露兜底；自习定位下不设认证模式 / 老师终审。
 3. **并发 sim 阅卷 flaky**：重试 + 置信度，不追求 100% 确定。
 4. **平台与 Track 的契约漂移**：平台依赖 Track 侧的目录 / 分支 / 字段约定（§8.1）。约定一旦漂移，最坏的表现不是报错，而是**解锁判定与 checkout 到的内容悄悄错位**。缓解：启动期硬校验（ticket 目录覆盖 `manifest.stages`、ticket 映射键 = `identity.id`、分支 ref 可解析），任一不满足即**拒绝启动**或返回可读短码，绝不静默降级。
-5. **桩会给人"已经做完了"的错觉**：阅卷已经真了，但 **Forge 仍是占位**（clone 是真的、PR URL 是编的），而 `Workspace.simulated` 与 `provenance.host_env.simulated` **说的不是同一件事**。缓解：两者分开标注，别用一个"模拟"徽标盖住；接口与 UI 都要**逐项**说明真假。
+5. **桩会给人"已经做完了"的错觉**：阅卷已经真了，但 Forge 桩下 **diff 来源仍是预置解 ref**（clone 是真的、比对是内容预置的），而 `Workspace.simulated` 与 `provenance.host_env.simulated` **说的不是同一件事**。缓解：两者分开标注，别用一个"模拟"徽标盖住；接口与 UI 都要**逐项**说明真假。
 6. **"绿"可能来自库里的残留，而不是学员写的代码（已缓解，但仍要理解）**：验收测试的 EXPLAIN 断言只看数据库里有没有索引。只要库里曾经建过一次（瞄过一眼参考解、跑过一次它的迁移），**之后把迁移脚本改回骨架的 `SELECT 1`，那半道题依然是绿的**——等于白送半道题，而且工作区里**什么都看不出来**（真 `git diff` 也是干净的，判定面硬门也拦不住，因为没改任何文件）。它不是"卫生问题"，是一个**零成本绕过**。
    - **已缓解**：真阅卷默认在跑测试前按 `runtime.compose` 做 `down -v` + `up -d --wait`（`BAGU_GRADING_RESET=never` 可关——但**关掉就等于把这条绕过放回来**），并把"这次有没有重置"记进 `provenance.host_env.infra`，于是**"这次绿是在干净环境里跑出来的吗"可审计**。
    - **仍要做**：① 判别性校验（准入门）同样应在**一次性环境**里跑，不能复用长活数据卷；② 每次阅卷重启容器是有成本的（本机实测 20-40s），要更快应让 Track 的迁移**自清**（例如脚本先 `DROP INDEX IF EXISTS`），而不是省掉重置。

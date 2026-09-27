@@ -19,7 +19,6 @@ import type {
   InstanceHistoryOut,
   InstanceOut,
   MetaOut,
-  PullRequestOut,
   ReissueOut,
   ReviewOut,
   ReviewScenario,
@@ -50,7 +49,6 @@ export type ErrorCode =
   | 'report_not_ready'
   | 'grading_unavailable'
   | 'forge_unavailable'
-  | 'remote_branch_missing'
   | 'track_not_found'
   | 'track_not_deployed'
   | 'enroll_needs_track'
@@ -154,8 +152,6 @@ export function humanize(
       const why = extra?.reason ? `（${extra.reason}）` : ''
       return `Forge（Gitea）连不上或拒绝了这个请求${why}。这是**基础设施**问题，不是你代码的问题：检查 Gitea 是否在跑、token 是否有效。`
     }
-    case 'remote_branch_missing':
-      return `远端还没有 ${extra?.branch ?? 'dev'} 分支，所以开不了 PR。先在工作区里把改动 push 到该分支（平台不代你跑 git 写操作），再回来开单。`
     case 'internal_error':
       return '后端出了个没预期的错（平台不知道原因，所以没编一个）。请把服务端日志里的堆栈拿出来看。'
     default:
@@ -325,18 +321,16 @@ export const api = {
       `/instances/${encodeURIComponent(instanceId)}/sync`,
       { method: 'POST' },
     ),
-  createPr: (instanceId: string) =>
-    request<PullRequestOut>(`/instances/${encodeURIComponent(instanceId)}/pr`, { method: 'POST' }),
 
   submit: (
     instanceId: string,
-    opts: { scenario: GradingScenario; pr_url?: string; defense?: string },
+    opts: { scenario: GradingScenario; defense?: string },
   ) =>
     request<SubmitAcceptedOut>(
       `/instances/${encodeURIComponent(instanceId)}/submit${query({ scenario: opts.scenario })}`,
       {
         method: 'POST',
-        body: JSON.stringify({ pr_url: opts.pr_url ?? null, defense: opts.defense ?? null }),
+        body: JSON.stringify({ defense: opts.defense ?? null }),
       },
     ),
   /** 提交是异步的：轮询这个端点直到 `report_ready`（§C.3 步骤 6）。 */

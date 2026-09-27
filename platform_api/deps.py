@@ -230,7 +230,7 @@ def build_tracks(
     """把每个内容目录装配成一个 :class:`TrackBundle`，按 ``track.id`` 索引。
 
     ``forge_source`` 只对**单 Track** 有意义（"内容在 A、git 上游在 B"的对照场景）；多 Track
-    时每个 Track 的 git 上游就是它自己的内容目录，硬套一个 source 会让所有 Track 都去 fork
+    时每个 Track 的 git 上游就是它自己的内容目录，硬套一个 source 会让所有 Track 指向同一个仓
     同一个仓库。
     """
     if not content_dirs:

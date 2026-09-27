@@ -150,10 +150,9 @@ class PlatformService:
         instance_id: str,
         *,
         grading_report: GradingReport | None = None,
-        pr_url: str | None = None,
         defense: str | None = None,
     ) -> Submission:
-        """``in_progress → submitted``: record a PR-as-defense attempt (§11).
+        """``in_progress → submitted``: record a submit-as-defense attempt (§11).
 
         The Submission ``seq`` auto-increments over the instance's history, so a retry
         yields a NEW Submission (never overwrites). The untrusted grading report is
@@ -171,7 +170,6 @@ class PlatformService:
             id=self._next_id("sub"),
             instance_id=instance_id,
             seq=seq,
-            pr_url=pr_url,
             defense_text=defense,
         )
         record_submission(instance, submission)

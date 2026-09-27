@@ -1,7 +1,7 @@
 """A′ 的诚实占位后端（设计 spec §C.4）。
 
 三个桩都不假装是真后端：阅卷/评审返回**预置 fixture**（pass/fail、approve/request_changes
-两套，确保 decide 两条分支都被真跑到），Forge 用本地 git clone 占位 fork、返回占位 PR URL。
+两套，确保 decide 两条分支都被真跑到），Forge 用本地 git clone 占位（没有远端、没有 fork/PR）。
 真实后端（Docker 阅卷 / 轻量 AI harness / Gitea）将来按同名 Protocol 替换，路由与
 :class:`~platform_service.service.PlatformService` 不变。UI 一律标"模拟"。
 """
@@ -163,8 +163,7 @@ class StubReviewEngine:
 
 
 class StubForgeClient:
-    """占位 Forge：provision = 本地 ``git clone`` 源仓库到 ``base_dir/<instance.id>``；
-    create_pr = 占位 URL。
+    """占位 Forge：provision = 本地 ``git clone`` 源仓库到 ``base_dir/<instance.id>``。
 
     **ref 由 Track 声明，不由占位逻辑发明。** diff 两端是 ``origin/<stage>``（该阶段的分支，
     骨架）与 ``origin/<stage>-sol``（内容预置的解法 ref，冒充"学员已改对"——A′ 没有人真的
@@ -215,5 +214,3 @@ class StubForgeClient:
             diff_head_ref=head_ref,
         )
 
-    def create_pr(self, instance: TicketInstance, *, base: str, head: str) -> str:
-        return f"https://gitea.local/{instance.learner}/simulated/pulls/{instance.id}"

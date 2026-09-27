@@ -3,10 +3,10 @@
 （文件名是历史遗留：它当初只负责"现在用桩"。现在它同时管**真实现**的装配，路由与
 ``PlatformService`` 依旧不动。）
 
-* ``stub``（默认）—— :class:`~platform_service.stubs.StubForgeClient`：本地 clone + 占位 PR URL，
-  离线可跑；diff 两端都是内容预置的 ref，**假装学员已经做完了**。
-* ``gitea`` —— :class:`~platform_api.forge_gitea.GiteaForgeClient`：真 fork + 真 PR。
-  需要 ``BAGU_GITEA_URL`` / ``BAGU_GITEA_TOKEN`` / ``BAGU_GITEA_UPSTREAM`` / ``BAGU_GITEA_OWNER``。
+* ``stub``（默认）—— :class:`~platform_service.stubs.StubForgeClient`：本地 clone，离线可跑；
+  diff 两端都是内容预置的 ref，**假装学员已经做完了**。
+* ``gitea`` —— :class:`~platform_api.forge_gitea.GiteaForgeClient`：真上游仓（学员直推 ``dev``）。
+  需要 ``BAGU_GITEA_URL`` / ``BAGU_GITEA_TOKEN`` / ``BAGU_GITEA_UPSTREAM``。
 
 ``stage_refs``（``identity.id`` → 阶段名）必须由内容侧提供（``content_loader.load_stage_refs``）：
 §C.5 的 stage 分支是按**阶段**命名的，Forge 不该去猜、更不该拿 ticket id 当分支名。
@@ -31,8 +31,7 @@ ForgeBackend = Literal["stub", "gitea"]
 FORGE_BACKEND_ENV = "BAGU_FORGE"
 GITEA_URL_ENV = "BAGU_GITEA_URL"
 GITEA_TOKEN_ENV = "BAGU_GITEA_TOKEN"
-GITEA_UPSTREAM_ENV = "BAGU_GITEA_UPSTREAM"  # "owner/repo"，Track 内容的上游仓
-GITEA_OWNER_ENV = "BAGU_GITEA_OWNER"  # 学员（部署者）在 Gitea 上的账号 = fork 的归属
+GITEA_UPSTREAM_ENV = "BAGU_GITEA_UPSTREAM"  # "owner/repo"，Track 内容所在的上游仓
 
 
 def resolve_forge_backend(explicit: ForgeBackend | None = None) -> ForgeBackend:
@@ -50,7 +49,6 @@ class GiteaSettings:
     base_url: str
     token: str
     upstream: str
-    fork_owner: str
 
 
 def gitea_settings_from_env() -> GiteaSettings:
@@ -59,7 +57,6 @@ def gitea_settings_from_env() -> GiteaSettings:
         GITEA_URL_ENV: os.environ.get(GITEA_URL_ENV, "").strip(),
         GITEA_TOKEN_ENV: os.environ.get(GITEA_TOKEN_ENV, "").strip(),
         GITEA_UPSTREAM_ENV: os.environ.get(GITEA_UPSTREAM_ENV, "").strip(),
-        GITEA_OWNER_ENV: os.environ.get(GITEA_OWNER_ENV, "").strip(),
     }
     missing = sorted(name for name, value in values.items() if not value)
     if missing:
@@ -71,7 +68,6 @@ def gitea_settings_from_env() -> GiteaSettings:
         base_url=values[GITEA_URL_ENV],
         token=values[GITEA_TOKEN_ENV],
         upstream=upstream,
-        fork_owner=values[GITEA_OWNER_ENV],
     )
 
 
@@ -95,7 +91,6 @@ def build_forge(
         return GiteaForgeClient(
             api=GiteaApi(base_url=cfg.base_url, token=cfg.token),
             upstream=cfg.upstream,
-            fork_owner=cfg.fork_owner,
             base_dir=base_dir,
             stage_refs=stage_refs,
         )

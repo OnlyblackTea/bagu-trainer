@@ -24,11 +24,7 @@ from platform_api.track_loader import (
     DEFAULT_ADMIN_USER,
     LoaderConfig,
     LoadError,
-    add_collaborator,
-    delete_repo,
     ensure_default_branch,
-    ensure_fork,
-    ensure_repo,
     ensure_user,
     load_track,
     local_branches,
@@ -95,27 +91,13 @@ def test_config_comes_from_env_and_refuses_a_non_repo(tmp_path: Path) -> None:
     assert config.upstream == "trackowner/seckill-lab"
     assert config.admin_user == DEFAULT_ADMIN_USER
     assert config.admin_password == DEFAULT_ADMIN_PASSWORD
-    assert config.fork_reset is False
+    assert config.learner_write is True
 
     with pytest.raises(LoadError, match="git 仓库"):
         LoaderConfig.from_env({**env, "BAGU_CONTENT_DIR": str(tmp_path)})
 
     with pytest.raises(LoadError, match="BAGU_GITEA_URL"):
         LoaderConfig.from_env({**env, "BAGU_GITEA_URL": ""})
-
-
-def test_fork_reset_flag_accepts_the_usual_truthy_spellings(tmp_path: Path) -> None:
-    env = {
-        "BAGU_GITEA_URL": GITEA,
-        "BAGU_CONTENT_DIR": str(_content_repo(tmp_path, ["main"])),
-        "BAGU_FORK_RESET": "1",
-    }
-    assert LoaderConfig.from_env(env).fork_reset is True
-    env["BAGU_FORK_RESET"] = "off"
-    assert LoaderConfig.from_env(env).fork_reset is False
-
-
-# --- 分支：内容里有几条，Gitea 里就该有几条 ----------------------------------------
 
 
 def test_local_branches_is_the_whole_content_contract(tmp_path: Path) -> None:
@@ -209,30 +191,6 @@ def test_ensure_user_treats_already_exists_as_success() -> None:
 
 
 @respx.mock
-def test_ensure_repo_and_fork_are_idempotent() -> None:
-    respx.get(f"{GITEA}/api/v1/repos/trackowner/seckill-lab").mock(
-        return_value=httpx.Response(200, json={"name": "seckill-lab"})
-    )
-    assert ensure_repo(GITEA, "TOK", "trackowner", "seckill-lab") is False
-
-    respx.get(f"{GITEA}/api/v1/repos/trackowner/seckill-lab").mock(
-        return_value=httpx.Response(404, json={})
-    )
-    respx.post(f"{GITEA}/api/v1/user/repos").mock(
-        return_value=httpx.Response(201, json={"name": "seckill-lab"})
-    )
-    assert ensure_repo(GITEA, "TOK", "trackowner", "seckill-lab") is True
-
-    respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
-        return_value=httpx.Response(404, json={})
-    )
-    respx.post(f"{GITEA}/api/v1/repos/trackowner/seckill-lab/forks").mock(
-        return_value=httpx.Response(202, json={})
-    )
-    assert ensure_fork(GITEA, "TOK", "trackowner/seckill-lab", "deployer", "seckill-lab") is True
-
-
-@respx.mock
 def test_mint_token_prefers_sha1_and_fails_loudly_without_one() -> None:
     respx.post(f"{GITEA}/api/v1/users/deployer/tokens").mock(
         return_value=httpx.Response(201, json={"sha1": "abc123"})
@@ -322,52 +280,32 @@ def test_ensure_default_branch_pins_it_and_skips_when_already_right() -> None:
 
 
 @respx.mock
-def test_learner_is_added_as_a_collaborator_so_they_can_merge_their_own_pr() -> None:
-    """PR 的合并按钮在**上游**仓，而学员对它没有写权限——不加协作者就得再登一次内容所有者账号。
-
-    （用户原话："提交 PR 了以后怎么合并？gitea 依旧要登录"。单用户自托管下两个账号是同一个人。）
-    """
-    route = respx.put(
-        f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer"
-    ).mock(return_value=httpx.Response(204))
-    assert add_collaborator(GITEA, "TOK", "trackowner", "seckill-lab", "deployer") is True
-    assert json.loads(route.calls[0].request.content.decode()) == {"permission": "write"}
-
-
-def test_learner_can_merge_can_be_turned_off(tmp_path: Path) -> None:
+def test_learner_write_can_be_turned_off(tmp_path: Path) -> None:
     env = {
         "BAGU_GITEA_URL": GITEA,
         "BAGU_CONTENT_DIR": str(_content_repo(tmp_path, ["main"])),
     }
-    assert LoaderConfig.from_env(env).learner_can_merge is True  # 默认开
-    assert LoaderConfig.from_env({**env, "BAGU_LEARNER_CAN_MERGE": "0"}).learner_can_merge is False
+    assert LoaderConfig.from_env(env).learner_write is True  # 默认开
+    assert LoaderConfig.from_env({**env, "BAGU_LEARNER_WRITE": "0"}).learner_write is False
 
 
 @respx.mock
-def test_delete_repo_tolerates_a_missing_repo() -> None:
-    respx.delete(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
-        return_value=httpx.Response(404, json={})
-    )
-    delete_repo(GITEA, "TOK", "deployer", "seckill-lab")  # 不抛就是通过
-
-
 # --- 编排：顺序是这条路的全部难点 --------------------------------------------------
 
 
 @respx.mock
-def test_load_track_pushes_upstream_before_creating_the_fork(
+def test_load_track_pushes_branches_then_grants_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """fork 是**创建那一刻**的快照：先建 fork 再推分支，fork 里就永远缺新阶段。
+    """编排：建仓 → **推全部分支** → 给学员写权限 → 落令牌；顺序与"学员能 push"这件事都钉住。
 
-    这条用真 git 跑 push（远端是本地裸仓），把"上游推完才建 fork"的顺序钉住——顺序错了，
-    症状是 provision 报 workspace_ref_missing，而那时没人会想到是启动顺序的问题。
+    没有 fork 之后，"学员能 push 到内容仓"是整条路的命脉（后端也从这个仓 clone）。漏了授权，
+    学员第一次 push 就被拒，而平台侧一切正常——所以这里既验授权被调用，也验它**在推完分支之后**
+    （仓刚建出来时授权没有意义）。
     """
     config = _config(tmp_path)
-    bare = tmp_path / "upstream.git"
+    bare = tmp_path / "remote.git"
     subprocess.run(["git", "clone", "-q", "--bare", str(config.content_dir), str(bare)], check=True)
-    fork = tmp_path / "fork.git"
-    subprocess.run(["git", "clone", "-q", "--bare", str(config.content_dir), str(fork)], check=True)
     events: list[str] = []
 
     respx.get(f"{GITEA}/api/healthz").mock(
@@ -384,104 +322,36 @@ def test_load_track_pushes_upstream_before_creating_the_fork(
     respx.get(f"{GITEA}/api/v1/repos/trackowner/seckill-lab").mock(
         return_value=httpx.Response(200, json={})
     )
-    respx.put(f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer").mock(
-        return_value=httpx.Response(204)
-    )
-    respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
-        return_value=httpx.Response(200, json={"default_branch": "main"})
-    )
+    grant = respx.put(
+        f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer"
+    ).mock(return_value=httpx.Response(204))
 
+    # 把 push 目标换成本地裸仓：真 git push，不需要网络
     def fake_push(content_dir: Path, push_url: str, *, force: bool = True) -> list[str]:
-        events.append("push:" + ("upstream" if push_url == str(bare) else "fork"))
+        events.append("push")
         subprocess.run(
-            ["git", "-C", str(content_dir), "push", "--quiet", "--force", push_url,
+            ["git", "-C", str(content_dir), "push", "--quiet", "--force", str(bare),
              "+refs/heads/*:refs/heads/*"],
             check=True, capture_output=True,
         )
         return local_branches(content_dir)
 
-    # 把"要 push 到哪里"换成两个本地裸仓：token_push_url 是唯一决定这件事的地方，
-    # 于是后面的 ls-remote / push 全都是真 git，不需要网络。
-    monkeypatch.setattr(
-        "platform_api.track_loader.token_push_url",
-        lambda url, owner, name, tok: str(bare) if owner == "trackowner" else str(fork),
-    )
     monkeypatch.setattr("platform_api.track_loader.push_all_branches", fake_push)
-    monkeypatch.setattr("platform_api.track_loader.ensure_fork", lambda *a, **k: True)
-    # fork 本就 clone 自内容仓 ⇒ 它已经"同步好了"（模拟 Gitea 侧异步 fork 已完成）
+    monkeypatch.setattr(
+        "platform_api.track_loader.token_push_url", lambda url, owner, name, tok: str(bare)
+    )
+
     result = load_track(config, log=lambda *_: None)
 
     assert result.branches == ["main", "stage-01", "stage-01-sol"]
-    assert result.fork == "deployer/seckill-lab"
-    # 上游推了一次；fork 侧因为 git 里已经能看到全部分支，**不再重复推**
-    assert [e for e in events if e.startswith("push")] == ["push:upstream"]
+    assert result.learner_has_write is True
+    assert events == ["push"], "只该推一次（没有 fork 了）"
+    assert grant.called, "必须给学员写权限——否则他 push 不上来"
+    assert remote_branches(str(bare)) == ["main", "stage-01", "stage-01-sol"]
     assert result.token_path is not None
     assert result.token_path.read_text(encoding="utf-8").strip() == "LEARNER"
-    # fork 里必须也有全部阶段分支（这就是"补推"的意义）
-    out = subprocess.run(
-        ["git", "-C", str(fork), "for-each-ref", "--format=%(refname:short)", "refs/heads"],
-        capture_output=True, text=True, check=True,
-    ).stdout.split()
-    assert sorted(out) == ["main", "stage-01", "stage-01-sol"]
 
 
-@respx.mock
-def test_load_track_backfills_an_old_fork_and_fails_loudly_if_it_cannot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """旧 fork 缺分支时要**补推**；补不进去就报清楚（"用 BAGU_FORK_RESET=1 重建"）。
-
-    这条对付的是真实处境：fork 是创建那一刻的快照，Track 后来长了新阶段，旧 fork 里就没有——
-    症状是"看得到题、拉不出工作区"。别让它悄悄过去。
-    """
-    config = _config(tmp_path)
-    bare = tmp_path / "upstream.git"
-    subprocess.run(["git", "clone", "-q", "--bare", str(config.content_dir), str(bare)], check=True)
-    # 旧 fork：只 clone 了 main（缺 stage-01 / stage-01-sol）
-    stale = tmp_path / "stale-fork"
-    stale.mkdir()
-    _git(stale, "init", "-q", "-b", "main")
-    _git(stale, "config", "user.email", "t@example.com")
-    _git(stale, "config", "user.name", "t")
-    # 本机全局开着签名时必须显式关掉，否则 commit 会去弹 pinentry、卡一阵后以 128 失败
-    # （与被测代码毫无关系的红）。
-    _git(stale, "config", "commit.gpgsign", "false")
-    _git(stale, "commit", "-q", "--allow-empty", "-m", "stale")
-    fork = tmp_path / "fork.git"
-    subprocess.run(["git", "clone", "-q", "--bare", str(stale), str(fork)], check=True)
-
-    respx.get(f"{GITEA}/api/healthz").mock(
-        return_value=httpx.Response(200, json={"status": "pass"})
-    )
-    respx.get(f"{GITEA}/api/v1/user").mock(return_value=httpx.Response(200, json={"login": "x"}))
-    respx.post(f"{GITEA}/api/v1/admin/users").mock(return_value=httpx.Response(201, json={}))
-    respx.post(f"{GITEA}/api/v1/users/trackowner/tokens").mock(
-        return_value=httpx.Response(201, json={"sha1": "OWNER"})
-    )
-    respx.post(f"{GITEA}/api/v1/users/deployer/tokens").mock(
-        return_value=httpx.Response(201, json={"sha1": "LEARNER"})
-    )
-    respx.get(f"{GITEA}/api/v1/repos/trackowner/seckill-lab").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    respx.put(f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer").mock(
-        return_value=httpx.Response(204)
-    )
-    respx.get(f"{GITEA}/api/v1/repos/deployer/seckill-lab").mock(
-        return_value=httpx.Response(200, json={"default_branch": "main"})
-    )
-    monkeypatch.setattr(
-        "platform_api.track_loader.token_push_url",
-        lambda url, owner, name, tok: str(bare) if owner == "trackowner" else str(fork),
-    )
-    monkeypatch.setattr("platform_api.track_loader.ensure_fork", lambda *a, **k: True)
-
-    result = load_track(config, log=lambda *_: None)
-    assert remote_branches(str(fork)) == ["main", "stage-01", "stage-01-sol"], "旧 fork 该被补齐"
-    assert result.branches == ["main", "stage-01", "stage-01-sol"]
-
-
-@respx.mock
 def test_load_track_warns_about_a_loopback_gitea_url(tmp_path: Path) -> None:
     """容器里的 127.0.0.1 是它自己：这个坑要在启动时喊，而不是等 provision 超时。"""
     config = _config(tmp_path, gitea_url="http://127.0.0.1:3000")

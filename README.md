@@ -3,16 +3,21 @@
 > 开源、可自托管的 **八股实战演练所** —— 供部署者（也是唯一用户）自习、刷题。
 > 它是 [`seckill-lab`](https://github.com/OnlyblackTea/seckill-lab) 的延伸，接受社区贡献（提交新 Track / 扩展八股面）。
 > **不含班级 / 排名 / 得分**，不是多租户 SaaS。
-> **由人类学习者亲手写代码**：平台发工单、收 PR、跑确定性验收门、解锁下一关；AI 评审是**可选挂件**。
-> 流程仿 GitHub：`fork → 开发 → PR → 通过 → 解锁下一关`。
+> **由人类学习者亲手写代码**：平台发工单、收提交、跑确定性验收门、解锁下一关；AI 评审是**可选挂件**。
+> 流程：`开题 → 在 dev 分支开发 → push → 提交 → 通过 → 解锁下一关`。
 
 **引擎无关**：平台的依赖面只有 **Track 内容 + git + 本地工具链**（设计支柱 D4）。
 首个内容 Track = [`seckill-lab`](https://github.com/OnlyblackTea/seckill-lab)（数据库八股）。
-权威设计文档：[`docs/paper-platform-design.md`](docs/paper-platform-design.md)（**v0.5**）。
+权威设计文档：[`docs/paper-platform-design.md`](docs/paper-platform-design.md)（**v0.6**）。
 
 > **v0.5 变更**：平台原先设计为 prar-agent 引擎驱动（AI 经理发卷 / 导师陪练 / AI 评审），该设计**已退休**。
 > 退休的理由、代价与决策记录见设计文档 §6；完整决策（含尚未执行的代码删除清单）见
 > [`docs/superpowers/specs/2026-09-10-learner-webui-and-prar-agent-retirement-design.md`](docs/superpowers/specs/2026-09-10-learner-webui-and-prar-agent-retirement-design.md)。
+>
+> **v0.6 变更（L3）**：真 Gitea 的形态改为**一个内容仓 + 学员直接 push `dev`**——fork 与 PR 一并废弃
+> （`ForgeClient` 只剩 `workspace_path`/`provision`，`POST /instances/{id}/pr` 与
+> `remote_branch_missing` 短码已删，`BAGU_FORK_RESET`/`BAGU_LEARNER_CAN_MERGE` → `BAGU_LEARNER_WRITE`）。
+> 理由与代价见设计文档 §8.3。
 
 ---
 
@@ -21,7 +26,7 @@
 > **部署到别的机器上？先读 [`docs/deployment.md`](docs/deployment.md)。**
 > 它会先讲清两件事实：平台**没有认证**（怎么对外暴露是部署者的事），以及**只有阅卷工具链与数据库
 > 必须在后端那台机器上**——工作区（你写代码的那份 clone）可以在任何地方，只要你能把 `dev` push 到
-> 你的 fork、后端能从那个 Forge 读回来（提交时平台会自动把它的 checkout 快进到你的 push）。
+> 内容仓、后端能从那个 Forge 读回来（提交时平台会自动把它的 checkout 快进到你的 push）。
 > 想**一条命令起全**（Gitea + 后端 + 前端，启动时自动把 Track 载入 Gitea）：`cd deploy && cp .env.example .env && docker compose up -d`，
 > 细节见 [`deploy/README.md`](deploy/README.md)。裸机起步则用 `bash scripts/quickstart.sh --content-dir ../seckill-lab`。
 
@@ -235,26 +240,28 @@ BAGU_TEST_POSTGRES_DSN='postgresql://postgres:bagu@127.0.0.1:5432/bagu_test' \
 > [!WARNING]
 > 那个 DSN 的库会被 **`TRUNCATE`**。指一个专门用来跑测试的库，别指向真实进度库。
 
-### 真 Forge（Gitea）：真 fork / 真 push / 真 PR / 真 diff
+### 真 Forge（Gitea）：真仓库 / 真 push / 真 diff
 
-默认 `--forge stub`：`provision` 只是本地 clone、`create_pr` 返回占位 URL，而且 **diff 比对的是内容
-预置的解法 ref**（桩"假装学员已经做对了"）。要真 fork、真 push、真 PR，换一个后端：
+默认 `--forge stub`：`provision` 只是本地 clone，而且 **diff 比对的是内容预置的解法 ref**（桩"假装学员
+已经做对了"）。要真仓库、真 push，换一个后端——学员**直接推 `dev` 到内容仓**，不需要 fork、也不需要
+开 PR（理由见设计 §8.3）：
 
 ```bash
 export BAGU_GITEA_URL=http://<gitea-host>:3000
 export BAGU_GITEA_TOKEN=<access token>        # 需要 write:repository
-export BAGU_GITEA_UPSTREAM=<owner>/<repo>     # Track 内容在上游的仓
-export BAGU_GITEA_OWNER=<你的账号>             # fork 落到谁名下
+export BAGU_GITEA_UPSTREAM=<owner>/<repo>     # Track 内容所在的仓（= 学员 push 的目标）
 python -m platform_api.serve --content-dir ../seckill-lab --forge gitea
 ```
 
 | | `stub` | `gitea` |
 |---|---|---|
-| `provision` | 本地 clone 源仓，**不建 `dev`** | 经 API 确保 **fork** 存在，clone 你的 fork，建好 `dev`，配好 push 凭据与 git 身份 |
+| `provision` | 本地 clone 源仓，**不建 `dev`** | clone **上游仓**（`BAGU_GITEA_UPSTREAM`），建好 `dev`，配好 push 凭据与 git 身份 |
 | `dev` 的起点 | —— | **本地已有 > 远端已有 > 从阶段分支新建**（学员那条 `dev` 是跨阶段累积的，不该被平台清掉——重建会让下一次 `git push` 被拒） |
 | diff 比什么 | `origin/<stage>` ↔ `origin/<stage>-sol`（预置解法，`simulated=true`） | `origin/<stage>` ↔ **你的工作区**（**含未提交改动**，`simulated=false`） |
-| `create_pr` | 占位 URL | 真开 PR（`<owner>:dev` → 阶段分支），返回可点的 `html_url` |
-| 报错 | — | Gitea 连不上/认证失败 → **503 `forge_unavailable`**；你还没 push `dev` → **409 `remote_branch_missing`**（带上分支名） |
+| 报错 | — | Gitea 连不上/认证失败 → **503 `forge_unavailable`**；你还没 push `dev` → 工作区对账会给 `behind`/`missing`，前端提示你先 push（不再是 409） |
+
+> 上游仓的写权限由 `deploy/` 里的一次性 `track-loader` 授予（`add_collaborator`，`BAGU_LEARNER_WRITE` 默认开）。
+> 平台自己**不会**替你 push：它只 clone 与只读 diff。
 
 **push 凭据怎么给的**（不违反"平台不跑 git 写操作"）：`provision` 把 token 写进**仓库外**的
 `<workspace-root>/.git-credentials`（权限 `0600`），仓库里只留一条指向它的
@@ -269,7 +276,7 @@ python -m platform_api.serve --content-dir ../seckill-lab --forge gitea
 > `<learner>@localhost`——否则第一次 `git commit` 必然失败在 "Please tell me who you are"，
 > 而那跟这道题毫无关系。
 
-**代码可以写在任何机器上**（只要 push 到你的 fork、后端读得到）。后端手里那份 checkout 与远端的
+**代码可以写在任何机器上**（只要 push 到内容仓的 `dev`、后端读得到）。后端手里那份 checkout 与远端的
 对账是显式的：
 
 | | 什么时候 | 做什么 |
@@ -329,7 +336,7 @@ bagu-trainer/
 │   ├── app.py  deps.py  schemas.py  serve.py
 │   ├── store_sqlite.py  store_postgres.py     持久化后端（同一套测试参数化跑）
 │   ├── jobs.py             后台阅卷（单线程 + 落库的运行记录）  grading_docker.py  真阅卷
-│   ├── forge_gitea.py  gitea.py               真 Forge（fork / push 凭据 / PR）
+│   ├── forge_gitea.py  gitea.py               真 Forge（上游 clone / push 凭据 / diff）
 │   ├── track_loader.py     启动时把 Track 内容载入 Gitea（compose 栈的启动步骤）
 │   ├── demo_repo.py        内置 demo Track（会建一个真本地 git 仓库）
 │   └── routes/             track / progress / workspace（含 /sync）
@@ -360,12 +367,12 @@ bagu-trainer/
 | 学习者 SPA（`frontend/`） | ✅ 已实现（单测 + 真浏览器 e2e 绿） |
 | 内置 demo Track（可独立跑通全流程） | ✅ 已实现 |
 | **真实阅卷**（JDK17 + Maven 真跑 canonical 测试） | ✅ 已实现，用 `--grading docker` 开（§7.1）。**跑测试前会先重置 Track 的 compose 基础设施**（默认；见下方警告）。开发机若没有 JDK17/Maven，请在装了工具链的机器上跑 |
-| **真实 Forge**（Gitea fork / push / PR / diff） | ✅ 已实现，`--forge gitea` 开；凭据写进仓库外的 0600 文件，平台仍不代跑 git 写操作。已在真 Gitea 上端到端验过（真 fork、真 push、真 PR、工作区 diff） |
+| **真实 Forge**（Gitea 真仓库 / push 凭据 / 真 diff） | ✅ 已实现，`--forge gitea` 开；学员直接推 `dev` 到内容仓（无 fork / 无 PR，理由见设计 §8.3）；凭据写进仓库外的 0600 文件，平台仍不代跑 git 写操作。已在真 Gitea 上端到端验过（真 push、真 submit、真 diff） |
 | **AI 评审 / 口试** | ⬜ 桩；设计为**可选挂件**（`ReviewEngine` 缝），见设计 §11.2 / §12.2 |
 | 学习者画像 / 脚手架生成器 | ⬜ 后续切片，见设计 §14 路线图 |
 
 > **"模拟"徽标**：桩实现下，UI 会明确标注哪些环节是占位（`SimulatedBadge`）。
-> 注意 `Workspace.simulated` 说的是 **Forge**（clone/PR 仍是占位），而阅卷报告自带自己的
+> 注意 `Workspace.simulated` 说的是 **Forge**（clone 是真的，桩下 diff 来源是预置解 ref），而阅卷报告自带自己的
 > `provenance.host_env.simulated`——**两件事要分开看**，别用一个徽标盖住。
 
 分期路线图见设计文档 §14，未决问题见附录 C。

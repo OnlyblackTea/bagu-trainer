@@ -10,7 +10,7 @@
 看你的进度。所以"怎么对外暴露"是这个文档里最需要认真读的一节。
 
 **事实二：只有**阅卷工具链**和**数据库**必须在后端那台机器上；工作区**不必**。** 代码写在哪儿都行
-——家里笔记本、公司台式、后端那台服务器——**只要你的 `dev` 分支能 push 到你 fork 的 Gitea，而后端
+——家里笔记本、公司台式、后端那台服务器——**只要你的 `dev` 分支能 push 到内容仓的 Gitea，而后端
 能从那个 Gitea 读回来**。这条链路成立，工作区在哪就不重要（§3 讲了机制）。
 
 | 东西 | 在哪 | 为什么 |
@@ -73,7 +73,7 @@ python -m http.server 5173 --directory dist     # 或 nginx / caddy
 **代价（必须先接受）**：工作区**在后端手里**（后端要能读到你要阅的那份代码），而你在自己电脑上写的
 代码后端**看不见**。所以两条可行路径：
 
-1. **在自己机器上写，push 到你的 fork**（推荐）：后端只要网络能到 Gitea 就行。你 push 完点提交，
+1. **在自己机器上写，push 到内容仓的 `dev`**（推荐）：后端只要网络能到 Gitea 就行。你 push 完点提交，
    后端**会自动**把它的 checkout 快进到你的 `dev`（工作树干净时无损；见 §3）；
 2. **SSH 进服务器写**（`ssh` + 编辑器 / VS Code Remote-SSH），或者把后端机器上任何可见的目录登记给
    后端（`POST /instances/{id}/workspace`）——那时 diff 连你**还没 commit** 的改动都看得见。
@@ -91,7 +91,7 @@ docker compose up -d
 # 浏览器 → http://<BAGU_PUBLIC_URL 的主机>:8080
 ```
 
-它把"手工做 Gitea 那一串事"（建用户、造令牌、建仓、把每个阶段的分支推上去、让 fork 也有这些分支）
+它把"手工做 Gitea 那一串事"（建用户、造令牌、建仓、把每个阶段的分支推上去、给学员开内容仓写权限）
 变成了启动步骤——**provision 报 `workspace_ref_missing` 这件事因此从根上消失**。
 细节、约束与真阅卷的可选叠加文件见 [`../deploy/README.md`](../deploy/README.md) 与本文 §11。
 
@@ -130,7 +130,7 @@ push 凭据（token 在仓库外的 0600 文件里）与 git 身份。
 
 ### (b) 你在**另一台机器**上写（推荐，只要 push 得到）
 
-在这台机器上 clone、写、commit、push 到你的 fork；后端不需要知道你的路径。机制是**对账**：
+在这台机器上 clone、写、commit、push 到内容仓的 `dev`；后端不需要知道你的路径。机制是**对账**：
 
 * 点「提交」时，后端先 `git fetch` 你的 `dev`，**在无损时自动快进**它的 checkout，然后才阅卷——
   于是"我在笔记本上写完就提交"不需要任何额外动作；
@@ -152,7 +152,7 @@ push 凭据（token 在仓库外的 0600 文件里）与 git 身份。
 看到的目录，否则得到 `422 workspace_path_invalid`（`reason` 说清是"目录不存在"还是"不是 git 仓库"）。
 
 ```bash
-git clone http://<gitea>/<you>/<repo>.git ~/my-bagu-stage-01
+git clone http://<gitea>/<owner>/<repo>.git ~/my-bagu-stage-01
 cd ~/my-bagu-stage-01
 git checkout -b dev origin/stage-01-product-query-index
 ```
@@ -224,19 +224,20 @@ python -m platform_api.serve --content-dir ../seckill-lab
 **删掉数据卷**：这是必需的，否则"库里有残留索引"能让半道题白送（设计 §15 风险 6）。
 不想重置就 `--grading-reset never`，但报告里会如实记 `infra.reset: false`。
 
-## 7. Forge（真 fork / 真 PR）
+## 7. Forge（真 Gitea：真仓库 / 真 push / 真 diff）
 
 ```bash
 export BAGU_GITEA_URL=http://<gitea>:3000
 export BAGU_GITEA_TOKEN=<token>            # 需要 write:repository
-export BAGU_GITEA_UPSTREAM=<owner>/<repo>  # Track 内容所在的上游仓
-export BAGU_GITEA_OWNER=<你的账号>          # fork 落到谁名下
+export BAGU_GITEA_UPSTREAM=<owner>/<repo>  # Track 内容所在的仓（学员 push 的目标）
 python -m platform_api.serve --content-dir ../seckill-lab --forge gitea
 ```
 
 * 工作区会被配好 push 凭据（token 在**仓库外**的 0600 文件里，仓库只留 `credential.helper` 路径）；
 * **push 由你自己跑**（平台不代跑 git 写操作），界面会给出命令；
-* PR 从 `<你>:dev` 到上游的阶段分支，返回真 `html_url`。
+* 学员**直接推 `dev` 到那个上游仓**——不 fork、不开 PR。上游的写权限由部署侧给（`deploy/` 的
+  `track-loader` 调 `add_collaborator`；`BAGU_LEARNER_WRITE=0` 可关）。理由见设计 §8.3：
+  阅卷只需要"后端读得到那个 commit"，PR 与 fork 都不在这条链路上。
 
 ## 8. 多实例 / 共库
 
@@ -264,7 +265,7 @@ BAGU_INSTANCE_ID=host-a python -m platform_api.serve --store postgres --database
   「后端没有这个接口」（HTTP 404，`detail` 是 Starlette 自己的 `Not Found`，不在平台的短码表里）
   或响应少一个字段——**遇到这种报错先看版本行**，不要从代码里找 bug。
 * **重置**：删掉 SQLite 文件（或 `TRUNCATE`）就回到"没入过学"的状态。**注意**：Track 的工作区
-  目录与 Gitea 上的 fork/dev 分支不会被清掉，按需自己处理。
+  目录与 Gitea 上的 `dev`/阶段分支不会被清掉，按需自己处理。
 
 ## 10. 一页速查
 
@@ -273,10 +274,10 @@ BAGU_INSTANCE_ID=host-a python -m platform_api.serve --store postgres --database
 bash scripts/quickstart.sh --content-dir ../seckill-lab      # 等价于下面这条 + 建 venv/装依赖/构建前端
 python -m platform_api.serve --content-dir ../seckill-lab
 
-# 真阅卷 + 真 PR + 进度存指定文件
+# 真阅卷 + 真 Gitea（学员直推 dev）+ 进度存指定文件
 BAGU_GRADING=docker BAGU_FORGE=gitea \
 BAGU_GITEA_URL=http://127.0.0.1:3000 BAGU_GITEA_TOKEN=... \
-BAGU_GITEA_UPSTREAM=trackowner/seckill-lab BAGU_GITEA_OWNER=deployer \
+BAGU_GITEA_UPSTREAM=trackowner/seckill-lab \
 python -m platform_api.serve --content-dir ../seckill-lab \
   --store sqlite --database-url /srv/bagu/progress.sqlite3
 
@@ -307,19 +308,19 @@ gitea(healthy) ─────────────────────�
 |---|---|---|
 | `gitea` | 官方 `gitea/gitea:1.22` + sqlite + `INSTALL_LOCK` | —— |
 | `gitea-admin` | 一次性 `gitea admin user create`（与 gitea 共用数据卷） | 官方镜像**不认** `GITEA_ADMIN_*`：实测 1.22 带着那些变量启动后容器健康，但 `GET /api/v1/user` 回 401 `user does not exist` |
-| `track-loader` | 建用户/仓 → **推全**内容仓的分支 → 建/补齐 fork → 令牌写进共享卷 | Gitea 的 fork 是**创建那一刻**的快照，不会跟着上游长。顺序错了，"新阶段在 fork 里永远缺席"，症状就是 `workspace_ref_missing` |
+| `track-loader` | 建用户/仓 → **推全**内容仓的分支 → `git ls-remote` 核对 → 给学员开写权限 → 令牌写进共享卷 | 顺序错了，`platform` 会在"阶段分支还不存在"时接客，`provision` 报 `workspace_ref_missing`。学员的写权限是 loader 给的（没有 fork 之后他必须能直推内容仓） |
 | `platform` | 后端；`depends_on: track-loader: service_completed_successfully` | 保证"Gitea 里已经有它要 clone 的阶段分支"再开始接客 |
 | `web` | nginx：SPA + REST 反代（前缀表与 `frontend/vite.config.ts` 一致） | 后端是**纯 REST**、不托管前端；少了它 `up` 完没有浏览器入口 |
 
 **三条约束**：
 
-1. `BAGU_PUBLIC_URL` 必须**容器与浏览器都连得上**（它决定 `clone_url` 与 PR 链接）。写 `127.0.0.1`
+1. `BAGU_PUBLIC_URL` 必须**容器与浏览器都连得上**（它决定 `clone_url`）。写 `127.0.0.1`
    的话，容器里那是它自己——`provision` 的 clone 会一直超时。loader 启动时会为此打一条 `!!` 警告。
 2. 内容仓（`CONTENT_DIR`）**必须有每个阶段的本地分支**（§C.5 一阶段一 ref）。loader 只推它看得见的：
    `git branch` 里有几条，Gitea 里就有几条。换机器用 `git bundle create x.bundle --all` 打包——
    本地分支才是内容的全部（GitHub 上常常只有 `main`）。
-3. `BAGU_FORK_RESET=1` 是**破坏性**的：删掉学员 fork 再重建（`dev` 与历史 PR 一起没）。它的用处正是
-   "把 dev 上不该有的东西（比如一份参考解）清掉"。
+3. `BAGU_LEARNER_WRITE=0` 会让学员**推不了** `dev`（loader 默认给他开内容仓写权限，因为那是 L3 之后
+   唯一的交卷路径）。除非你打算自己管权限，否则别关。
 
 **真阅卷**（可选）：基础 compose 固定桩阅卷，真阅卷由**叠加文件**开（唯一开关，见
 [`../deploy/README.md`](../deploy/README.md)）：
@@ -328,6 +329,11 @@ gitea(healthy) ─────────────────────�
 docker compose -f docker-compose.yml -f docker-compose.grading.yml build platform
 docker compose -f docker-compose.yml -f docker-compose.grading.yml up -d
 ```
+
+> [!WARNING]
+> 开了真阅卷之后，**每一次** `up`/`build`/`restart` 都得带上那个 `-f`。只带基础文件的一次
+> `up -d` 会把 `platform` 换回 `lean` 镜像（`BAGU_GRADING=stub`），真阅卷无声消失——`/meta` 的
+> `grading_backend` 是唯一线索（`docker` → `stub`）。
 
 叠加文件做四件事：镜像换成 `target: grading`（JDK17 + Maven + docker CLI/compose，工具链从官方
 镜像拷而不是 apt——包名在各 base 镜像上不一致，实测踩过 `Unable to locate package`）；挂 docker

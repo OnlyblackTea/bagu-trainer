@@ -33,7 +33,7 @@ describe('api: 契约方法', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/instances/ti-1/submit?scenario=pass')
     expect(init?.method).toBe('POST')
-    expect(JSON.parse(String(init?.body))).toEqual({ pr_url: null, defense: '改了索引列序' })
+    expect(JSON.parse(String(init?.body))).toEqual({ defense: '改了索引列序' })
   })
 
   it('listInstances 带 learner 查询参数', async () => {
@@ -172,7 +172,6 @@ describe('humanize', () => {
       'report_not_ready',
       'grading_unavailable',
       'forge_unavailable',
-      'remote_branch_missing',
       'track_not_found',
       'track_not_deployed',
       'enroll_needs_track',

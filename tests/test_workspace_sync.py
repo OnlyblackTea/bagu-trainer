@@ -228,9 +228,6 @@ def _real_forge_app(tmp_path: Path, workspace: Path) -> tuple[Any, Any]:
         def provision(self, instance: Any) -> Workspace:
             return ws
 
-        def create_pr(self, instance: Any, *, base: str, head: str) -> str:
-            return "http://gitea.local/trackowner/track/pulls/7"
-
     bundle = app.state.tracks["database-bagu"]
     app.state.tracks["database-bagu"] = replace(bundle, forge=_RealForge())
     return app, TestClient(app)

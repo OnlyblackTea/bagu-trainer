@@ -311,11 +311,7 @@ def classify_grading_error(exc: BaseException) -> tuple[str, str]:
     这里刻意与 ``app.py`` 的处理器用同一套短码：异步之后失败发生在后台线程里，异常处理器
     够不着，只能在登记处就地分类，并让 ``GET report`` / ``GET progress`` / 历史原样报出来。
     """
-    from platform_service.forge import (
-        ForgeUnavailableError,
-        RemoteBranchMissingError,
-        WorkspaceRefMissingError,
-    )
+    from platform_service.forge import ForgeUnavailableError, WorkspaceRefMissingError
 
     from .grading_docker import GradingUnavailableError
 
@@ -323,8 +319,6 @@ def classify_grading_error(exc: BaseException) -> tuple[str, str]:
         return "grading_unavailable", str(exc)[:300]
     if isinstance(exc, ForgeUnavailableError):
         return "forge_unavailable", str(exc)[:300]
-    if isinstance(exc, RemoteBranchMissingError):
-        return "remote_branch_missing", f"{exc.repo}: {exc.branch}"[:300]
     if isinstance(exc, WorkspaceRefMissingError):
         return "workspace_ref_missing", f"{exc.ref}: {exc.reason}"[:300]
     return "internal_error", f"{type(exc).__name__}: {exc}"[:300]
@@ -334,7 +328,6 @@ def classify_grading_error(exc: BaseException) -> tuple[str, str]:
 ERROR_STATUS: dict[str, int] = {
     "grading_unavailable": 503,
     "forge_unavailable": 503,
-    "remote_branch_missing": 409,
     "workspace_ref_missing": 500,
     "git_command_failed": 500,
     "internal_error": 500,

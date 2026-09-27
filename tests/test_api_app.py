@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -62,42 +61,6 @@ def test_unreachable_forge_is_503_not_a_bad_grade(tmp_path: Path, monkeypatch) -
 
     assert r.status_code == 503 and r.json()["detail"] == "forge_unavailable"
     assert r.json()["reason"]
-
-
-def test_missing_remote_branch_is_409_with_the_branch_name(tmp_path: Path) -> None:
-    """学员还没 push ⇒ 409（预期内），并带上分支名——前端才能说清"先 push 哪个分支"。"""
-    from platform_service.forge import RemoteBranchMissingError
-
-    app = _app(tmp_path)
-    client = TestClient(app)
-    client.post("/enrollments", json={"learner": "deployer"})
-    iid = next(
-        i["id"]
-        for i in client.get("/instances", params={"learner": "deployer"}).json()
-        if i["ticket_id"] == "db-stage-00"
-    )
-    client.post(f"/instances/{iid}/start")
-
-    class _NoBranchForge:
-        """只在 create_pr 上不同：provision 仍走真桩（否则测不到路由 → 处理器的映射）。"""
-
-        def __init__(self, inner) -> None:
-            self._inner = inner
-
-        def provision(self, instance):
-            return self._inner.provision(instance)
-
-        def create_pr(self, instance, *, base, head):
-            raise RemoteBranchMissingError(repo="deployer/track", branch="dev")
-
-    bundle = app.state.tracks["database-bagu"]
-    app.state.tracks["database-bagu"] = replace(bundle, forge=_NoBranchForge(bundle.forge))
-
-    r = client.post(f"/instances/{iid}/pr")
-
-    assert r.status_code == 409
-    assert r.json()["detail"] == "remote_branch_missing"
-    assert r.json()["branch"] == "dev" and r.json()["repo"] == "deployer/track"
 
 
 def test_create_app_exposes_stage_dir_index(tmp_path: Path) -> None:

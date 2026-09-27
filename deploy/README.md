@@ -11,8 +11,8 @@ docker compose logs -f track-loader     # 看它载入了哪些阶段分支
 
 ## 它解决了什么
 
-以前要手工做的一串事——建 Gitea 用户、造令牌、建上游仓、**把内容仓的每条阶段分支推上去**、
-确保学员的 fork 里也有这些分支——现在由 `track-loader` 在启动时做，顺序是：
+以前要手工做的一串事——建 Gitea 用户、造令牌、建内容仓、**把内容仓的每条阶段分支推上去**、
+**给学员开内容仓的写权限**（他要直接推 `dev` 交卷）——现在由 `track-loader` 在启动时做，顺序是：
 
 ```
 gitea(healthy) ──► gitea-admin(跑完)  ──┐
@@ -26,7 +26,7 @@ gitea(healthy) ─────────────────────�
 |---|---|---|
 | `gitea` | 官方镜像 + sqlite + `INSTALL_LOCK` | —— |
 | `gitea-admin` | `gitea admin user create`（一次性，与 gitea 共用数据卷） | 官方镜像**不认** `GITEA_ADMIN_*`：实测 1.22 带着那些变量启动后容器健康，但 `GET /api/v1/user` 回 401 `user does not exist` |
-| `track-loader` | 建用户/仓 → **推全**内容仓的分支 → 建/补齐 fork → 把令牌写进共享卷 | fork 是**创建那一刻**的快照。先后顺序错了，"新阶段在 fork 里永远缺席"，症状就是 provision 报 `workspace_ref_missing` |
+| `track-loader` | 建用户/仓 → **推全**内容仓的分支 → `git ls-remote` 核对 → 给学员开写权限 → 把令牌写进共享卷 | 顺序错了，`platform` 会在"阶段分支还不存在"时开始接客，`provision` 直接报 `workspace_ref_missing` |
 | `platform` | 后端（`depends_on: track-loader: service_completed_successfully`） | 保证"Gitea 里已经有它要 clone 的阶段分支"再开始接客 |
 | `web` | nginx：SPA + REST 反代 | 后端是**纯 REST**，不托管前端；少了它 `up` 完没有浏览器入口 |
 
@@ -35,14 +35,17 @@ gitea(healthy) ─────────────────────�
 1. **`deploy/.env` 必须有**（`cp .env.example .env`）。缺了它 compose 会**直接报错**，而不是拿默认值
    起一个坏栈——这条是踩出来的：曾有一次 `.env` 丢了，Gitea 被重建成 `ROOT_URL` 为空的实例，整栈
    "看起来在跑"却 clone 不了。校验写在 compose 的 `${VAR:?}` 里。
-2. **`BAGU_PUBLIC_URL` 要写局域网地址，不能写 `127.0.0.1`。** 它决定 Gitea 返回的 `clone_url` 与
-   PR 链接；容器里的 `127.0.0.1` 是容器自己。写成 localhost 的症状是 `provision` 时 git clone
+2. **`BAGU_PUBLIC_URL` 要写局域网地址，不能写 `127.0.0.1`。** 它决定 Gitea 返回的 `clone_url`；
+   容器里的 `127.0.0.1` 是容器自己。写成 localhost 的症状是 `provision` 时 git clone
    一直超时（loader 启动时会为此打一条 `!!` 警告）。这个地址要**浏览器和容器都连得上**。
 3. **内容仓必须有每个阶段的本地分支**（§C.5 一阶段一 ref）。loader 只推它看得见的：`git branch`
    里有几条，Gitea 里就有几条。换机器时用 `git bundle create x.bundle --all` 打包再克隆——
    本地分支才是内容的全部（GitHub 上往往只有 `main`）。
-4. **`BAGU_FORK_RESET=1` 是破坏性的**：删掉学员的 fork 再重建，`dev` 分支与历史 PR 一起没。
-   它的用处正是"把 dev 上不该有的东西（比如一份参考解）清掉，换一个干净起点"。默认 0。
+4. **学员的写权限由 loader 给**（`BAGU_LEARNER_WRITE=1`，默认开）：没有 fork 之后，学员唯一的交卷
+   路径就是直接 push `dev` 到这个内容仓（设计 §C.5）。设 0 的话他 push 会 403——只有当你打算
+   手工管权限、或者只从后端登记的路径做题时才有意义。
+   > 内容被重写过、`dev` 上躺着不该有的代码时，**没有**"重建 fork"这种一键重置了：直接在 Gitea 上
+   > 删掉/重置那条 `dev` 分支即可（平台不会碰它）。
 
 ## 真阅卷（可选）
 
@@ -54,6 +57,13 @@ cd deploy
 docker compose -f docker-compose.yml -f docker-compose.grading.yml build platform
 docker compose -f docker-compose.yml -f docker-compose.grading.yml up -d
 ```
+
+> [!WARNING]
+> **开了真阅卷之后，任何 `up`/`build`/`restart` 都要带上那个 `-f`。** 只带基础文件跑一次
+> `docker compose up -d` **不是空操作**：它会把 `platform` 换回 `lean` 镜像（`BAGU_GRADING=stub`），
+> 真阅卷就此悄悄消失——`/meta` 里的 `grading_backend` 从 `docker` 变回 `stub` 是唯一的痕迹。
+> （实测踩过：重建前端镜像时顺手 `up -d web`，把 platform 一起换掉了。）
+> 想少记一条命令，就把它写成 shell 别名／Makefile 目标，别指望自己每次都记得。
 
 叠加文件做四件事，少一件就会红在"跟你的代码无关的地方"：
 
@@ -71,15 +81,14 @@ docker compose -f docker-compose.yml -f docker-compose.grading.yml up -d
 约 90 秒），之后每次 10–30 秒。报告里 `host_env.simulated=false` 且带 `revision`（被阅的是哪个
 commit）——桩的报告是 `simulated=true`，两者一眼可分。
 
-## 一个 Gitea 的怪癖（不影响使用，但解释清楚免得你查半天）
+## 一个 Gitea 的怪癖（现在碰不到了，但解释了为什么"以 git 为准"）
 
 `gitea/gitea:1.22` 会把**程序化建出来的 fork** 标成 `empty: true`，于是它的
 `GET /repos/{owner}/{repo}/branches` 对**任何**分支都回 `null` / 404（实测：同一个 commit 上，
 `git ls-remote` 列得出全部 14 条分支、网页也能正常浏览文件树，只有这个 API 说"空"）。
-上游仓（用 API 建、再 push）不会有这个问题。
-
-所以本仓一律**以 git 为准**判断分支在不在：`track_loader` 用 `git ls-remote` 等 fork 就绪并核对
-分支数，`provision` 走的也是 git。别拿 Gitea 的 `/branches` 去判断"阶段分支有没有载入"。
+**L3 之后平台不再建 fork**（学员直接推上游内容仓），所以这个坑本身已经绕开了；但"分支在不在，
+以 git 为准"这条规矩保留：`track_loader` 仍用 `git ls-remote` 等上游分支就绪、并核对条数，
+`provision` 走的也是 git。别拿 Gitea 的 `/branches` 去判断"阶段分支有没有载入"。
 
 ## 学员怎么 push（第一次一定会遇到）
 
@@ -93,7 +102,7 @@ git push -u origin dev                          # 提示时输 deployer / deploy
 
 # ② 用令牌（不想给密码时）——令牌是 loader 交给后端的那枚
 docker compose exec platform cat /run/bagu/gitea-token
-git remote set-url origin "http://deployer:$(docker compose exec -T platform cat /run/bagu/gitea-token | tr -d '\r\n')@<BAGU_PUBLIC_URL 的主机>/deployer/<TRACK_NAME>.git"
+git remote set-url origin "http://deployer:$(docker compose exec -T platform cat /run/bagu/gitea-token | tr -d '\r\n')@<BAGU_PUBLIC_URL 的主机>/<TRACK_OWNER>/<TRACK_NAME>.git"
 ```
 
 > 与"后端本机工作区"那条路的区别：如果工作区在**后端那台机器上**（拓扑 A/C），`provision` 会在
@@ -101,7 +110,7 @@ git remote set-url origin "http://deployer:$(docker compose exec -T platform cat
 > 于是 `git push` 开箱可用。compose 栈里工作区在容器内，你在自己机器上 clone 的那份自然没有凭据。
 
 默认分支被钉在 `main`：Gitea 会把它认为「空」的仓的**第一条推送**设成默认分支，而学员第一次推的
-正是 `dev`——不钉住的话 `dev` 之后删都删不掉（重开一题会被拒）。loader 在 fork 就绪后会校正它。
+正是 `dev`——不钉住的话 `dev` 之后删都删不掉（重开一题会被拒）。loader 建仓后立刻校正它。
 
 ## 常用操作
 
@@ -114,8 +123,8 @@ docker compose down -v                  # 连数据一起删（**进度与 Gitea
 docker compose up -d --force-recreate   # 改了 .env 之后
 ```
 
-进度库在卷 `bagu-data` 里的 `/var/lib/bagu/progress.sqlite3`；要备份就
-`docker compose cp platform:/var/lib/bagu/progress.sqlite3 ./backup.sqlite3`。
+进度库就在宿主机 `${BAGU_DATA_DIR}/progress.sqlite3`（`BAGU_DATA_DIR` 是 .env 里那个绝对路径，
+两侧同路径绑定挂载，所以它在宿主机上也**就是那个路径**）；备份直接复制它（连同 `-wal`/`-shm`）。
 
 ## 与其它拓扑的关系
 

@@ -1,17 +1,19 @@
 """真 Forge：Gitea。
 
-* ``provision`` —— 确保 fork 存在 → clone fork 到工作区 → checkout 阶段分支 → 建 ``dev`` 分支 →
+* ``provision`` —— clone **Track 内容仓本身**到工作区 → checkout 阶段分支 → 建 ``dev`` 分支 →
   把基线 SHA 记进本地 git config → 装好 push 凭据。**它只准备场地**：``dev`` 是空的起点，代码与
   push 都由学员自己做（§C.5：平台不代跑 git 写操作）。
-* ``create_pr`` —— 调 Gitea API，从 ``<fork_owner>:dev`` 到上游的阶段分支开一个真 PR，返回
-  ``html_url``。
+
+**没有 fork，也没有 PR**（L3）：学员把 ``dev`` 直接 push 到这个仓（loader 会把他加成协作者），
+后端从同一个仓 clone。早期照搬 GitHub 的 fork→PR 那套，实测是纯负债——见
+:mod:`platform_service.forge` 的模块 docstring 里那段账。
 
 与桩的分工差别也在这里：桩"假装学员已经做完了"（diff 两端都是内容预置的 ref，``simulated=True``），
 真 Forge 不会替学员产出任何东西，所以 ``Workspace.simulated=False``，而且 **diff 比对的是学员自己
 的工作区**（含未提交改动）。
 
-**push 凭据**：学员要 ``git push origin dev`` 才能开 PR，所以工作区必须能推送。做法是
-:meth:`_install_push_credentials`——token 写进**仓库外**的 0600 文件，仓库里只留一条指向它的
+**push 凭据**：学员要 ``git push origin dev``，所以工作区必须能推送。做法是
+:meth:`install_push_credentials`——token 写进**仓库外**的 0600 文件，仓库里只留一条指向它的
 ``credential.helper``。这样：``.git/config`` 里没有秘密；``git add -A`` 也永远不可能把它提交进去
 （它根本不在仓库目录里）。平台自己仍然不跑任何 git 写操作。
 """
@@ -51,18 +53,16 @@ class GiteaForgeClient:
         *,
         api: GiteaApi,
         upstream: str,
-        fork_owner: str,
         base_dir: Path,
         stage_refs: Mapping[str, str],
     ) -> None:
         self._api = api
         self._upstream = upstream
-        self._fork_owner = fork_owner
         self._base_dir = base_dir
         self._stage_refs = dict(stage_refs)
 
     @property
-    def fork_repo_name(self) -> str:
+    def repo_name(self) -> str:
         return self._upstream.split("/", 1)[1]
 
     def workspace_path(self, instance: TicketInstance) -> Path:
@@ -71,18 +71,26 @@ class GiteaForgeClient:
     # -- provision -------------------------------------------------------------
 
     def provision(self, instance: TicketInstance) -> Workspace:
-        fork = self._api.ensure_fork(upstream=self._upstream, fork_owner=self._fork_owner)
-        clone_url = str(fork.get("clone_url") or "")
+        """clone **Track 内容仓本身**（不再有 fork）。
+
+        学员把 ``dev`` push 到这个仓（loader 会把他加成协作者，见 ``track_loader``）；后端 clone
+        它、在里面跑测试。少一个 fork 就少一整套麻烦：fork 是创建那刻的快照（新阶段在旧 fork 里
+        永远缺席）、Gitea 会给程序化 fork 打上 ``empty``（分支 API 全 404）、学员第一次 push 会
+        抢走 fork 的默认分支。
+        """
+        repo = self._api.repo(*self._upstream.split("/", 1))
+        clone_url = str((repo or {}).get("clone_url") or "")
         if not clone_url:
             raise ForgeUnavailableError(
-                f"gitea fork payload has no clone_url (keys: {sorted(fork)})"
+                f"gitea repo {self._upstream} has no clone_url"
+                "（仓不存在？把内容载入 Gitea 的 track_loader 跑过了吗）"
             )
         stage = stage_branch_for(instance.ticket_id, self._stage_refs)
         base_ref = f"origin/{stage}"
         # 学员登记过自己的目录就用**他的**（指引式 provision），否则用平台自己准备的那个。
         dest = taken_over_workspace(instance, self.workspace_path(instance))
         if (dest / ".git").is_dir():
-            # 学员自己 clone 的那种：先把远端 ref 拉新，后面的 diff/PR 才看得见最新状态。
+            # 学员自己 clone 的那种：先把远端 ref 拉新，后面的 diff 才看得见最新状态。
             # `fetch` 是只读的（只动 remote-tracking ref，不碰他的工作树与提交）。
             git(dest, "fetch", "-q", "origin", check=False)
         dest = prepare_workspace(
@@ -112,7 +120,7 @@ class GiteaForgeClient:
         """让学员**在自己的目录里**拉取的命令（指引式 provision）。
 
         用的是干净 clone URL（**不含 token**）：他自己的凭据他自己给——平台不去碰他机器上的 git
-        凭据配置。分支形状与平台自己那份一致（从阶段分支开出 ``dev``），所以后续 diff/PR 的语义
+        凭据配置。分支形状与平台自己那份一致（从阶段分支开出 ``dev``），所以后续 diff 的语义
         完全相同。
         """
         return "\n".join(
@@ -166,32 +174,3 @@ class GiteaForgeClient:
         git(dest, "config", "--add", "credential.helper", "")
         git(dest, "config", "--add", "credential.helper", f"store --file={creds.as_posix()}")
         return creds
-
-
-    # -- PR --------------------------------------------------------------------
-
-    def create_pr(self, instance: TicketInstance, *, base: str, head: str) -> str:
-        """在**上游仓**开 PR。``head`` 是学员的工作区分支（``dev``），``base`` 是阶段分支。
-
-        远端还没有 ``dev``（学员没 push）时 Gitea 会报错，这里翻成
-        :class:`~platform_service.forge.RemoteBranchMissingError` → 路由给 409 + 短码。
-        """
-        return self._api.create_pull(
-            upstream=self._upstream,
-            fork_owner=self._fork_owner,
-            head_branch=head.removeprefix("origin/"),
-            base_branch=base.removeprefix("origin/"),
-            title=f"[{instance.ticket_id}] {instance.learner} 的提交",
-            body=self._pr_body(instance),
-        )
-
-    @staticmethod
-    def _pr_body(instance: TicketInstance) -> str:
-        """PR 描述只放"这是什么"，**答辩由学员自己写**（工单里有模板，平台不代填）。"""
-        return (
-            "由 bagu-trainer 自动开单。\n\n"
-            f"- ticket: `{instance.ticket_id}`\n"
-            f"- instance: `{instance.id}`\n"
-            f"- learner: `{instance.learner}`\n\n"
-            "> 答辩请写在这里：改了什么、为什么这么改、客观证据（阅卷报告随提交附上）。\n"
-        )

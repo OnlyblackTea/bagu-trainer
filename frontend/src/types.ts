@@ -161,11 +161,6 @@ export interface ReissueOut {
   instance: InstanceOut
 }
 
-export interface PullRequestOut {
-  pr_url: string
-  simulated: boolean
-}
-
 /** 阅卷阶段（后端 `GradingStep`）。稳定短标识；人话在 UI 层。 */
 export type GradingStep = 'queued' | 'reset_infra' | 'run_tests' | 'parse' | 'done' | 'failed'
 

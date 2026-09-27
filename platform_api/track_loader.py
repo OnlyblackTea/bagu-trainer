@@ -1,9 +1,9 @@
 """把一份 Track 内容**载入**一个刚起来的 Gitea（compose 栈的启动步骤）。
 
 存在的理由：平台要 `provision` 一个阶段，就得能从 Forge 里 clone 到**那个阶段的分支**（§C.5
-一阶段一 ref）。手工做这件事有一串容易漏的步骤——建用户、造令牌、建上游仓、把内容仓的每条本地
-分支推上去、确保学员的 fork 里也有这些分支——而**每一步漏掉的症状都是同一个**：provision 回
-``workspace_ref_missing``，看起来像 Track 写错了。这个模块把这些步骤收成一次幂等的启动动作。
+一阶段一 ref）。手工做这件事有一串容易漏的步骤——建用户、造令牌、建仓、把内容仓的每条本地分支推
+上去、给学员写权限——而**每一步漏掉的症状都是同一个**：provision 回 ``workspace_ref_missing``，
+看起来像 Track 写错了。这个模块把这些步骤收成一次幂等的启动动作。
 
 三条设计决定（都是被现实逼出来的）：
 
@@ -11,10 +11,10 @@
   但 ``GET /api/v1/user`` 401 "user does not exist"），所以 compose 里有一个用同一个镜像与同一个
   数据卷跑 ``gitea admin user create`` 的一次性 sidecar；本模块只假定"管理员已经能用 basic auth
   登录"（并轮询等它），不去碰 CLI。
-* **fork 要在上游分支推完之后才存在**。Gitea 的 fork 是**创建那一刻**的快照，不会自动跟着上游长；
-  所以顺序是「推上游 → 建/更新 fork」。已经存在的 fork 也要补推分支（否则新阶段在 fork 里永远缺席，
-  而这正是"看得到题、拉不出工作区"的来源）。``fork_reset`` 更进一步：删掉重建，顺带清掉学员那条
-  可能装着答案的 ``dev``。
+* **没有 fork**（L3）。早期照搬 GitHub 的 ``fork → PR``，实测是纯负债：fork 是创建那一刻的快照
+  （Track 后来长出新阶段，旧 fork 里永远缺席 ⇒ ``workspace_ref_missing``）、Gitea 给程序化 fork
+  标 ``empty``（分支 API 全 404）、学员第一次 push 会抢走 fork 的默认分支。现在只有一个仓：内容
+  推上去，学员**直接 push ``dev``**——所以必须给他写权限（``BAGU_LEARNER_WRITE``，默认开）。
 * **令牌复用**。每次启动都造一个新令牌，几轮下来 Gitea 里会躺一排 `all` scope 的凭据（真发生过：
   13 个）。这里先试 ``secrets`` 里那份，能用就不动它。
 
@@ -67,9 +67,10 @@ class LoaderConfig:
     admin_password: str = DEFAULT_ADMIN_PASSWORD
     owner_password: str = DEFAULT_TRACK_OWNER_PASSWORD
     learner_password: str = DEFAULT_LEARNER_PASSWORD
-    fork_reset: bool = False
-    #: 把学员加成上游仓的协作者（默认开）。开了才"自己开的 PR 自己能合"——见 add_collaborator。
-    learner_can_merge: bool = True
+    #: 给学员内容仓的**写权限**（默认开）。没有 fork 之后这是必须的：学员要把 ``dev`` 直接
+    #: push 到这个仓。设 0 只适合"我另有办法让学员 push"的部署——那时 provision 会 clone 到
+    #: 一个他推不上去的仓。
+    learner_write: bool = True
     token_name: str = "track-loader"
     timeout_s: float = 120.0
 
@@ -96,9 +97,6 @@ class LoaderConfig:
                 raise LoadError(f"缺少环境变量 {name}")
             return value
 
-        def flag(name: str) -> bool:
-            return e.get(name, "").strip().lower() in ("1", "true", "yes", "on")
-
         def off(name: str) -> bool:
             """默认**开**的开关：只在显式写了假值时才关。"""
             return e.get(name, "").strip().lower() in ("0", "false", "no", "off")
@@ -117,24 +115,25 @@ class LoaderConfig:
             admin_password=e.get("BAGU_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD),
             owner_password=e.get("BAGU_TRACK_OWNER_PASSWORD", DEFAULT_TRACK_OWNER_PASSWORD),
             learner_password=e.get("BAGU_LEARNER_PASSWORD", DEFAULT_LEARNER_PASSWORD),
-            fork_reset=flag("BAGU_FORK_RESET"),
-            learner_can_merge=not off("BAGU_LEARNER_CAN_MERGE"),
+            learner_write=not off("BAGU_LEARNER_WRITE"),
         )
 
 
 @dataclass
 class LoadResult:
     upstream: str = ""
-    fork: str = ""
     branches: list[str] = field(default_factory=list)
     token_path: Path | None = None
     token_reused: bool = False
-    fork_recreated: bool = False
+    learner_has_write: bool = False
 
     def render(self) -> str:
+        if self.learner_has_write:
+            write = "（学员有写权限）"
+        else:
+            write = "（学员**没有**写权限：他 push 不了）"
         lines = [
-            f"上游仓: {self.upstream}",
-            f"学员 fork: {self.fork}" + ("（本次重建，dev 已清空）" if self.fork_recreated else ""),
+            f"内容仓: {self.upstream}" + write,
             f"载入阶段分支（{len(self.branches)}）: " + ", ".join(self.branches),
             f"后端令牌: {self.token_path}"
             + ("（复用已有）" if self.token_reused else "（本次新造）"),
@@ -274,50 +273,14 @@ def ensure_repo(gitea_url: str, token: str, owner: str, name: str) -> bool:
         )
 
 
-def ensure_fork(gitea_url: str, token: str, upstream: str, fork_owner: str, name: str) -> bool:
-    """确保 fork 存在（已存在 ⇒ ``False``）。fork 是**创建那一刻**的快照，见模块 docstring。
-
-    注意 202：Gitea 对 fork 是**异步**的，202 只说明"接受了"。没同步完的 fork 会被标成
-    ``empty: true``，此时它的 ``/branches`` 对**任何**分支都回 404（实测 1.22）——所以既不能拿
-    API 判断分支在不在，也不该在这时往里 push。就绪与否一律用 :func:`remote_branches` 问 git。
-    """
-    owner, name_ = upstream.split("/", 1)
-    with _client(gitea_url, token=token) as client:
-        if client.get(f"/repos/{fork_owner}/{name_}").status_code == 200:
-            return False
-        response = client.post(f"/repos/{owner}/{name_}/forks", json={})
-        # 202 = Gitea 接受 fork 请求、异步建（真机就是这个码——一开始只认 200/201，于是
-        # 明明建成了却报 "建 fork 失败：202"，一个纯粹的误报）。
-        if response.status_code in (200, 201, 202, 409, 422):
-            return True
-        raise LoadError(
-            f"建 fork {upstream} → {fork_owner} 失败：{response.status_code} {response.text[:200]}"
-        )
-
-
-def delete_repo(gitea_url: str, token: str, owner: str, name: str) -> None:
-    with _client(gitea_url, token=token) as client:
-        response = client.delete(f"/repos/{owner}/{name}")
-        if response.status_code not in (204, 202, 200, 404):
-            raise LoadError(
-                f"删仓 {owner}/{name} 失败：{response.status_code} {response.text[:200]}"
-            )
-
-
-def delete_branch(gitea_url: str, token: str, owner: str, name: str, branch: str) -> bool:
-    with _client(gitea_url, token=token) as client:
-        response = client.delete(f"/repos/{owner}/{name}/branches/{branch}")
-        return response.status_code in (204, 200)
-
-
 def add_collaborator(
     gitea_url: str, token: str, owner: str, name: str, user: str, *, permission: str = "write"
 ) -> bool:
     """把 ``user`` 加成 ``owner/name`` 的协作者（默认 write）。
 
-    为什么单用户自托管需要它：PR 的**合并按钮在 base 仓**（这里是上游），而学员账号对上游没有写权限
-    ——于是"自己开的 PR 自己合不了"，只能再登录一次内容所有者那个账号。这个部署里两个账号本来就是
-    同一个人，直接把学员加成协作者更贴合现实（多用户部署可以关掉：``BAGU_LEARNER_CAN_MERGE=0``）。
+    **没有 fork 之后这条是必需的**：学员要把 ``dev`` 直接 push 到这个仓（后端也从它 clone），
+    所以他对内容仓必须有写权限。少这一步的症状很好认——他 push 时被 401/403 拒，而平台侧一切正常。
+    单用户自托管下两个账号本来就是同一个人（``BAGU_LEARNER_WRITE=0`` 可关）。
     """
     with _client(gitea_url, token=token) as client:
         response = client.put(
@@ -414,9 +377,9 @@ def token_push_url(gitea_url: str, owner: str, name: str, token: str) -> str:
 def remote_branches(push_url: str) -> list[str]:
     """远端现有分支（``git ls-remote --heads``）。
 
-    **权威来源是 git，不是 Gitea 的 API**：异步 fork 没同步完时 Gitea 把它标成 ``empty``，
-    这时 ``/branches`` 对任何分支都回 404，而 ``git ls-remote`` 一直是对的——provision 走的也是
-    后者。用 API 判断"分支在不在"会得出与真相相反的结论。
+    **权威来源是 git，不是 Gitea 的 API**：Gitea 对"它认为空"的仓（程序化建出来的 fork 就是
+    这样）会一直回 ``empty``，它的 ``/branches`` 对任何分支都 404，而 ``git ls-remote`` 一直是对的
+    ——provision 走的也是后者。用 API 判断"分支在不在"会得出与真相相反的结论。
     """
     proc = subprocess.run(
         ["git", "ls-remote", "--heads", push_url],
@@ -439,7 +402,7 @@ def remote_branches(push_url: str) -> list[str]:
 def wait_for_remote_branches(
     push_url: str, expected: list[str], *, timeout_s: float = 120.0, log=print
 ) -> list[str]:
-    """等远端长出 ``expected`` 里的全部分支（Gitea 的异步 fork 就靠这个等）。
+    """等远端长出 ``expected`` 里的全部分支（push 之后 Gitea 处理钩子需要一点时间）。
 
     超时不抛错：调用方据此决定"补推一次"，比在这里猜更有信息量。
     """
@@ -458,7 +421,7 @@ def wait_for_remote_branches(
 
 
 def load_track(config: LoaderConfig, *, log=print) -> LoadResult:
-    """把内容载入 Gitea：建用户 → 建上游仓 → 推全部分支 → 建/补齐 fork → 落令牌。
+    """把内容载入 Gitea：建账号 → 建仓 → 推全部分支 → 给学员写权限 → 落令牌。
 
     幂等：compose 每次 ``up`` 都会再跑一遍，重复执行只该产生"已存在"这种无害结果。
     """
@@ -510,9 +473,27 @@ def load_track(config: LoaderConfig, *, log=print) -> LoadResult:
         config.gitea_url, owner_token, config.upstream_owner, config.upstream_name
     )
     log(f"   仓 {config.upstream}: {'新建' if created else '已存在'}")
-    if config.learner_can_merge:
-        # PR 的合并按钮在 base 仓（上游），学员对它没有写权限 ⇒ 加成协作者，否则"自己开的 PR
-        # 自己合不了"，还得再登一次内容所有者那个账号（单用户部署下纯属自找麻烦）。
+    branches = push_all_branches(
+        config.content_dir,
+        token_push_url(config.gitea_url, config.upstream_owner, config.upstream_name, owner_token),
+    )
+    result.branches = branches
+    # 推完**用 git 核对**（不靠 Gitea 的 /branches：见 remote_branches 的 docstring）。
+    landed = wait_for_remote_branches(
+        token_push_url(config.gitea_url, config.upstream_owner, config.upstream_name, owner_token),
+        branches,
+        timeout_s=config.timeout_s,
+        log=log,
+    )
+    missing = sorted(set(branches) - set(landed))
+    if missing:
+        raise LoadError(
+            f"内容仓里缺这些分支：{missing}（推上去了但 git 读不到——检查 Gitea 日志与磁盘空间）"
+        )
+    log(f"   推入 {len(branches)} 条分支，git 确认全部就位：{', '.join(branches)}")
+
+    log("== 学员写权限（没有 fork 了：他直接 push 到这个仓）==")
+    if config.learner_write:
         add_collaborator(
             config.gitea_url,
             owner_token,
@@ -520,46 +501,10 @@ def load_track(config: LoaderConfig, *, log=print) -> LoadResult:
             config.upstream_name,
             config.learner,
         )
-        log(f"   {config.learner} 已加为上游协作者（可合并 PR）")
-    branches = push_all_branches(
-        config.content_dir,
-        token_push_url(config.gitea_url, config.upstream_owner, config.upstream_name, owner_token),
-    )
-    result.branches = branches
-    log(f"   推入 {len(branches)} 条分支：{', '.join(branches)}")
-
-    log("== 学员 fork（必须在推完分支之后）==")
-    if config.fork_reset:
-        delete_repo(config.gitea_url, learner_token, config.learner, config.upstream_name)
-        log("   BAGU_FORK_RESET=1：已删掉旧 fork（它下面的 dev 也一起没了）")
-        result.fork_recreated = True
-    ensure_fork(config.gitea_url, learner_token, config.upstream, config.learner,
-                config.upstream_name)
-    fork_url = token_push_url(
-        config.gitea_url, config.learner, config.upstream_name, learner_token
-    )
-    # 等 Gitea 的异步 fork 落地（202 只表示"接受"）。落地的 fork 会自带上游的全部分支，
-    # 所以这里的常见结果是"什么都不用推"——这比事后补推更干净（也不会有 empty 标记的怪状态）。
-    remote = wait_for_remote_branches(fork_url, branches, timeout_s=config.timeout_s, log=log)
-    missing = sorted(set(branches) - set(remote))
-    if missing:
-        log(f"   fork 里缺 {len(missing)} 条分支（旧 fork 或异步还没同步完），补推一次")
-        push_all_branches(config.content_dir, fork_url)
-        remote = remote_branches(fork_url)
-        missing = sorted(set(branches) - set(remote))
-    if missing:
-        raise LoadError(
-            f"fork {result.fork} 里始终没有这些分支：{missing}。"
-            "上游有而 fork 没有，通常是 fork 太旧——用 BAGU_FORK_RESET=1 重建一次。"
-        )
-    result.fork = f"{config.learner}/{config.upstream_name}"
-    log(f"   {result.fork} 已就绪，git 确认有全部 {len(remote)} 条分支")
-    # 默认分支钉在 main：否则学员第一次推上去的 dev 会被 Gitea 当成默认分支，之后删不掉。
-    if ensure_default_branch(
-        config.gitea_url, learner_token, config.learner, config.upstream_name, "main"
-    ):
-        log("   默认分支已修正为 main（Gitea 会把它视为「空」的仓的第一条推送设为默认分支）")
-
+        result.learner_has_write = True
+        log(f"   {config.learner} 已加为 {config.upstream} 的协作者（可 push dev）")
+    else:
+        log("   BAGU_LEARNER_WRITE=0：没给他写权限（他得另想办法 push）")
     result.token_path = config.token_path
     result.token_reused = learner_reused
     log(f"== 后端令牌：{result.token_path}（{'复用已有' if learner_reused else '本次新造'}）")

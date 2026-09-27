@@ -28,7 +28,7 @@ def test_enroll_request_rejects_extra() -> None:
 
 
 def test_submit_and_review_defaults() -> None:
-    assert SubmitRequest().pr_url is None
+    assert SubmitRequest().defense is None
     assert ReviewRequest().dimensions is None
 
 

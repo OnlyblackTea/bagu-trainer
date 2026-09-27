@@ -1,4 +1,4 @@
-"""工作区路由：provision（占位 fork=本地 clone）/ diff（真本地 git）/ pr（占位 URL）。
+"""工作区路由：provision（真 clone 内容仓）/ diff（真本地 git）/ sync（与远端对账）。
 
 平台只 gate + 指示，不替学员跑 git 写操作（设计 spec §C.5）。diff 用
 :func:`platform_service.review_diff.generate_diff` 跑真本地 git；provision 幂等。
@@ -48,7 +48,7 @@ def attach_workspace(
     此后 ``diff`` 与阅卷都对着它跑（D3：阅卷在学员自己的机器上）。``path=null`` 撤销登记。
 
     注意：路径必须是**后端这台机器**上能看到的目录。**你不需要这条**——代码写在哪台机器上都行，
-    只要你能 push 到你 fork 的 ``dev``，后端提交时会自动把这份 checkout 快进到它（见
+    只要你能 push 到内容仓的 ``dev``，后端提交时会自动把这份 checkout 快进到它（见
     :func:`sync_workspace_now`）。登记路径是给"工作区就在后端这台机器上"的人用的：那时连 fetch
     都省了，diff 直接看他正在编辑的文件。
     """
@@ -114,13 +114,3 @@ def diff(instance_id: str, request: Request) -> dict[str, Any]:
         "simulated": ws.simulated,
         "sync": sync_out(sync),
     }
-
-
-@router.post("/instances/{instance_id}/pr")
-def create_pr(instance_id: str, request: Request) -> dict[str, Any]:
-    instance = must_instance(request, instance_id)
-    forge = bundle_for_instance(request, instance).forge
-    ws = forge.provision(instance)
-    url = forge.create_pr(instance, base=ws.base_ref, head=ws.head_ref)
-    # simulated 如实来自 Forge 本身：真 Gitea 下这里就是 false，不能再写死 true。
-    return {"pr_url": url, "simulated": ws.simulated}

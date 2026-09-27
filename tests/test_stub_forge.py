@@ -108,13 +108,6 @@ def test_stub_has_no_dev_branch_and_no_push_path(tmp_path: Path) -> None:
     assert ws.push_hint is None
 
 
-def test_create_pr_returns_placeholder(tmp_path: Path) -> None:
-    forge = _forge(tmp_path)
-    inst = _instance()
-    url = forge.create_pr(inst, base=f"origin/{_SKELETON}", head=f"origin/{_SOLUTION}")
-    assert url.startswith("https://") and inst.id in url
-
-
 def test_stub_structurally_satisfies_protocol(tmp_path: Path) -> None:
     forge = StubForgeClient(source_repo=tmp_path, base_dir=tmp_path / "ws", stage_refs={})
     assert isinstance(forge, ForgeClient)
