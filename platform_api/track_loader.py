@@ -322,19 +322,35 @@ def ensure_default_branch(
 
 
 def _post_protection(
-    gitea_url: str, token: str, owner: str, name: str, payload: dict[str, object]
+    gitea_url: str,
+    token: str,
+    owner: str,
+    name: str,
+    payload: dict[str, object],
+    *,
+    log=print,
 ) -> bool:
-    """发一条保护规则；已存在（409/422）返回 ``False``，新建返回 ``True``。"""
+    """发一条保护规则：新建返回 ``True``，已存在 / 失败都返回 ``False``。
+
+    两条实测出来的细节：
+
+    * Gitea **1.22 对"同名规则已存在"回的是 403** + ``{"message":"Branch protection already
+      exist"}``（不是 409/422）——所以按消息判断，别赌状态码；
+    * **保护失败绝不抛错**：它是加固，不是功能。`platform` 依赖 loader "成功退出"，一旦这里把
+      loader 弄成 exit 1，整个栈就起不来（真踩过：第二天重跑 loader，403 让 platform 压根没被创建，
+      界面全挂）。所以这里只打一条 ``!!`` 警告然后继续。
+    """
     with _client(gitea_url, token=token) as client:
         response = client.post(f"/repos/{owner}/{name}/branch_protections", json=payload)
     if response.status_code in (200, 201):
         return True
-    if response.status_code in (409, 422):
+    if response.status_code in (409, 422) or "already exist" in response.text.lower():
         return False  # 已经保护过了
-    raise LoadError(
-        f"给 {owner}/{name} 的 {payload.get('branch_name')} 加保护失败："
-        f"{response.status_code} {response.text[:200]}"
+    log(
+        f"   !! 给 {payload.get('branch_name')} 加保护失败（跳过，不影响启动）："
+        f"{response.status_code} {response.text[:160]}"
     )
+    return False
 
 
 def content_protection(branch: str, *, allow_push: str | None) -> dict[str, object]:
@@ -381,14 +397,18 @@ def protect_branches(
     * ``dev``：**允许推但禁止 force**。重写 ``dev`` 的代价是双份的——平台那份 checkout 与它分叉
       （对账只能如实说"不无损"，不会替你 merge），而学员上一关已经交过卷的提交就从分支上消失了
       （也真踩过，只能靠留档和 fork 里那份捞回来）。
+
+    幂等：重复跑只会看到"已经保护过"。**任何一条失败都只告警不抛错**——`platform` 依赖 loader
+    成功退出，把加固步骤做成致命错误等于"一次 API 抖动 = 整栈起不来"。
     """
     added: list[str] = []
     for branch in content_branches:
         if _post_protection(
-            gitea_url, token, owner, name, content_protection(branch, allow_push=allow_push)
+            gitea_url, token, owner, name, content_protection(branch, allow_push=allow_push),
+            log=log,
         ):
             added.append(branch)
-    if _post_protection(gitea_url, token, owner, name, dev_protection()):
+    if _post_protection(gitea_url, token, owner, name, dev_protection(), log=log):
         added.append("dev")
     if added:
         log(

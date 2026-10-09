@@ -64,6 +64,21 @@ def initial_state(ticket_id: str, graph: dict[str, list[str]]) -> InstanceState:
     return InstanceState.AVAILABLE if not graph.get(ticket_id, []) else InstanceState.LOCKED
 
 
+def dag_state(
+    ticket_id: str, graph: dict[str, list[str]], passed_ids: Iterable[str]
+) -> InstanceState:
+    """该 ticket 在**当前进度**下应处的状态：前置全过 ⇒ ``available``，否则 ``locked``。
+
+    与 :func:`initial_state` 的差别就是"要不要看已经过关的前置"。第一次报名时两者等价（没有任何
+    通过记录），但**重发/重做**时必须看：否则一个已经通关的前置之后，重发的实例会锁死——
+    真踩过：点「重做这一题」，stage-02 直接变回"未解锁"，人就没法继续了。
+    """
+    if not graph.get(ticket_id, []):
+        return InstanceState.AVAILABLE
+    satisfied = prereqs_satisfied(ticket_id, set(passed_ids), graph)
+    return InstanceState.AVAILABLE if satisfied else InstanceState.LOCKED
+
+
 def unlock_dependents(
     passed_id: str, graph: dict[str, list[str]], instances: Iterable[TicketInstance]
 ) -> list[TicketInstance]:

@@ -36,7 +36,7 @@ from .models import (
     Verdict,
 )
 from .store import Store
-from .unlock import build_prereq_graph, initial_state, unlock_dependents
+from .unlock import build_prereq_graph, dag_state, unlock_dependents
 
 
 def _assert_identity_keys(tickets: dict[str, TicketSpec]) -> None:
@@ -112,14 +112,26 @@ class PlatformService:
 
     # --- lifecycle operations ------------------------------------------------
 
+    def _passed_ticket_ids(self, learner: str) -> set[str]:
+        """这位学员在该 Track 下**已经通过**的 ticket id（DAG 判定用）。
+
+        只看这个 Track、这个 learner：同名 ticket 在别的 Track 里是另一回事（§9.1）。
+        """
+        return {
+            instance.ticket_id
+            for instance in self._store.list_instances(learner=learner, track=self._track.id)
+            if instance.state is InstanceState.PASSED
+        }
+
     def enroll(self, learner: str) -> Enrollment:
         """Admit ``learner`` and mint one TicketInstance per ticket (§9.1).
 
-        Each instance starts at its DAG-derived :func:`initial_state` (root tickets
-        ``available``, the rest ``locked``) and is anchored to the current versions.
-        ``track`` is stamped on every instance: ticket ids repeat across tracks, so
-        this is what lets the board and every route attribute an instance to its track.
+        每条实例的初始态由 **DAG + 该学员已有的通过记录** 推出（根节点 ``available``）——第一次
+        报名时等于 :func:`initial_state`，但**重复报名**时不一样：已经通关的前置之后，新发的那张
+        应当是 ``available`` 而不是锁死（否则看板上会多出一排点不动的卡）。
+        ``track`` 打在每条实例上：ticket id 跨 Track 会撞名，它是这条实例属于哪个 Track 的唯一依据。
         """
+        passed = self._passed_ticket_ids(learner)
         enrollment = Enrollment(
             id=self._next_id("en"), learner=learner, track=self._track.id
         )
@@ -133,7 +145,7 @@ class PlatformService:
                 ticket_version=ticket.identity.ticket_version,
                 engine_version=self._engine_version,
                 test_version=ticket.grader.correctness.test_version,
-                state=initial_state(ticket_id, self._prereq_graph),
+                state=dag_state(ticket_id, self._prereq_graph, passed),
             )
             self._store.save_instance(instance)
         return enrollment
@@ -320,9 +332,15 @@ class PlatformService:
 
         * **留档**：旧实例只是 ``stale``，它的提交/报告/判定都还在历史里，不是删除；
         * **同版本重锚**：新实例按该 ticket **当前**的 ``ticket_version`` / ``test_version`` 与引擎
-          锚重新铸造，回到 DAG 派生的初始态（该锁的还是锁着）；
+          锚重新铸造，状态按 **DAG + 他已经过了哪些前置** 重算（见下）；
         * **不收回已解锁的后继阶段**：解锁是单调的（§9.2），重做前一关不会把已解锁的下一关收回去。
           这是有意的——学员可能已经在下一关干了活，平台不该把他的进度吃掉。
+
+        **状态要按当前进度算，不能按"有没有前置"算**（真踩过）：早先这里用
+        :func:`~platform_service.unlock.initial_state`（有前置就 ``locked``），于是重做一张 stage-02
+        的题时，尽管 stage-01 早就通过了，新实例还是变回"未解锁"——界面刷一下就显示未解锁，学员
+        点不动任何东西。所以改用 :func:`~platform_service.unlock.dag_state`：**前置全过 ⇒
+        ``available``**（重发的是"可以立刻开工"的那张卡），否则该锁还是锁着。
         """
         instance = self._must_get_instance(instance_id)
         ticket = self._tickets[instance.ticket_id]
@@ -332,7 +350,11 @@ class PlatformService:
             ticket_version=ticket.identity.ticket_version,
             test_version=ticket.grader.correctness.test_version,
             engine_version=self._engine_version,
-            state=initial_state(instance.ticket_id, self._prereq_graph),
+            state=dag_state(
+                instance.ticket_id,
+                self._prereq_graph,
+                self._passed_ticket_ids(instance.learner),
+            ),
         )
         if instance.workspace_path:
             # 学员自己登记的目录要**继承**：他的代码就在那儿，重做不该把他踢去一个空目录。
@@ -420,8 +442,9 @@ class PlatformService:
         """Park the live instance as ``stale`` and mint one anchoring new versions.
 
         Used when the ticket/test/engine version a PR was based on drifts (§9.2). The
-        fresh instance restarts at its DAG-derived initial state; the stale one is kept
-        for audit.
+        fresh instance restarts at its **DAG-derived state under the learner's current
+        progress** (a prerequisite already passed ⇒ ``available``, not ``locked``); the
+        stale one is kept for audit.
         """
         live = [
             inst
@@ -438,7 +461,7 @@ class PlatformService:
             ticket_version=ticket_version,
             test_version=test_version,
             engine_version=engine_version,
-            state=initial_state(ticket_id, self._prereq_graph),
+            state=dag_state(ticket_id, self._prereq_graph, self._passed_ticket_ids(learner)),
         )
         self._store.save_instance(old)
         self._store.save_instance(fresh)

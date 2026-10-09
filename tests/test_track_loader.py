@@ -374,7 +374,58 @@ def test_load_track_pushes_branches_then_grants_write(
     assert sorted(result.protected_branches) == ["dev", "main", "stage-01", "stage-01-sol"]
 
 
-def test_load_track_warns_about_a_loopback_gitea_url(tmp_path: Path) -> None:
+@respx.mock
+def test_protection_is_idempotent_and_never_fatal(tmp_path: Path) -> None:
+    """保护是**加固**：已存在要说得出（Gitea 1.22 回 403 "already exist"），失败也不能把栈拖下水。
+
+    `platform` 依赖 `track-loader` 成功退出。真踩过：第二次跑 loader 时 Gitea 对重复规则回 403，
+    我把它当致命错误，于是 loader exit 1 —— platform 压根没被创建，界面全挂。
+    """
+    from platform_api.track_loader import protect_branches
+
+    respx.post(f"{GITEA}/api/v1/repos/trackowner/track/branch_protections").mock(
+        return_value=httpx.Response(
+            403, json={"message": "Branch protection already exist"}
+        )
+    )
+    lines: list[str] = []
+
+    added = protect_branches(
+        GITEA,
+        "OWNER",
+        "trackowner",
+        "track",
+        content_branches=["main", "stage-01"],
+        allow_push="trackowner",
+        log=lines.append,
+    )
+
+    assert added == [], "已经保护过 ⇒ 什么都不算新加"
+    assert any("已就位" in line for line in lines)
+
+
+@respx.mock
+def test_protection_failure_is_a_warning_not_an_exception(tmp_path: Path) -> None:
+    """真失败（比如 Gitea 权限不足）也只告警：不能让整栈起不来。"""
+    from platform_api.track_loader import protect_branches
+
+    respx.post(f"{GITEA}/api/v1/repos/trackowner/track/branch_protections").mock(
+        return_value=httpx.Response(500, text="boom")
+    )
+    lines: list[str] = []
+
+    added = protect_branches(
+        GITEA,
+        "OWNER",
+        "trackowner",
+        "track",
+        content_branches=["main"],
+        allow_push="trackowner",
+        log=lines.append,
+    )
+
+    assert added == []
+    assert any(line.startswith("   !! ") for line in lines), "要有显眼的告警"
     """容器里的 127.0.0.1 是它自己：这个坑要在启动时喊，而不是等 provision 超时。"""
     config = _config(tmp_path, gitea_url="http://127.0.0.1:3000")
     lines: list[str] = []

@@ -49,7 +49,11 @@ def env(track_factory: Any, ticket_factory: Any, grading_report_factory: Any) ->
     store = InMemoryStore()
     service = PlatformService(store, track, tickets, engine_version="v0.1.0")
     return SimpleNamespace(
-        service=service, store=store, tickets=tickets, report=grading_report_factory
+        service=service,
+        store=store,
+        tickets=tickets,
+        track=track,
+        report=grading_report_factory,
     )
 
 
@@ -243,6 +247,71 @@ def test_reissue_stales_old_and_reanchors_new(env: Any) -> None:
     assert fresh.state is InstanceState.AVAILABLE  # root restarts available
     assert (fresh.ticket_version, fresh.test_version) == (2, 2)
     assert fresh.engine_version == "v0.2.0"
+
+
+def test_reissue_keeps_the_stage_available_when_prereqs_are_passed(env: Any) -> None:
+    """**重做已解锁阶段**：新实例必须是 ``available``，不能变回"未解锁"。
+
+    真踩过：stage-01 早就通过了，点「重做这一题」重发 stage-02 那张，界面刷一下就显示"未解锁"，
+    学员点不动任何东西。原因是重发时按"有没有前置"算状态（``initial_state``），而不是按"他已经过了
+    哪些前置"算（``dag_state``）。
+    """
+    env.service.enroll(_LEARNER)
+    # 先把 stage-00 打通，stage-01 才会解锁
+    first = _live(env.store, "db-stage-00")
+    env.service.start(first.id)
+    sub = _attempt(env, first.id, passed=True, recommendation=Recommendation.APPROVE)
+    assert env.service.decide(sub.id).verdict is Verdict.PASS
+    unlocked = _live(env.store, "db-stage-01")
+    assert unlocked.state is InstanceState.AVAILABLE
+
+    fresh = env.service.reissue(
+        _LEARNER,
+        "db-stage-01",
+        ticket_version=unlocked.ticket_version,
+        test_version=unlocked.test_version,
+        engine_version=unlocked.engine_version,
+    )
+
+    assert fresh.ticket_id == "db-stage-01"
+    assert fresh.state is InstanceState.AVAILABLE, "前置已通过 ⇒ 重发的那张应当可开始"
+    assert env.store.get_instance(unlocked.id).state is InstanceState.STALE
+
+
+def test_reissue_via_the_learner_api_is_available_too(env: Any) -> None:
+    """同一条路也走 ``reissue_current``（学员点按钮走的就是它）。"""
+    env.service.enroll(_LEARNER)
+    first = _live(env.store, "db-stage-00")
+    env.service.start(first.id)
+    sub = _attempt(
+        env, first.id, passed=True, recommendation=Recommendation.APPROVE
+    )
+    assert env.service.decide(sub.id).verdict is Verdict.PASS
+
+    fresh = env.service.reissue_current(_live(env.store, "db-stage-01").id)
+
+    assert fresh.state is InstanceState.AVAILABLE
+
+
+def test_re_enroll_after_passing_keeps_dependents_available(env: Any) -> None:
+    """重复报名时同样要看已有通过记录：否则看板上会多出一排点不动的卡。"""
+    env.service.enroll(_LEARNER)
+    first = _live(env.store, "db-stage-00")
+    env.service.start(first.id)
+    sub = _attempt(
+        env, first.id, passed=True, recommendation=Recommendation.APPROVE
+    )
+    assert env.service.decide(sub.id).verdict is Verdict.PASS
+
+    env.service.enroll(_LEARNER)  # 第二次报名
+
+    states = {
+        i.ticket_id: i.state
+        for i in env.store.list_instances(learner=_LEARNER, track=env.track.id)
+        if i.state is not InstanceState.STALE
+    }
+    assert states["db-stage-01"] is InstanceState.AVAILABLE
+    assert states["db-stage-02"] is InstanceState.LOCKED  # 前置还没过，照旧锁着
 
 
 def test_decide_requires_both_report_and_review(env: Any) -> None:
