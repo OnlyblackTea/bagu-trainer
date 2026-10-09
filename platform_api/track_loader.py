@@ -126,6 +126,8 @@ class LoadResult:
     token_path: Path | None = None
     token_reused: bool = False
     learner_has_write: bool = False
+    #: 这次**新加**的分支保护规则名（已经保护过的不重复列）。
+    protected_branches: list[str] = field(default_factory=list)
 
     def render(self) -> str:
         if self.learner_has_write:
@@ -319,6 +321,85 @@ def ensure_default_branch(
 # --- git ---------------------------------------------------------------------------
 
 
+def _post_protection(
+    gitea_url: str, token: str, owner: str, name: str, payload: dict[str, object]
+) -> bool:
+    """发一条保护规则；已存在（409/422）返回 ``False``，新建返回 ``True``。"""
+    with _client(gitea_url, token=token) as client:
+        response = client.post(f"/repos/{owner}/{name}/branch_protections", json=payload)
+    if response.status_code in (200, 201):
+        return True
+    if response.status_code in (409, 422):
+        return False  # 已经保护过了
+    raise LoadError(
+        f"给 {owner}/{name} 的 {payload.get('branch_name')} 加保护失败："
+        f"{response.status_code} {response.text[:200]}"
+    )
+
+
+def content_protection(branch: str, *, allow_push: str | None) -> dict[str, object]:
+    """内容分支的规则：只有 ``allow_push`` 能推、能 force（**loader 自己要 force**）。"""
+    return {
+        "branch_name": branch,
+        "enable_push": allow_push is not None,
+        "enable_push_whitelist": allow_push is not None,
+        "push_whitelist_usernames": [allow_push] if allow_push else [],
+        # loader 每次都按内容仓**强制**对齐这些分支（内容会被重写），所以 force 只开给他一个。
+        "enable_force_push": allow_push is not None,
+        "enable_force_push_whitelist": allow_push is not None,
+        "force_push_whitelist_usernames": [allow_push] if allow_push else [],
+    }
+
+
+def dev_protection() -> dict[str, object]:
+    """``dev`` 的规则：有写权限的人都能推，但**谁都不能 force**（重写 dev 的代价见 load_track）。"""
+    return {
+        "branch_name": "dev",
+        "enable_push": True,
+        "enable_push_whitelist": False,
+        "push_whitelist_usernames": [],
+        "enable_force_push": False,
+    }
+
+
+def protect_branches(
+    gitea_url: str,
+    token: str,
+    owner: str,
+    name: str,
+    *,
+    content_branches: list[str],
+    allow_push: str | None,
+    log=print,
+) -> list[str]:
+    """保护**内容分支**与学员那条 ``dev``，返回本次新加的规则名。
+
+    * 内容分支（``stage-*`` / ``main`` / ``solutions``）：只有 ``allow_push``（内容所有者）能推。
+      它们就是平台的**基线**：diff 的基准、判定面、"阶段分支 = 上一阶段 + 本阶段测试"全靠它们。
+      学员（有写权限）一旦推上去，平台就会拿他刚写的东西当"内容作者的版本"——真踩过：一次提交被
+      推到了 ``stage-02`` 分支上，基线当场变成他自己的代码。
+    * ``dev``：**允许推但禁止 force**。重写 ``dev`` 的代价是双份的——平台那份 checkout 与它分叉
+      （对账只能如实说"不无损"，不会替你 merge），而学员上一关已经交过卷的提交就从分支上消失了
+      （也真踩过，只能靠留档和 fork 里那份捞回来）。
+    """
+    added: list[str] = []
+    for branch in content_branches:
+        if _post_protection(
+            gitea_url, token, owner, name, content_protection(branch, allow_push=allow_push)
+        ):
+            added.append(branch)
+    if _post_protection(gitea_url, token, owner, name, dev_protection()):
+        added.append("dev")
+    if added:
+        log(
+            f"   新加保护：{', '.join(added)}"
+            f"（内容分支只允许 {allow_push} 推；dev 允许推、禁止 force）"
+        )
+    else:
+        log("   分支保护已就位（内容分支只允许所有者推；dev 允许推、禁止 force）")
+    return added
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -505,6 +586,24 @@ def load_track(config: LoaderConfig, *, log=print) -> LoadResult:
         log(f"   {config.learner} 已加为 {config.upstream} 的协作者（可 push dev）")
     else:
         log("   BAGU_LEARNER_WRITE=0：没给他写权限（他得另想办法 push）")
+
+    log("== 保护内容分支（学员只能推 dev）==")
+    # 学员对内容仓有写权限（他要把 dev 推上来），而 `stage-*` / `main` / `solutions` 是**内容作者的
+    # 版本**——平台的基线、判定面、diff 基准全部以它们为准。学员一旦推上去（手滑的
+    # `git push origin --all` 就够），基线的语义当场就变了：平台会拿他刚写的东西当"内容作者的版本"，
+    # diff 变空、判定面对不上。真踩过：学员把一次提交推到了 stage-02 分支上。
+    # 所以：**内容分支只允许内容所有者推**；`dev` 允许推但**不允许 force**（重写 dev 会让平台的
+    # checkout 与它分叉，且学员自己上一关的提交就从分支上消失了——也真踩过）。
+    protected = protect_branches(
+        config.gitea_url,
+        owner_token,
+        config.upstream_owner,
+        config.upstream_name,
+        content_branches=branches,
+        allow_push=config.upstream_owner,
+        log=log,
+    )
+    result.protected_branches = protected
     result.token_path = config.token_path
     result.token_reused = learner_reused
     log(f"== 后端令牌：{result.token_path}（{'复用已有' if learner_reused else '本次新造'}）")

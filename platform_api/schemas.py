@@ -107,6 +107,9 @@ def sync_out(sync: WorkspaceSync | None) -> dict[str, Any] | None:
         "revision": sync.revision,
         "remote_branch": sync.remote_branch,
         "remote_only_changes": sync.remote_only_changes,
+        # 分叉：两边都有对方没有的提交。界面据此换成"合好再 push / 重做这一题"的指引，
+        # 而不是劝人点「从远端同步」（分叉时那条路按不动）。
+        "diverged": sync.diverged,
         "note": sync.note,
     }
 

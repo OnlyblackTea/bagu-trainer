@@ -164,11 +164,22 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
             <strong>与远端对账：</strong>
             {sync.note}
           </div>
-          {sync.remote_only_changes && (
-            <div className="muted">
-              所以这次预览/阅卷看到的还是<strong>旧</strong>代码——点「从远端同步」，或直接提交
-              （提交前平台会在无损时自动快进）。
+          {/*
+            两条话术分开：**分叉**时「从远端同步」这个按钮按不动（不是无损，平台不会替你 merge），
+            劝人点它等于把人指进死胡同——真发生过（他点了、提交了，阅的却是本地这份旧代码）。
+          */}
+          {sync.diverged ? (
+            <div className="muted" data-testid="sync-diverged">
+              分叉状态下这份 checkout 会一直当"本地那份"用：要么在你写代码那台机器上合好再 push，
+              要么用右栏「重做这一题」——平台会给新实例<strong>重新 clone</strong> 一份远端 dev。
             </div>
+          ) : (
+            sync.remote_only_changes && (
+              <div className="muted">
+                所以这次预览/阅卷看到的还是<strong>旧</strong>代码——点「从远端同步」，或直接提交
+                （提交前平台会在无损时自动快进）。
+              </div>
+            )
           )}
           {sync.revision && (
             <div className="muted">
@@ -325,7 +336,14 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
             {diff.truncated_files.length > 0 && ` · 被截断：${diff.truncated_files.join('、')}`}
           </p>
           {diff.diff.trim() === '' ? (
-            diff.sync?.remote_only_changes ? (
+            diff.sync?.diverged ? (
+              <div className="alert alert--error" data-testid="diff-diverged">
+                这份工作区与远端 {diff.head_ref} <strong>分叉</strong>了：本地领先{' '}
+                {diff.sync.local_ahead}、远端领先 {diff.sync.remote_ahead}，平台不替你 merge。
+                所以 diff 是空的（两边相减的结果都落在对方那边）。先把两边合好，或用「重做这一题」
+                让平台重新 clone 一份远端 dev。
+              </div>
+            ) : diff.sync?.remote_only_changes ? (
               <div className="alert alert--error" data-testid="diff-behind">
                 远端 {diff.head_ref} 有 {diff.sync.remote_ahead} 个提交不在这份工作区里：你多半是在
                 <strong>另一台机器</strong>上写的（那边 push 了，后端这份 checkout 还是旧的）。

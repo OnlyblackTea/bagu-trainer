@@ -168,6 +168,48 @@ export default function App() {
     setDecision(null)
   }
 
+  /**
+   * **从服务端把这条链恢复出来**（"刷新页面"不能把人卡死）。
+   *
+   * 为什么必须有：`submission/report/review/decision` 原本只活在内存里，而界面上每一步的可用性
+   * 都挂在它们身上——刷新（或换阶段再回来）之后它们是 `null`，于是「发起 AI 评审」按不动
+   * （`canReview` 要 submission）、「取确定性结论」也按不动（要 review），而提交按钮又要求
+   * `in_progress`……**整个界面就没有一个能按的按钮**。真发生过：学员交卷拿到红报告，刷新之后
+   * 卡在那一屏，什么也做不了。
+   *
+   * 数据本来就有：`GET /instances/{id}/history` 的每一条 attempt 都带提交、运行、报告、评审、
+   * 判定（`HistoryView` 一直在用它）。这里取**最新一条**塞回链上。顺带把"还在跑"的那次阅卷重新
+   * 挂上轮询——否则刷新之后进度条永远停在原地。
+   */
+  async function rehydrateFlow(instanceId: string) {
+    const history = await api.history(instanceId)
+    const latest = history.attempts[history.attempts.length - 1]
+    if (!latest) return
+    setSubmission(latest.submission)
+    setReport(latest.report ?? null)
+    setReview(latest.review ?? null)
+    // 历史里给的是**判定本身**，而决策动作的返回值是 `{decision, instances}`（那份 instances 是
+    // 决策时顺手刷新看板用的）。这里补一个空的 instances：看板由 refreshInstances 负责。
+    setDecision(latest.decision ? { decision: latest.decision, instances: [] } : null)
+    setProgress(latest.grading ?? null)
+    const grading = latest.grading
+    if (latest.submission && !latest.report && grading && grading.status !== 'failed') {
+      // 还在跑（或被打断）：重新挂上轮询，让进度条继续走。
+      const generation = ++pollGeneration.current
+      void pollGrading(latest.submission.id, generation).catch(() => {})
+    }
+  }
+
+  // 选中阶段（或它换了个实例）就把链恢复出来。用 id 做依赖：换实例必须重新取一次。
+  const currentId = selected ? instanceOf(selected)?.id : null
+  useEffect(() => {
+    if (!currentId) return
+    void rehydrateFlow(currentId).catch(() => {
+      // 恢复失败不该打断使用者：下面那些按钮本来就是"可选动作"，不是数据来源。
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId])
+
   function selectStage(stage: StageEntry | null) {
     clearChain()
     setSelected(stage)

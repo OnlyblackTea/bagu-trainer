@@ -147,6 +147,13 @@ export interface WorkspaceSyncOut {
   remote_branch: boolean
   /** 远端有新东西而这次没同步 ⇒ 即将被预览/阅卷的是**旧**代码。 */
   remote_only_changes: boolean
+  /**
+   * **分叉**：本地领先 `local_ahead`、远端领先 `remote_ahead`，两边都有对方没有的提交。
+   *
+   * 这种状态快进不了——界面**不许**再劝人点「从远端同步」（按不动）。真出路只有两条：在写代码
+   * 那台机器上合好再 push，或「重做这一题」让平台重新 clone 一份远端 dev。
+   */
+  diverged: boolean
   /** 后端给学员的一句话说明（同步做了什么 / 为什么没做）。 */
   note: string
 }

@@ -193,15 +193,18 @@ function fakeBackend() {
       })
     }
 
-    if (url.match(/^\/instances\/([^/]+)\/history$/)) {
-      // 历史与进度是**同一份落库数据**，所以这个假后端也从同一份状态里出。
-      const attempts = submission
+    const historyCall = url.match(/^\/instances\/([^/]+)\/history$/)
+    if (historyCall) {
+      // 历史与进度是**同一份落库数据**，所以这个假后端也从同一份状态里出。**按实例过滤**：
+      // 真后端只给这个实例的尝试，重做之后新实例的历史是空的（界面据此清空那条链）。
+      const forThisInstance = submission?.instance_id === historyCall[1] ? submission : null
+      const attempts = forThisInstance
         ? [
             {
-              submission,
+              submission: forThisInstance,
               grading: {
-                submission_id: submission.id,
-                instance_id: submission.instance_id,
+                submission_id: forThisInstance.id,
+                instance_id: forThisInstance.instance_id,
                 track: track.id,
                 owner: 'default',
                 status: reportReady ? 'done' : 'running',
@@ -228,7 +231,7 @@ function fakeBackend() {
           ]
         : []
       return json({
-        instance_id: 'ti-0',
+        instance_id: historyCall[1],
         ticket_id: 'db-stage-00',
         track: track.id,
         learner: 'deployer',
@@ -395,6 +398,41 @@ describe('App 装配：跑通整条自习闭环', () => {
     expect(status).not.toHaveTextContent('ti-0') // 不是被作废的那个
     // 旧结论（提交/报告/判定）不再挂在当前实例上
     expect(screen.queryByTestId('submission-info')).not.toBeInTheDocument()
+  })
+
+  it('刷新页面之后还能接着走：从服务端把提交/报告/评审/结论恢复出来', async () => {
+    // 用户的真实处境（真发生过）：交卷拿到红报告之后刷新了一次页面，于是内存里那份
+    // submission/report 没了——「发起 AI 评审」要 submission、「取确定性结论」要 review、
+    // 而「提交答案」又要求 in_progress，**整屏没有一个能按的按钮**，人卡死在那里。
+    // 数据其实一直在服务端（/instances/{id}/history 里每条 attempt 都带全套），所以选中阶段时
+    // 必须把它取回来。
+    vi.stubGlobal('fetch', vi.fn(fakeBackend()))
+    const user = userEvent.setup()
+    const first = render(<App />)
+
+    await user.click(await screen.findByTestId('enroll'))
+    await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
+    await user.click(screen.getByRole('button', { name: '开始本阶段' }))
+    await user.selectOptions(screen.getByTestId('grading-scenario'), 'fail')
+    await user.click(screen.getByRole('button', { name: /提交答案/ }))
+    await waitFor(() => expect(within(board()).getByText('已提交')).toBeInTheDocument())
+
+    // **卸载重挂 = 刷新页面**：内存里那条链全没了，只剩服务端的落库数据。
+    first.unmount()
+    render(<App />)
+    await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
+
+    // 提交（哪一次、第几回）已经被恢复
+    expect(await screen.findByTestId('submission-info')).toHaveTextContent('sub-1')
+    // 评审按钮因此可点——这一条就是"卡死"的反面
+    const reviewBtn = screen.getByRole('button', { name: /发起 AI 评审/ })
+    expect(reviewBtn).toBeEnabled()
+
+    // 继续走完：评审 → 决策 → 红 → 返回工作区（retry 也可点）
+    await user.click(reviewBtn)
+    await user.click(await screen.findByRole('button', { name: /取确定性结论/ }))
+    expect(await screen.findByTestId('verdict')).toHaveTextContent('未通过')
+    expect(screen.getByTestId('retry')).toBeEnabled()
   })
 
   it('board-only 阶段不提供取卷（点了也不进发卷，且不取工单）', async () => {

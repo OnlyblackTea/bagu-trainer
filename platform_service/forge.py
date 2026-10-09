@@ -411,8 +411,11 @@ class WorkspaceSync:
     revision: str | None
     #: 远端起有没有 ``branch``。没有 ⇒ 学员还没 push 过，PR 也开不了。
     remote_branch: bool
+    #: **两边都有对方没有的提交**（``local_ahead > 0 且 remote_ahead > 0``）。这种状态快进不了，
+    #: 界面**不许**再劝人点「从远端同步」——那条路按不动（真踩过）。
+    diverged: bool = False
     #: 一句话交代这次做了什么（面向学员，不是日志）。
-    note: str
+    note: str = ""
 
     @property
     def remote_only_changes(self) -> bool:
@@ -464,6 +467,8 @@ def sync_workspace(
 
     fast_forwarded = False
     note = ""
+    revision = git(repo, "rev-parse", "HEAD", check=False).stdout.strip() or None
+    revision_short = (revision or "")[:12] or "?"
     if remote_ahead and apply and not dirty and local_ahead == 0 and current == branch:
         proc = git(repo, "merge", "--ff-only", "-q", remote_ref, check=False)
         fast_forwarded = proc.returncode == 0
@@ -485,12 +490,23 @@ def sync_workspace(
             "所以没有动你的分支：这次按工作区内容走。"
         )
     elif remote_ahead and local_ahead:
+        # **分叉**：两边都有对方没有的提交。这是"无损"的反面，平台一个字都不动（不 merge、不
+        # reset），但**绝不能说"点『从远端同步』就行"**——分叉时同步什么也做不了（真踩过：界面让人
+        # 去点一个按不动的按钮，然后他提交，阅的却是本地这份旧代码）。
+        # 这里要把三件事说清：现在按哪份走、为什么、以及两条真能走通的路。
         note = (
-            f"你本地和远端都有对方没有的提交（本地领先 {local_ahead}、远端领先 {remote_ahead}）："
-            "没有替你合并，这次按本地内容走。"
+            f"**分叉了**：本地领先 {local_ahead} 个、远端 {branch} 领先 {remote_ahead} 个"
+            "——两边都有对方没有的提交。平台不替你 merge、也不 reset，所以按**本地这份**"
+            f"（{revision_short}）走，两条出路选一条："
+            "① 在**你写代码那台机器**上把两边合好再 push（推荐，历史留得住）；"
+            "② 想直接以远端那份为准，用「重做这一题」——平台会给新实例**重新 clone** 一份远端 dev"
+            "（旧实例与其提交都留档）。"
         )
     elif remote_ahead and apply:
-        note = f"远端 {branch} 领先 {remote_ahead} 个提交，这次没有同步（当前分支不是 {branch}）。"
+        note = (
+            f"远端 {branch} 领先 {remote_ahead} 个提交，这次没有同步"
+            f"（当前分支不是 {branch}，平台不动你的分支）：按本地这份走。"
+        )
     elif remote_ahead:
         # 只读探针（GET diff）走到这里：学员在**另一台机器**上写完 push 了，后端这份 checkout 还旧。
         # 这一步不能只说"远端有新东西"，得说清"你该做什么、平台会做什么"。
@@ -499,7 +515,10 @@ def sync_workspace(
             "提交时会自动同步（工作树干净时无损快进）；想现在就同步，用「从远端同步」。"
         )
     elif local_ahead:
-        note = f"本地领先远端 {local_ahead} 个提交（还没 push）：按本地内容走，开 PR 前要 push。"
+        note = (
+            f"本地领先远端 {local_ahead} 个提交（还没 push）：按本地内容走。"
+            "代码写在这台机器上就 push 一下，别处也好接着改。"
+        )
     else:
         note = f"工作区与远端 {branch} 一致。"
 
@@ -512,5 +531,7 @@ def sync_workspace(
         fast_forwarded=fast_forwarded,
         revision=revision,
         remote_branch=has_remote,
+        # 分叉 = 两边都有对方没有的提交。界面据此**不要**再劝人点「从远端同步」——那按不动。
+        diverged=bool(remote_ahead and local_ahead),
         note=note,
     )

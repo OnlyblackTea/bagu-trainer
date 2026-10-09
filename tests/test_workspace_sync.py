@@ -158,7 +158,7 @@ def test_local_commits_not_yet_pushed_are_reported(tmp_path: Path) -> None:
 
 
 def test_diverged_branches_are_left_for_the_learner(tmp_path: Path) -> None:
-    """两边分叉：平台**不替学员合并**（那会把他的历史改成平台想要的样子）。"""
+    """两边分叉：平台**不替学员合并**（那会把他的历史改成平台想要的样子），并给出两条真出路。"""
     _remote_path, backend, laptop = _backend_and_laptop(tmp_path)
     # 笔记本先 push，后端在本地另起一条——两边各有对方没有的提交。
     _commit_and_push(laptop, "laptop line\n", "laptop work")
@@ -168,7 +168,21 @@ def test_diverged_branches_are_left_for_the_learner(tmp_path: Path) -> None:
 
     assert (sync.local_ahead, sync.remote_ahead) == (1, 1)
     assert sync.fast_forwarded is False
-    assert "没有替你合并" in sync.note
+    # 机器可读的标志：界面据此**不再**劝人点「从远端同步」（分叉时那条路按不动）。
+    assert sync.diverged is True
+    assert "没有替你合并" in sync.note or "分叉" in sync.note
+    # 必须给出两条真能走通的路，而不是"点同步就行"。
+    assert "合好再 push" in sync.note
+    assert "重做这一题" in sync.note
+
+
+def test_sync_flag_is_not_set_when_only_one_side_is_ahead(tmp_path: Path) -> None:
+    """只有一边领先时**不是**分叉：那种情况快进/提示同步都是对的，别把话术串了。"""
+    _remote_path, backend, _laptop = _backend_and_laptop(tmp_path)
+    _commit(backend, "local only\n", "local work")
+
+    assert sync_workspace(backend).diverged is False
+    assert sync_workspace(backend, apply=False).diverged is False
 
 
 def test_no_remote_branch_means_the_learner_has_not_pushed(tmp_path: Path) -> None:

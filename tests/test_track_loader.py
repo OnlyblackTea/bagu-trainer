@@ -297,11 +297,15 @@ def test_learner_write_can_be_turned_off(tmp_path: Path) -> None:
 def test_load_track_pushes_branches_then_grants_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """编排：建仓 → **推全部分支** → 给学员写权限 → 落令牌；顺序与"学员能 push"这件事都钉住。
+    """编排：建仓 → **推全部分支** → 给学员写权限 → **保护内容分支** → 落令牌。
 
     没有 fork 之后，"学员能 push 到内容仓"是整条路的命脉（后端也从这个仓 clone）。漏了授权，
     学员第一次 push 就被拒，而平台侧一切正常——所以这里既验授权被调用，也验它**在推完分支之后**
     （仓刚建出来时授权没有意义）。
+
+    保护同样必须钉住：授权之后学员对**所有**分支都有写权限，而 ``stage-*`` 是平台的基线——
+    他推上去一次（手滑的 `git push origin --all` 就够），平台就会拿他刚写的东西当"内容作者的
+    版本"，diff 与判定面当场失真。真踩过。
     """
     config = _config(tmp_path)
     bare = tmp_path / "remote.git"
@@ -325,6 +329,9 @@ def test_load_track_pushes_branches_then_grants_write(
     grant = respx.put(
         f"{GITEA}/api/v1/repos/trackowner/seckill-lab/collaborators/deployer"
     ).mock(return_value=httpx.Response(204))
+    protection = respx.post(
+        f"{GITEA}/api/v1/repos/trackowner/seckill-lab/branch_protections"
+    ).mock(return_value=httpx.Response(201, json={}))
 
     # 把 push 目标换成本地裸仓：真 git push，不需要网络
     def fake_push(content_dir: Path, push_url: str, *, force: bool = True) -> list[str]:
@@ -350,6 +357,21 @@ def test_load_track_pushes_branches_then_grants_write(
     assert remote_branches(str(bare)) == ["main", "stage-01", "stage-01-sol"]
     assert result.token_path is not None
     assert result.token_path.read_text(encoding="utf-8").strip() == "LEARNER"
+
+    # 保护：每条内容分支各一条规则 + `dev` 一条（共 3 内容分支 + 1）
+    bodies = [json.loads(call.request.content) for call in protection.calls]
+    by_branch = {b["branch_name"]: b for b in bodies}
+    assert set(by_branch) == {"main", "stage-01", "stage-01-sol", "dev"}
+    for name in ("main", "stage-01", "stage-01-sol"):
+        rule = by_branch[name]
+        assert rule["enable_push"] is True
+        assert rule["push_whitelist_usernames"] == ["trackowner"], "内容分支只有内容所有者能推"
+        assert rule["enable_force_push"] is True, "loader 自己每次都要强制对齐内容仓"
+        assert rule["force_push_whitelist_usernames"] == ["trackowner"]
+    dev = by_branch["dev"]
+    assert dev["enable_push"] is True and dev["enable_push_whitelist"] is False, "dev 谁都能推"
+    assert dev["enable_force_push"] is False, "但谁都不能 force——重写 dev 的代价见 load_track"
+    assert sorted(result.protected_branches) == ["dev", "main", "stage-01", "stage-01-sol"]
 
 
 def test_load_track_warns_about_a_loopback_gitea_url(tmp_path: Path) -> None:

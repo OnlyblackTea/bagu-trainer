@@ -26,7 +26,7 @@ gitea(healthy) ─────────────────────�
 |---|---|---|
 | `gitea` | 官方镜像 + sqlite + `INSTALL_LOCK` | —— |
 | `gitea-admin` | `gitea admin user create`（一次性，与 gitea 共用数据卷） | 官方镜像**不认** `GITEA_ADMIN_*`：实测 1.22 带着那些变量启动后容器健康，但 `GET /api/v1/user` 回 401 `user does not exist` |
-| `track-loader` | 建用户/仓 → **推全**内容仓的分支 → `git ls-remote` 核对 → 给学员开写权限 → 把令牌写进共享卷 | 顺序错了，`platform` 会在"阶段分支还不存在"时开始接客，`provision` 直接报 `workspace_ref_missing` |
+| `track-loader` | 建用户/仓 → **推全**内容仓的分支 → `git ls-remote` 核对 → 给学员开写权限 → **保护内容分支**（只允许内容所有者推；`dev` 允许推、禁止 force）→ 把令牌写进共享卷 | 顺序错了，`platform` 会在"阶段分支还不存在"时开始接客，`provision` 直接报 `workspace_ref_missing`。保护必须加：学员有写权限，而 `stage-*` 是**基线**——他推上去一次，平台就会拿他刚写的东西当"内容作者的版本"（真踩过） |
 | `platform` | 后端（`depends_on: track-loader: service_completed_successfully`） | 保证"Gitea 里已经有它要 clone 的阶段分支"再开始接客 |
 | `web` | nginx：SPA + REST 反代 | 后端是**纯 REST**，不托管前端；少了它 `up` 完没有浏览器入口 |
 
@@ -44,6 +44,10 @@ gitea(healthy) ─────────────────────�
 4. **学员的写权限由 loader 给**（`BAGU_LEARNER_WRITE=1`，默认开）：没有 fork 之后，学员唯一的交卷
    路径就是直接 push `dev` 到这个内容仓（设计 §C.5）。设 0 的话他 push 会 403——只有当你打算
    手工管权限、或者只从后端登记的路径做题时才有意义。
+   > loader 同时给**内容分支**（`stage-*` / `main` / `solutions`）加保护：只有内容所有者能推。
+   > 它们是平台的基线，学员推上去会让 diff 与判定面失真。`dev` 则允许推、**禁止 force**——
+   > 重写 `dev` 会让平台那份 checkout 分叉，还会把他上一关的提交从分支上抹掉。
+   > 保护是按名字生效的，所以 `dev` 还不存在时也能先立规矩。
    > 内容被重写过、`dev` 上躺着不该有的代码时，**没有**"重建 fork"这种一键重置了：直接在 Gitea 上
    > 删掉/重置那条 `dev` 分支即可（平台不会碰它）。
 

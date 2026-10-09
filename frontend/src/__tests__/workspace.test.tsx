@@ -64,6 +64,7 @@ function syncOut(over: Partial<WorkspaceSyncOut> = {}): WorkspaceSyncOut {
     revision: 'abcdef0123456789',
     remote_branch: true,
     remote_only_changes: false,
+    diverged: false,
     note: '工作区与远端 dev 一致。',
     ...over,
   }
@@ -287,6 +288,35 @@ describe('代码写在**另一台机器**上（与远端对账）', () => {
     expect(behind).toHaveTextContent('另一台机器')
     expect(behind).toHaveTextContent('从远端同步')
     expect(screen.queryByTestId('diff-empty')).not.toBeInTheDocument()
+  })
+
+  it('**分叉**时不许再劝人点「从远端同步」——那条路按不动，要给真能走通的两条', async () => {
+    // 真发生过：学员把 dev 重写了（force push 到别的 lineage），平台这份 checkout 与它分叉。
+    // 旧文案却说"点「从远端同步」，或直接提交"——前者按不动（分叉不是无损，平台不会替他 merge），
+    // 后者会把这份**旧**代码拿去阅卷。他照着做，然后卡在那一屏。
+    await openFlow({
+      '/instances/ti-1/provision': REAL_WS,
+      '/instances/ti-1/diff': diffOut({
+        diff: '',
+        total_chars: 0,
+        sync: syncOut({
+          local_ahead: 2,
+          remote_ahead: 2,
+          remote_only_changes: true,
+          diverged: true,
+          note: '**分叉了**：本地领先 2 个提交、远端 dev 领先 2 个——两边都有对方没有的东西。',
+        }),
+      }),
+    })
+
+    const info = screen.getByTestId('sync-info')
+    expect(info).toHaveTextContent('分叉')
+    // 分叉话术里必须出现两条真出路（合好再 push / 重做这一题重新 clone）
+    expect(screen.getByTestId('sync-diverged')).toHaveTextContent('重做这一题')
+    expect(screen.getByTestId('sync-diverged')).toHaveTextContent('合好再 push')
+    // diff 面板也不许给"点同步就好"的假指引
+    expect(screen.getByTestId('diff-diverged')).toHaveTextContent('分叉')
+    expect(screen.queryByTestId('diff-behind')).not.toBeInTheDocument()
   })
 
   it('「从远端同步」把快进结果说出来（对着哪一版也算清）', async () => {
