@@ -220,6 +220,33 @@ def test_provision_against_a_local_path_needs_no_credentials(tmp_path: Path) -> 
     assert "[credential]" not in (ws.path / ".git" / "config").read_text(encoding="utf-8")
 
 
+@respx.mock
+def test_workspace_disables_the_hosts_commit_signing(tmp_path: Path) -> None:
+    """宿主开着提交签名时，平台这份 checkout 必须自己关掉它。
+
+    真踩过（就在这台机器上）：全局 ``commit.gpgsign=true`` + 无头环境 ⇒ 学员按 ``merge_hint``
+    造的那个**合并提交**死在 pinentry 超时上：
+
+        error: gpg failed to sign the data: … gpg: signing failed: Timeout
+        fatal: failed to write commit object        （退出码 128）
+
+    红在一个跟题目毫无关系的地方。平台写的是**仓库本地**配置，学员自己的全局设置不受影响。
+    """
+    fork_repo = _local_repo(tmp_path)
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
+        return_value=httpx.Response(200, json={"clone_url": str(fork_repo)})
+    )
+
+    ws = _client(tmp_path).provision(_instance())
+
+    assert git(ws.path, "config", "commit.gpgsign", check=False).stdout.strip() == "false"
+    assert git(ws.path, "config", "tag.gpgsign", check=False).stdout.strip() == "false"
+    # 而且**真的能造出提交**（这条才是重点：配置项对了不等于 merge 不炸）
+    git(ws.path, "fetch", "-q", "origin")
+    git(ws.path, "merge", "-q", "--no-edit", "origin/main")
+    assert git(ws.path, "log", "--oneline", "-1").stdout.strip()
+
+
 def test_push_credentials_are_written_outside_the_repo(tmp_path: Path) -> None:
     """要能 ``git push`` 才谈得上真 PR——而 push 凭据不能落在仓库里。
 

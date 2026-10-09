@@ -106,6 +106,7 @@ class GiteaForgeClient:
         git(dest, "remote", "set-url", "origin", clone_url)
         self.install_push_credentials(dest, clone_url)
         self.ensure_git_identity(dest, instance.learner)
+        self.disable_commit_signing(dest)
         return Workspace(
             path=dest,
             branch=DEV_BRANCH,
@@ -162,6 +163,22 @@ class GiteaForgeClient:
         git(dest, "config", "user.email", f"{learner}@localhost")
         git(dest, "config", "user.name", learner)
         return True
+
+    def disable_commit_signing(self, dest: Path) -> None:
+        """在平台这份工作区里关掉提交签名——宿主的签名偏好不该渗进阅卷工作区。
+
+        为什么必须做：宿主（或学员）全局开着 ``commit.gpgsign`` 时，平台这份 checkout 会**继承**它，
+        于是任何"要造提交"的动作都会去弹 pinentry。无头环境里那等于必然失败：
+
+            error: gpg failed to sign the data: … gpg: signing failed: Timeout
+            fatal: failed to write commit object        （退出码 128）
+
+        而 `merge_hint` 让学员做的事正好是造一个**合并提交**（`git merge origin/stage-0N`）——
+        真踩过：本机全局开着签名，同一台机器上跑测试时那条 merge 就死在 pinentry 超时上，红在一个
+        跟代码毫无关系的地方。写的是**仓库本地**配置，不碰学员的全局设置。
+        """
+        git(dest, "config", "commit.gpgsign", "false", check=False)
+        git(dest, "config", "tag.gpgsign", "false", check=False)
 
     def push_hint(self) -> str:
         """学员推代码要跑的命令。**不含凭据**——凭据由 credential.helper 提供。"""

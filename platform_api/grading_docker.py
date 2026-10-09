@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
@@ -71,13 +72,59 @@ class GradingUnavailableError(RuntimeError):
     """
 
 
+#: maven 输出里"像是解释"的那些行都会带 `[ERROR]`，但**头几行是噪音**：
+#: `COMPILATION ERROR :`、`Failed to execute goal …`、`-> [Help 1]`…… 学员从这些行里
+#: 一个字都读不出来（真踩过：报告里只写着 `[ERROR] COMPILATION ERROR :`，而真正的原因
+#: ——`SeckillService.java:[52,6] cannot find symbol / symbol: class Transactional`——就在下一行）。
+_ERROR_NOISE = (
+    "compilation error",            # javac 的标题行，不含信息
+    "failed to execute goal",       # "哪个插件失败了"，与学员的代码无关
+    "-> [help",                     # maven 的求助提示
+    "to see the full stack trace",
+    "re-run maven",
+    "for more information about the errors",
+    "help 1] http",
+    "build failure",
+)
+
+
+def _looks_like_location(line: str) -> bool:
+    """`Foo.java:[52,6]` 这种"文件:行,列"——编译器/测试框架真正指位置的那一行。"""
+    return bool(re.search(r"\.java:\[\d+", line))
+
+
 def _first_error_line(text: str) -> str:
-    """从 maven 输出里挑一行能解释失败原因的话（编译错误最常见，而它不出现在 surefire 报告里）。"""
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("[ERROR]") and len(stripped) > len("[ERROR]"):
-            return stripped[: _MAX_DETAIL]
-    tail = [line.strip() for line in text.splitlines() if line.strip()]
+    """从 maven 输出里挑**能解释失败原因**的那几行（编译错误最常见，而它不进 surefire 报告）。
+
+    挑法：先找带位置的行（`.java:[行,列]`），把它和紧跟的 `symbol:` / `location:` 一起给出——
+    那才是学员需要的信息（"哪个文件哪一行、缺什么"）；没有位置行时，退回头一个**不是噪音**的
+    `[ERROR]` 行，再不行给输出的最后一行。**绝不只回一个 `COMPILATION ERROR :`**。
+    """
+    lines = [line.strip() for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        if line.startswith("[ERROR]") and _looks_like_location(line):
+            # 跟上最多两行"缺什么"的解释（javac 的 symbol/location/required/found），
+            # 撞上噪音行（`Failed to execute goal …`）就停——报告里只留能读懂的那几行。
+            following: list[str] = []
+            for candidate in lines[index + 1 : index + 5]:
+                if not candidate:
+                    continue
+                if any(noise in candidate.lower() for noise in _ERROR_NOISE):
+                    break
+                if candidate.startswith(
+                    ("[ERROR]", "symbol:", "location:", "required:", "found:")
+                ):
+                    following.append(candidate)
+                if len(following) >= 2:
+                    break
+            return " | ".join([line, *following])[: _MAX_DETAIL]
+    for line in lines:
+        lowered = line.lower()
+        if line.startswith("[ERROR]") and len(line) > len("[ERROR]"):
+            if any(noise in lowered for noise in _ERROR_NOISE):
+                continue
+            return line[: _MAX_DETAIL]
+    tail = [line for line in lines if line]
     return tail[-1][:_MAX_DETAIL] if tail else "no output"
 
 

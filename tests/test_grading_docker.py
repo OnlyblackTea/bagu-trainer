@@ -269,8 +269,53 @@ def test_compile_failure_without_reports_records_the_error_line(
     assert len(report.correctness.tests) == 1
     entry = report.correctness.tests[0]
     assert entry["status"] == "error"
-    assert "COMPILATION ERROR" in entry["detail"]
+    # 给的是**带位置的那一行**，不是 "COMPILATION ERROR :" 这种标题（见下一条的由来）
+    assert "/x/Foo.java:[3,1]" in entry["detail"]
     assert report.provenance.host_env["exit_code"] == 1
+
+
+def test_compile_error_detail_points_at_the_file_and_the_missing_symbol(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """真踩过：报告里只写 `[ERROR] COMPILATION ERROR :`——学员从这行里一个字都读不出来。
+
+    真正的原因在下一行（`SeckillService.java:[52,6] cannot find symbol / symbol: class
+    Transactional`）。所以挑行逻辑必须先找**带位置**的行，并把它后面解释"缺什么"的
+    `symbol:` / `location:` 一起带上。
+    """
+    ticket = _ticket(ticket_factory)
+    out = (
+        "[INFO] --- compiler:3.11.0:compile (default-compile) @ seckill-lab ---\n"
+        "[INFO] BUILD FAILURE\n"
+        "[ERROR] COMPILATION ERROR : \n"
+        "[ERROR] /p/src/main/java/com/devteam/seckill/service/SeckillService.java:[52,6]"
+        " cannot find symbol\n"
+        "  symbol:   class Transactional\n"
+        "  location: class com.devteam.seckill.service.SeckillService\n"
+        "[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin"
+        ":3.11.0:compile (default-compile) on project seckill-lab: Compilation failure\n"
+        "[ERROR] -> [Help 1]\n"
+    )
+    report = _ScriptedRunner(proc=_proc(returncode=1, stdout=out)).grade(
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
+    )
+
+    detail = report.correctness.tests[0]["detail"]
+    assert "SeckillService.java:[52,6]" in detail
+    assert "cannot find symbol" in detail
+    assert "class Transactional" in detail
+    # 也不能把噪音当结论端出去
+    assert not detail.startswith("[ERROR] COMPILATION ERROR")
+
+
+def test_unparsable_failure_still_reports_something(tmp_path: Path, ticket_factory: Any) -> None:
+    """输出里没有任何 `[ERROR]` 行时，至少给出最后一行，不能返回空串。"""
+    ticket = _ticket(ticket_factory)
+    report = _ScriptedRunner(proc=_proc(returncode=1, stdout="boom: everything broke\n")).grade(
+        instance=_instance(ticket), ticket=ticket, track=_track(), workspace=tmp_path
+    )
+
+    assert "boom" in report.correctness.tests[0]["detail"]
 
 
 def test_timeout_is_reported_not_raised(tmp_path: Path, ticket_factory: Any) -> None:
