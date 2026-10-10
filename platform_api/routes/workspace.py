@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from platform_service.forge import diff_base, learner_diff, stage_start
+from platform_service.forge import diff_base_with_kind, learner_diff
 from platform_service.review_diff import preflight_diff_volume
 
 from ..deps import host_visible_path
@@ -108,15 +108,16 @@ def diff(instance_id: str, request: Request) -> dict[str, Any]:
     sync = probe_sync(ws)
     text = learner_diff(ws, instance.id)
     volume = preflight_diff_volume(text)
+    # 与 base_ref 分开报：真正拿来比的是"你开始这一阶段时的那份 dev"，界面据此说人话。
+    # kind 会在基准**退化**时变成 stage_branch（记录晚于学员开工，见 diff_base_with_kind），
+    # 那时界面必须说清"比的是相对本阶段基线的全部改动"，而不是假装那是本阶段的活。
+    diff_base_sha, diff_base_kind = diff_base_with_kind(ws.path, ws.base_ref, instance.id)
     return {
         "base_ref": ws.base_ref,
         "head_ref": ws.head_ref,
         "diff_head_ref": ws.diff_head_ref,
-        # 与 base_ref 分开报：真正拿来比的是"你开始这一阶段时的那份 dev"，界面据此说人话。
-        "diff_base": diff_base(ws.path, ws.base_ref, instance.id),
-        "diff_base_kind": (
-            "stage_start" if stage_start(ws.path, instance.id) else "stage_branch"
-        ),
+        "diff_base": diff_base_sha,
+        "diff_base_kind": diff_base_kind,
         # head 为 None ⇒ 和工作区比。前端据此把"比较的是什么"说清楚，而不是笼统写 base ↔ head。
         "worktree": ws.diff_head_ref is None,
         "diff": text,

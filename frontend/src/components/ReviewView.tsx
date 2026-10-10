@@ -20,6 +20,15 @@ interface Props {
   busy: boolean
   onSubmit: (scenario: GradingScenario) => void
   onReview: (scenario: ReviewScenario) => void
+  /**
+   * 测试已经红了时的**一个动作收尾**：落评审 + 取判定 + 回到「开发中」。
+   *
+   * 为什么要有它：红的答案交上来之后，判定**必然是 fail**（门的第一路输入就不成立，跟评审怎么
+   * 说都不相干），可学员还得点两次走过场才能接着改；不点就停在「已提交」，唯一出路看着只剩
+   * 「重做这一题」——真被抱怨过"每次改完都要重做一遍，太麻烦"。这里把两步合成一步，
+   * 评审与判定**照旧落库**（审计链一条不少），只是不再要人陪着点。
+   */
+  onFixAndResubmit: () => void
 }
 
 /**
@@ -32,6 +41,10 @@ interface Props {
  *    评审有没有结论）。不做假的进度条，也不假装检查过工作区。
  * 2. **提交**——一次明确的「提交答案 →」。
  * 3. **评审**——自动测试之后进入评审，结论是确定性门的一路输入。
+ *
+ * **红了走捷径、绿了走全程**：红的报告结论已定（`correctness_gate=false` ⇒ fail），所以主按钮
+ * 直接是「测试红了 · 改完再交」；绿的报告不抄近路——`request_changes` 能把绿的翻成 fail，
+ * 评审结论正是学员该看一眼的那路输入。
  *
  * 两个 `scenario` 选择器是**有意保留**的：A′ 的桩各备 pass/fail 与 approve/request_changes
  * 两套 fixture，只有让使用者能切换，decide 的两条分支才都能被真跑到（spec §C.4「双分支
@@ -46,6 +59,7 @@ export function ReviewView({
   busy,
   onSubmit,
   onReview,
+  onFixAndResubmit,
 }: Props) {
   const [grading, setGrading] = useState<GradingScenario>('pass')
   const [reviewScenario, setReviewScenario] = useState<ReviewScenario>('approve')
@@ -58,6 +72,9 @@ export function ReviewView({
 
   const canSubmit = instance.state === 'in_progress'
   const canReview = submission !== null && instance.state === 'submitted'
+  /** 测试已经出结果、而且是红的 ⇒ 结论已定，主按钮改成"改完再交"。 */
+  const red = report !== null && !report.correctness.passed
+  const canRectify = red && canReview
 
   /** 三块检查项**全部**来自界面已知的事实，没有一项是编的。 */
   const checks: Array<{ label: string; done: boolean; note?: string }> = [
@@ -94,21 +111,44 @@ export function ReviewView({
       </p>
 
       <div className="row">
-        <button
-          className="primary"
-          data-testid="submit-answer"
-          disabled={busy || !canSubmit}
-          onClick={() => onSubmit(grading)}
-        >
-          提交答案 →
-        </button>
-        <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
-          发起 AI 评审
-        </button>
-        {!canSubmit && !canReview && (
-          <span className="muted">
-            只有「开发中」的实例能提交；当前是 {stateLabel(instance.state)}。
-          </span>
+        {canRectify ? (
+          <>
+            <button
+              className="primary"
+              data-testid="rectify-and-retry"
+              disabled={busy}
+              onClick={onFixAndResubmit}
+            >
+              测试红了 · 改完再交
+            </button>
+            <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
+              发起 AI 评审
+            </button>
+            <span className="muted">
+              红的结论已经定了（门的第一路输入不成立）——这个按钮把<b>评审与判定一起落库</b>，
+              然后直接放你回「开发中」改代码，不用重做这一题。想先读评审意见再决定，就点右边的
+              「发起 AI 评审」。
+            </span>
+          </>
+        ) : (
+          <>
+            <button
+              className="primary"
+              data-testid="submit-answer"
+              disabled={busy || !canSubmit}
+              onClick={() => onSubmit(grading)}
+            >
+              提交答案 →
+            </button>
+            <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
+              发起 AI 评审
+            </button>
+            {!canSubmit && !canReview && (
+              <span className="muted">
+                只有「开发中」的实例能提交；当前是 {stateLabel(instance.state)}。
+              </span>
+            )}
+          </>
         )}
       </div>
 

@@ -38,7 +38,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from platform_service.forge import baseline_sha, judged_base, stage_start
+from platform_service.forge import (
+    baseline_sha,
+    diff_base_with_kind,
+    judged_base,
+)
 from platform_service.grading import GradingStep, ProgressReporter, report_progress
 from platform_service.models import (
     GradingReport,
@@ -257,11 +261,14 @@ def _stage_changed_files(workspace: Path, instance_id: str | None = None) -> lis
     两个基准都**按实例取**（``instance_id``）：同一个工作区被后续阶段的实例复用（指引式
     provision）时，各自的开始线不能串。
 
-    老工作区（``provision`` 之前记的，没有 ``bagu.stageStart``）退回判定面那一份：宁可多列几个
-    文件，也不要凭空说"没有改动"。
+    老工作区（``provision`` 之前记的，没有 ``bagu.stageStart``）、或那个记录**退化**（记的时候
+    学员已经把代码推上来了，见 :func:`~platform_service.forge.diff_base_with_kind`）都退回判定面
+    那一份：宁可多列几个文件，也不要凭空说"没有改动"。
     """
-    base = stage_start(workspace, instance_id)
-    if not base:
+    base, kind = diff_base_with_kind(
+        workspace, baseline_sha(workspace, instance_id) or "HEAD", instance_id
+    )
+    if kind == "stage_branch":
         return _changed_files(workspace, instance_id)
     return changed_files(
         workspace, base=base, baseline=baseline_sha(workspace, instance_id)

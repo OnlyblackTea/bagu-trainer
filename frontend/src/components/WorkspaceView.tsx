@@ -333,6 +333,14 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
             {diff.worktree && ' ⇐ 你现在看到的包含还没 commit 的改动'}
             {diff.diff_base_kind === 'stage_start' &&
               ' · 比的是「你开始这一阶段时的那份 dev」，所以这里只有本阶段的改动'}
+            {diff.diff_base_kind === 'stage_branch' && (
+              <>
+                {' · 平台没能在你开工前记下那份 dev（你在登记这次尝试之前就把代码写好推上来了），'}
+                <span data-testid="diff-base-degraded">
+                  所以这里比的是<b>相对本阶段基线的全部改动</b>——会多带你之前几关的成果
+                </span>
+              </>
+            )}
             {diff.truncated_files.length > 0 && ` · 被截断：${diff.truncated_files.join('、')}`}
           </p>
           {diff.diff.trim() === '' ? (

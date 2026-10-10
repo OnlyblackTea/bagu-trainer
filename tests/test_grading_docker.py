@@ -22,6 +22,7 @@ import pytest
 
 from platform_api import grading_docker
 from platform_api.grading_docker import DockerGradingRunner, GradingUnavailableError
+from platform_service.forge import diff_base_with_kind
 from platform_service.grading import GradingRunner
 from platform_service.models import (
     InstanceState,
@@ -421,6 +422,58 @@ def test_stage_changes_are_measured_from_the_stage_start(
     assert report.out_of_scope_edits == []
     # 判定面那一份拿内容作者的版本比：上一关的实现同样是"与基线不同"
     assert report.judged_surface_changes == ["stage1.xml", "stage2.xml"]
+
+
+def test_late_anchor_falls_back_to_the_stage_branch(tmp_path: Path, ticket_factory: Any) -> None:
+    """**基准记晚了**（真踩过）：他在自己机器上先把整关写完、commit、push，然后才来登记这次尝试。
+
+    这时 ``bagu.stageStart`` 记到的正是他写完的那个提交，工作树又是干净的 ⇒ 按老口径
+    ``files_changed=[]``、界面写"工作区里还没有改动"、评审拿到一份空 diff。那不是"他没做"。
+    退回与本阶段基线的分岔点：多带他前几关的成果，但至少是一份**真东西**（界面按 kind 如实说）。
+    """
+    from platform_api import grading_docker as mod
+
+    repo = tmp_path / "ws"
+    _init_repo(repo, {"stage1.xml": "skeleton", "stage2.xml": "skeleton"})
+    baseline = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "stage1.xml").write_text("my stage-1 work\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "stage 1 done")
+    (repo / "stage2.xml").write_text("my stage-2 work\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "stage 2 work")
+    # provision 发生在他把活干完之后：stageStart 就是 HEAD，且工作树干净
+    _git(repo, "config", "bagu.baseRef", baseline)
+    _git(repo, "config", "bagu.stageStart", _git(repo, "rev-parse", "HEAD").strip())
+    assert _git(repo, "status", "--porcelain").strip() == ""
+
+    base, kind = diff_base_with_kind(repo, baseline)
+
+    assert kind == "stage_branch"
+    assert base == baseline
+    # 比出的是一份真东西（相对基线的全部改动），不是空
+    assert mod._stage_changed_files(repo, "ti-9") == ["stage1.xml", "stage2.xml"]
+
+
+def test_anchor_on_head_still_works_while_there_is_uncommitted_work(
+    tmp_path: Path, ticket_factory: Any
+) -> None:
+    """``stageStart`` 落在 HEAD 上、但工作树里还有未提交改动 ⇒ 照旧用它（最常见的用法）。
+
+    这条钉住上面那条修复的**边界**：不能在"基准 == HEAD"时就一律退回基线，否则
+    "provision 之后直接在平台给的目录里改文件"这条路会把上一关的代码也算成这一关的改动。
+    """
+    repo = tmp_path / "ws"
+    _init_repo(repo, {"stage1.xml": "skeleton", "stage2.xml": "skeleton"})
+    baseline = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "config", "bagu.baseRef", baseline)
+    _git(repo, "config", "bagu.stageStart", baseline)
+    (repo / "stage2.xml").write_text("edited in place, not committed\n", encoding="utf-8")
+
+    base, kind = diff_base_with_kind(repo, baseline)
+
+    assert kind == "stage_start"
+    assert base == baseline
 
 
 def test_two_instances_sharing_one_workspace_keep_their_own_stage_start(

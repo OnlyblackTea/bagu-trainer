@@ -279,14 +279,66 @@ def judged_base(repo: Path, instance_id: str | None = None) -> str | None:
 def diff_base(repo: Path, base_ref: str, instance_id: str | None = None) -> str:
     """**"这一阶段你改了什么"**该拿哪个提交当基准（diff / 评审 / 越界提醒都用它）。
 
-    优先 ``bagu.stageStart``（开始这一阶段时你自己那条 dev）；老工作区没有这个记录时退回
-    ``merge-base(base_ref, HEAD)``（与本阶段基线的分岔点），最后才是 ``base_ref`` 本身。
-    绝不用 ``HEAD``：那会永远比不出东西。
+    优先 ``bagu.stageStart``（开始这一阶段时你自己那条 dev）；老工作区没有这个记录、或那个记录
+    **退化**（见 :func:`diff_base_with_kind`）时退回 ``merge-base(base_ref, HEAD)``（与本阶段基线的
+    分岔点），最后才是 ``base_ref`` 本身。绝不用 ``HEAD``：那会永远比不出东西。
+    """
+    base, _kind = diff_base_with_kind(repo, base_ref, instance_id)
+    return base
+
+
+def _same_commit(repo: Path, left: str, right: str) -> bool:
+    """两个 ref/SHA 指向同一个提交吗（解析不了的当作"不相等"）。"""
+    a = git(repo, "rev-parse", f"{left}^{{commit}}", check=False)
+    b = git(repo, "rev-parse", f"{right}^{{commit}}", check=False)
+    if a.returncode != 0 or b.returncode != 0:
+        return False
+    return a.stdout.strip() == b.stdout.strip()
+
+
+def worktree_dirty(repo: Path) -> bool:
+    """工作树/索引有没有改动（含未跟踪）——``git status --porcelain`` 非空。
+
+    同一个词在 :func:`sync_workspace` 里也用过（那里的语义是"能不能无损快进"）。这里用它回答另一
+    个问题：``stageStart`` 落在 HEAD 上时，还有没有"未提交的活"可比。
+    """
+    return bool(git(repo, "status", "--porcelain", check=False).stdout.strip())
+
+
+def _anchor_is_usable(repo: Path, start: str) -> bool:
+    """``stageStart`` 这个基准还比得出东西吗？
+
+    * 它严格落在 HEAD 之前 ⇒ 有（学员开工后又提交了）；
+    * 它**就是** HEAD ⇒ 只有工作树里还有未提交改动时才比得出（学员在平台给的目录里直接改文件，
+      这是最常见的用法）；**干净的 HEAD** 意味着"记基准的时候他已经把活干完了"——那正是要退回
+      分岔点的情形。
+    """
+    if not _same_commit(repo, start, "HEAD"):
+        return True
+    return worktree_dirty(repo)
+
+
+def diff_base_with_kind(
+    repo: Path, base_ref: str, instance_id: str | None = None
+) -> tuple[str, str]:
+    """``(拿哪个提交当基准, 这是哪一种)``；kind ∈ ``{"stage_start", "stage_branch"}``。
+
+    两种基准的区别就是"比出来的是不是**这一关**的活"：
+
+    * ``stage_start`` —— provision 时记下的"开始这一阶段时你自己那条 dev"（首选，最准）；
+    * ``stage_branch`` —— 退化：没有记录，**或者那个记录比不出东西**（见
+      :func:`_anchor_is_usable`）。
+
+    第二种退化必须处理，而且真踩过：学员在**自己机器上**先把整关写完、commit、push，然后才来平台
+    登记这次尝试（自部署时这很自然）⇒ ``bagu.stageStart`` 记到的正是他写完的那个提交，工作树又是
+    干净的 ⇒ ``files_changed=[]``、界面 diff 面板写"工作区里还没有改动"、评审拿到的是一份空 diff。
+    那不是"他没做"，是**基准记晚了**。这时退回与本阶段基线的分岔点，至少比出"相对本阶段基线的
+    全部改动"（会多带他前几关的成果，所以界面必须如实说这次比的是哪一种基准）。
     """
     start = stage_start(repo, instance_id)
-    if start:
-        return start
-    return merge_base(repo, base_ref) or base_ref
+    if start and _anchor_is_usable(repo, start):
+        return start, "stage_start"
+    return (merge_base(repo, base_ref) or base_ref), "stage_branch"
 
 
 def learner_diff(ws: Workspace, instance_id: str | None = None) -> str:
@@ -295,7 +347,8 @@ def learner_diff(ws: Workspace, instance_id: str | None = None) -> str:
     两件事合起来才构成这个口径：
 
     * 基准是 :func:`diff_base`（开始这一阶段时他自己那条 dev），不是阶段分支 tip——dev 是跨
-      阶段累积的，拿 tip 比会把上一关写的代码也算进来；
+      阶段累积的，拿 tip 比会把上一关写的代码也算进来；基准**退化**时（见
+      :func:`diff_base_with_kind`）退回分岔点，宁可多说几句，也不要凭空给一份空 diff；
     * 与阶段基线**逐字节相同**的文件整块剔掉：那是基线自带的东西（本阶段的验收测试），不是学员
       写的。``src/test/`` 属于判定面，留在 diff 里会被判成"改了判据"。
 

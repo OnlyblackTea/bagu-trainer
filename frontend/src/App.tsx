@@ -339,6 +339,26 @@ export default function App() {
                         setNotice('评审完成（占位后端）。可以取确定性结论了。')
                       })
                     }
+                    onFixAndResubmit={() =>
+                      run(async () => {
+                        // 红的答案：结论必然「未通过」，所以把 评审 → 判定 → 返工 合成一个动作。
+                        // 评审与判定**照旧落库**（历史里查得到），只是不再要人陪着点两次；
+                        // 这正是"每次改完都得先重做这一题"那条抱怨的解法。
+                        const currentSubmission = submission
+                        if (!currentSubmission) return
+                        const reviewed = await api.review(currentSubmission.id, { scenario: 'approve' })
+                        setReview(reviewed)
+                        const out = await api.decide(currentSubmission.id)
+                        setDecision(out)
+                        setInstances(out.instances.filter((i) => i.track === t.id))
+                        await api.retry(current.id)
+                        clearChain()
+                        await refreshInstances(t.id)
+                        setNotice(
+                          '这次没过：评审与判定已按测试结果落库（历史里可查），已回到「开发中」——改完再交一次。',
+                        )
+                      })
+                    }
                   />
 
                   <GradingView submission={submission} progress={progress} report={report} />
@@ -432,8 +452,14 @@ export default function App() {
               ) : confirmReissue ? (
                 <div className="hint-block" data-testid="reissue-confirm">
                   <p className="muted">
-                    重做会把 <code>{current.id}</code> 作废（留档，提交与报告都还在历史里），并重发一个
-                    同版本的新实例，从该阶段的初始态重新开始。你自己登记的 workspace 目录会被继承。
+                    <b>它不会动你的代码</b>：远端 <code>dev</code>、你上一次的提交与报告都原样留着
+                    （下面「历史」里查得到），平台也不会替你重置任何分支。它只是把{' '}
+                    <code>{current.id}</code> 这次尝试作废（留档），另发一个同版本的新实例，状态回到
+                    「可开始」——工作区按你<b>现在</b>的 dev 重新准备一份，从那儿接着做。
+                  </p>
+                  <p className="muted">
+                    只是想改完再交一次？那不用重做：测试红了点「<b>测试红了 · 改完再交</b>」，其他情况用
+                    「返回工作区修改」。
                   </p>
                   <div className="row">
                     <button
@@ -459,7 +485,7 @@ export default function App() {
               ) : (
                 <button
                   data-testid="reissue"
-                  title="交卷后想接着改、或这一关的结论不算数（桩/误判）时用它"
+                  title="这一关的结论不算数（桩/误判）、或你想重新走一遍流程时用它——它不会动你的代码"
                   disabled={busy}
                   onClick={() => setConfirmReissue(true)}
                 >

@@ -168,6 +168,7 @@ describe('ReviewView（屏幕 4）', () => {
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
+        onFixAndResubmit={() => {}}
       />,
     )
     expect(screen.getByRole('button', { name: /提交/ })).toBeDisabled()
@@ -184,6 +185,7 @@ describe('ReviewView（屏幕 4）', () => {
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
+        onFixAndResubmit={() => {}}
       />,
     )
     const list = screen.getByTestId('submit-checklist')
@@ -192,6 +194,51 @@ describe('ReviewView（屏幕 4）', () => {
     expect(items[1]).toHaveClass('check--done') // 自动测试已出结果
     expect(items[2]).not.toHaveClass('check--done') // 评审还没结论
     expect(list).toHaveTextContent('AI 评审已出结论')
+  })
+
+  it('测试红了时主按钮变成「改完再交」——不必先评审再取结论', async () => {
+    // 真被抱怨过："每次改完都要先点重做这一题才能再交，太麻烦。" 红的报告结论已定
+    // （correctness_gate=false ⇒ fail），所以这里把 评审 → 判定 → 返工 收成一个动作。
+    const onFixAndResubmit = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <ReviewView
+        instance={makeInstance({ state: 'submitted' })}
+        submission={submission}
+        review={null}
+        report={{ ...gradingReport, correctness: { ...gradingReport.correctness, passed: false } }}
+        busy={false}
+        onSubmit={() => {}}
+        onReview={() => {}}
+        onFixAndResubmit={onFixAndResubmit}
+      />,
+    )
+
+    await user.click(screen.getByTestId('rectify-and-retry'))
+
+    expect(onFixAndResubmit).toHaveBeenCalledTimes(1)
+    // 老路径还在（有人想先读评审），但提交按钮不该出现——当前不是「开发中」
+    expect(screen.getByRole('button', { name: /发起 AI 评审/ })).toBeEnabled()
+    expect(screen.queryByTestId('submit-answer')).not.toBeInTheDocument()
+  })
+
+  it('测试绿了不抄近路：仍然要自己发起评审、自己取结论', () => {
+    // 绿的报告**不能**自动结：`request_changes` 能把绿的翻成 fail，评审结论是学员该看的输入。
+    render(
+      <ReviewView
+        instance={makeInstance({ state: 'submitted' })}
+        submission={submission}
+        review={null}
+        report={gradingReport}
+        busy={false}
+        onSubmit={() => {}}
+        onReview={() => {}}
+        onFixAndResubmit={() => {}}
+      />,
+    )
+
+    expect(screen.queryByTestId('rectify-and-retry')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /发起 AI 评审/ })).toBeEnabled()
   })
 
   it('两个 fixture 选择器收进「高级调试选项」，且仍把所选值传给上层', async () => {
@@ -206,6 +253,7 @@ describe('ReviewView（屏幕 4）', () => {
         busy={false}
         onSubmit={onSubmit}
         onReview={onReview}
+        onFixAndResubmit={() => {}}
       />,
     )
     const advanced = screen.getByTestId('advanced-debug')
@@ -230,6 +278,7 @@ describe('ReviewView（屏幕 4）', () => {
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
+        onFixAndResubmit={() => {}}
       />,
     )
     expect(screen.getByTestId('submission-info')).toHaveTextContent('sub-1')
@@ -245,6 +294,7 @@ describe('ReviewView（屏幕 4）', () => {
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
+        onFixAndResubmit={() => {}}
       />,
     )
     const info = screen.getByTestId('review-info')
@@ -265,6 +315,7 @@ describe('ReviewView（屏幕 4）', () => {
         busy={false}
         onSubmit={() => {}}
         onReview={() => {}}
+        onFixAndResubmit={() => {}}
       />,
     )
     expect(screen.getByTestId('review-info')).toHaveTextContent('Huge.java')

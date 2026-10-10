@@ -435,6 +435,31 @@ describe('App 装配：跑通整条自习闭环', () => {
     expect(screen.getByTestId('retry')).toBeEnabled()
   })
 
+  it('红了用一个动作收尾：改完再交（评审+判定落库、回到开发中、能直接再交一次）', async () => {
+    // 用户的真实抱怨："每次提交完答案之后需要点「重做这一题」再重新提交，很麻烦"。
+    // 他要的循环是 提交 → 红 → 改 → 再提交；平台不该在这个循环里塞两个走过场的点击，
+    // 更不该逼他重做（重做是"这次尝试作废"，不是"再交一次"）。
+    vi.stubGlobal('fetch', vi.fn(fakeBackend()))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByTestId('enroll'))
+    await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
+    await user.click(screen.getByRole('button', { name: '开始本阶段' }))
+    await user.selectOptions(screen.getByTestId('grading-scenario'), 'fail')
+    await user.click(screen.getByRole('button', { name: /提交答案/ }))
+    await waitFor(() => expect(within(board()).getByText('已提交')).toBeInTheDocument())
+
+    // 一个按钮收尾：评审 → 判定 → 返工
+    await user.click(await screen.findByTestId('rectify-and-retry'))
+
+    await waitFor(() => expect(within(board()).getByText('开发中')).toBeInTheDocument())
+    // 结论与评审都落了库（不是"悄悄跳过"）：历史里能看到这一次
+    await waitFor(() => expect(screen.getByTestId('history-view')).toHaveTextContent('第 1 次'))
+    // 而且**立刻能再交一次**——这就是他要的那个循环
+    expect(screen.getByTestId('submit-answer')).toBeEnabled()
+  })
+
   it('board-only 阶段不提供取卷（点了也不进发卷，且不取工单）', async () => {
     const fetchMock = vi.fn(fakeBackend())
     vi.stubGlobal('fetch', fetchMock)
