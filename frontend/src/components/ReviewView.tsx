@@ -29,6 +29,11 @@ interface Props {
    * 评审与判定**照旧落库**（审计链一条不少），只是不再要人陪着点。
    */
   onFixAndResubmit: () => void
+  /**
+   * 是否自己渲染动作按钮与那两个夹具选择器。默认 ``true``（组件单独用时自洽）；在**文档区**里
+   * App 传 ``false``——那一段只负责"读"（提交前检查 + 评审意见），按钮统一在右栏操作面板。
+   */
+  showActions?: boolean
 }
 
 /**
@@ -60,6 +65,7 @@ export function ReviewView({
   onSubmit,
   onReview,
   onFixAndResubmit,
+  showActions = true,
 }: Props) {
   const [grading, setGrading] = useState<GradingScenario>('pass')
   const [reviewScenario, setReviewScenario] = useState<ReviewScenario>('approve')
@@ -110,47 +116,49 @@ export function ReviewView({
         测试），然后把结果交给评审。两者同时在场，才能取确定性结论——门不是分数，是"证据齐了没有"。
       </p>
 
-      <div className="row">
-        {canRectify ? (
-          <>
-            <button
-              className="primary"
-              data-testid="rectify-and-retry"
-              disabled={busy}
-              onClick={onFixAndResubmit}
-            >
-              测试红了 · 改完再交
-            </button>
-            <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
-              发起 AI 评审
-            </button>
-            <span className="muted">
-              红的结论已经定了（门的第一路输入不成立）——这个按钮把<b>评审与判定一起落库</b>，
-              然后直接放你回「开发中」改代码，不用重做这一题。想先读评审意见再决定，就点右边的
-              「发起 AI 评审」。
-            </span>
-          </>
-        ) : (
-          <>
-            <button
-              className="primary"
-              data-testid="submit-answer"
-              disabled={busy || !canSubmit}
-              onClick={() => onSubmit(grading)}
-            >
-              提交答案 →
-            </button>
-            <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
-              发起 AI 评审
-            </button>
-            {!canSubmit && !canReview && (
+      {showActions && (
+        <div className="row">
+          {canRectify ? (
+            <>
+              <button
+                className="primary"
+                data-testid="rectify-and-retry"
+                disabled={busy}
+                onClick={onFixAndResubmit}
+              >
+                测试红了 · 改完再交
+              </button>
+              <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
+                发起 AI 评审
+              </button>
               <span className="muted">
-                只有「开发中」的实例能提交；当前是 {stateLabel(instance.state)}。
+                红的结论已经定了（门的第一路输入不成立）——这个按钮把<b>评审与判定一起落库</b>，
+                然后直接放你回「开发中」改代码，不用重做这一题。想先读评审意见再决定，就点右边的
+                「发起 AI 评审」。
               </span>
-            )}
-          </>
-        )}
-      </div>
+            </>
+          ) : (
+            <>
+              <button
+                className="primary"
+                data-testid="submit-answer"
+                disabled={busy || !canSubmit}
+                onClick={() => onSubmit(grading)}
+              >
+                提交答案 →
+              </button>
+              <button disabled={busy || !canReview} onClick={() => onReview(reviewScenario)}>
+                发起 AI 评审
+              </button>
+              {!canSubmit && !canReview && (
+                <span className="muted">
+                  只有「开发中」的实例能提交；当前是 {stateLabel(instance.state)}。
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {submission && (
         <p className="muted" style={{ marginTop: 10 }} data-testid="submission-info">
@@ -161,40 +169,43 @@ export function ReviewView({
       {/*
         内部夹具收进折叠区：它们只是桩后端的开关（fixture），不是学员要理解的流程。
         真阅卷（--grading docker）下这两个选择器**不影响**结果——报告按 surefire 的真实红绿出。
+        文档区里（`showActions=false`）它们跟着按钮一起搬到右栏操作面板。
       */}
-      <details className="advanced" data-testid="advanced-debug">
-        <summary>高级调试选项</summary>
-        <p className="muted">
-          下面是占位后端（`--grading stub`）的两套测试夹具，用来演示"红/绿"与
-          "放行/要求修改"两条分支；换成真阅卷后它们不再影响任何结果。
-        </p>
-        <div className="row">
-          <label className="muted" htmlFor="grading-scenario">
-            测试场景
-          </label>
-          <select
-            id="grading-scenario"
-            data-testid="grading-scenario"
-            value={grading}
-            onChange={(e) => setGrading(e.target.value as GradingScenario)}
-          >
-            <option value="pass">pass（绿）</option>
-            <option value="fail">fail（红）</option>
-          </select>
-          <label className="muted" htmlFor="review-scenario">
-            评审场景
-          </label>
-          <select
-            id="review-scenario"
-            data-testid="review-scenario"
-            value={reviewScenario}
-            onChange={(e) => setReviewScenario(e.target.value as ReviewScenario)}
-          >
-            <option value="approve">approve（放行）</option>
-            <option value="request_changes">request_changes（要求修改）</option>
-          </select>
-        </div>
-      </details>
+      {showActions && (
+        <details className="advanced" data-testid="advanced-debug">
+          <summary>高级调试选项</summary>
+          <p className="muted">
+            下面是占位后端（`--grading stub`）的两套测试夹具，用来演示"红/绿"与
+            "放行/要求修改"两条分支；换成真阅卷后它们不再影响任何结果。
+          </p>
+          <div className="row">
+            <label className="muted" htmlFor="grading-scenario">
+              测试场景
+            </label>
+            <select
+              id="grading-scenario"
+              data-testid="grading-scenario"
+              value={grading}
+              onChange={(e) => setGrading(e.target.value as GradingScenario)}
+            >
+              <option value="pass">pass（绿）</option>
+              <option value="fail">fail（红）</option>
+            </select>
+            <label className="muted" htmlFor="review-scenario">
+              评审场景
+            </label>
+            <select
+              id="review-scenario"
+              data-testid="review-scenario"
+              value={reviewScenario}
+              onChange={(e) => setReviewScenario(e.target.value as ReviewScenario)}
+            >
+              <option value="approve">approve（放行）</option>
+              <option value="request_changes">request_changes（要求修改）</option>
+            </select>
+          </div>
+        </details>
+      )}
 
       {review && (
         <div style={{ marginTop: 14 }} data-testid="review-info">

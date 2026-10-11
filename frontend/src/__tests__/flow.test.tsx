@@ -303,6 +303,29 @@ const board = () => screen.getByTestId('stage-stage-00-onboarding')
 const nextStage = () => screen.getByTestId('stage-stage-01-product-query-index')
 
 describe('App 装配：跑通整条自习闭环', () => {
+  it('界面按「中栏读、右栏点」分工：动作全在右栏，中栏是一篇文档', async () => {
+    // 这条钉住的是**布局契约**：中间那一栏改成文档阅读区之后，它不该再长出按钮；
+    // 所有会改动状态的动作都住在右栏操作面板——否则"现在该点哪个"又要在长文里找。
+    vi.stubGlobal('fetch', vi.fn(fakeBackend()))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByTestId('enroll'))
+    await user.click(await screen.findByTestId('stage-stage-00-onboarding'))
+    await user.click(screen.getByRole('button', { name: '开始本阶段' }))
+
+    const doc = screen.getByTestId('doc')
+    const panel = screen.getByTestId('action-panel')
+
+    // 文档区：题面小节 + 本关速览表；没有提交/评审/决策按钮
+    expect(doc).toHaveTextContent('本关速览')
+    expect(doc.querySelector('[data-testid="ticket-overview"]')).not.toBeNull()
+    expect(doc.querySelector('[data-testid="submit-answer"]')).toBeNull()
+
+    // 操作面板：主操作在这里
+    expect(panel.querySelector('[data-testid="submit-answer"]')).not.toBeNull()
+  })
+
   it('入学 → 开始 → 提交 → 评审 → 决策 pass：看板显示下一阶段已解锁', async () => {
     vi.stubGlobal('fetch', vi.fn(fakeBackend()))
     const user = userEvent.setup()

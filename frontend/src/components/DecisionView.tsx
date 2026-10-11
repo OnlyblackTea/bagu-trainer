@@ -20,6 +20,11 @@ interface Props {
   /** 已解锁的下一题（没有就传 null）：把训练闭环的出口做成一个按钮，而不是让学员回左栏找。 */
   nextStage?: { stage: string; title: string | null } | null
   onGoNext?: () => void
+  /**
+   * 是否自己渲染动作按钮（取结论 / 返工 / 进入下一题）。默认 ``true``：组件单独用时自洽；
+   * 文档区里 App 传 ``false``——那一段只讲"判到了什么、为什么"，动作统一在右栏操作面板。
+   */
+  showActions?: boolean
 }
 
 /**
@@ -47,6 +52,7 @@ export function DecisionView({
   onRetry,
   nextStage = null,
   onGoNext,
+  showActions = true,
 }: Props) {
   const missing: string[] = []
   if (!submission) missing.push('提交（跑自动测试）')
@@ -81,24 +87,28 @@ export function DecisionView({
             证据齐了就可以取结论：<strong>自动测试</strong>与 <strong>AI 评审</strong>都在场时，
             这里给出一个确定性的判定（不是 LLM 打分）。
           </p>
-          <div className="row">
-            <button
-              className="primary"
-              disabled={busy || missing.length > 0 || instance.state !== 'grading'}
-              onClick={onDecide}
-            >
-              取确定性结论
-            </button>
-            <button
-              className="ghost"
-              disabled={busy || instance.state !== 'failed'}
-              onClick={onRetry}
-            >
-              返回工作区修改
-            </button>
-          </div>
+          {showActions && (
+            <div className="row">
+              <button
+                className="primary"
+                data-testid="decide"
+                disabled={busy || missing.length > 0 || instance.state !== 'grading'}
+                onClick={onDecide}
+              >
+                取确定性结论
+              </button>
+              <button
+                className="ghost"
+                data-testid="retry"
+                disabled={busy || instance.state !== 'failed'}
+                onClick={onRetry}
+              >
+                返回工作区修改
+              </button>
+            </div>
+          )}
 
-          {missing.length > 0 && (
+          {showActions && missing.length > 0 && (
             <p className="muted" style={{ marginTop: 8 }}>
               还缺：{missing.join('、')}。门需要自动测试结果与评审意见同时在场。
             </p>
@@ -182,7 +192,7 @@ export function DecisionView({
                     把<strong>下一阶段的分支</strong>合入你的 <code>dev</code>（cherry-pick / merge
                     都行），再开始下一阶段。平台不替你跑这些 git 写操作。
                   </p>
-                  {nextStage && (
+                  {showActions && nextStage && (
                     <div className="row">
                       <button className="primary" data-testid="go-next" onClick={onGoNext}>
                         进入下一题：{nextStage.title ?? nextStage.stage} →
@@ -211,15 +221,17 @@ export function DecisionView({
                       ))}
                     </ul>
                   )}
-                  <div className="row">
-                    <button
-                      data-testid="retry"
-                      disabled={busy || instance.state !== 'failed'}
-                      onClick={onRetry}
-                    >
-                      返回工作区修改
-                    </button>
-                  </div>
+                  {showActions && (
+                    <div className="row">
+                      <button
+                        data-testid="retry"
+                        disabled={busy || instance.state !== 'failed'}
+                        onClick={onRetry}
+                      >
+                        返回工作区修改
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -242,15 +254,17 @@ export function DecisionView({
                     <code>git checkout origin/&lt;阶段分支&gt; -- &lt;文件&gt;</code>
                     ），只保留业务改动，再返回工作区。
                   </p>
-                  <div className="row">
-                    <button
-                      data-testid="retry"
-                      disabled={busy || instance.state !== 'failed'}
-                      onClick={onRetry}
-                    >
-                      返回工作区修改
-                    </button>
-                  </div>
+                  {showActions && (
+                    <div className="row">
+                      <button
+                        data-testid="retry"
+                        disabled={busy || instance.state !== 'failed'}
+                        onClick={onRetry}
+                      >
+                        返回工作区修改
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -1237,3 +1237,111 @@ a {
   outline: 2px solid var(--accent-soft);
   border-color: var(--accent);
 }
+
+/* ==========================================================================
+   文档阅读区（中栏）+ 操作面板（右栏）
+   --------------------------------------------------------------------------
+   中栏的职责只有"读"：题面 → 你的改动 → 阅卷报告 → AI 评审 → 判定结论，拼成一篇文档。
+   会改动状态的动作全部搬到右栏（`.action-panel`），所以这一屏只需要两种排版：文档与小表格。
+   ========================================================================== */
+.doc {
+  /* 正文行宽限制在约 74 字符：再宽眼睛就要来回扫行首行尾（Feishu/Notion 的默认行为）。 */
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.doc__section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+}
+
+.doc__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 18px;
+}
+
+.doc__hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.doc__body > *:first-child {
+  margin-top: 0;
+}
+
+.doc__body > *:last-child {
+  margin-bottom: 0;
+}
+
+/* 文档里的小表格（速览表等）：表头左对齐、行间细线，读起来像文档而不是报表。 */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table th {
+  width: 148px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.table tr:last-child th,
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+/* 操作面板：按钮竖排（一路读下来就是"现在该点哪个"），主操作永远在最上面。 */
+.action-panel__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-panel__buttons button {
+  width: 100%;
+  text-align: left;
+}
+
+.action-panel__missing {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.rail--actions .more-actions {
+  margin-top: 12px;
+}
+
+/* 操作面板跟着滚动粘住：读长文档时"下一步能点什么"不该滚出屏幕（与左栏看板同一套理由）。 */
+.rail--actions {
+  position: sticky;
+  top: 84px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+/* 禁用态要一眼看出来：主按钮是实心蓝的，不加这条的话灰按钮看起来照样能点。 */
+.action-panel__buttons button:disabled,
+.more-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

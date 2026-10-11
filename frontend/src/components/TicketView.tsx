@@ -8,6 +8,11 @@ interface Props {
   stage: StageEntry
   /** 取卷必须带 Track：ticket id 只在 Track 内唯一，多 Track 下扁平路径会撞名 409。 */
   trackId: string
+  /**
+   * 当前实例（可选）：有它就能在文档开头给一张**速览表**（版本锚、测试组、判据来源），
+   * 让"这一关按哪一版评、评什么"在读故事之前就一目了然。
+   */
+  instance?: import('../types').InstanceOut | null
 }
 
 /**
@@ -18,6 +23,7 @@ interface Props {
  * 再往下就是连续自然段——不再为普通信息造第三层组件。
  */
 const SECTIONS = [
+  { id: 'overview', label: '本关速览' },
   { id: 'problem', label: '任务说明' },
   { id: 'files', label: '改动面' },
   { id: 'accept', label: '验收标准' },
@@ -42,7 +48,7 @@ const SECTIONS = [
  * **绝不展示解法 ref、分支内容或任何 `-sol` 文本**。解法只在工作区 diff 里、且仅对已 provision
  * 的实例可达。
  */
-export function TicketView({ stage, trackId }: Props) {
+export function TicketView({ stage, trackId, instance = null }: Props) {
   const [ticket, setTicket] = useState<Ticket | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -122,6 +128,64 @@ export function TicketView({ stage, trackId }: Props) {
           </a>
         ))}
       </nav>
+
+      {/*
+        速览表：读故事之前先给"这一关按哪一版评、评什么、改几个文件"。
+        表格比连续段落省一遍扫描——这几项本来就是键值对，不是叙述。
+      */}
+      <section className="ticket__section" id="ticket-overview">
+        <h3 className="ticket__label">
+          本关速览
+          <span className="muted">一句话版本：按哪一版评、评什么</span>
+        </h3>
+        <table className="table" data-testid="ticket-overview">
+          <tbody>
+            <tr>
+              <th>阶段 / 工单</th>
+              <td>
+                阶段 {ticket.stage} · <code>{ticket.id}</code> · v{ticket.ticket_version}
+              </td>
+            </tr>
+            {instance && (
+              <tr>
+                <th>这次尝试</th>
+                <td>
+                  <code>{instance.id}</code> · 工单 v{instance.ticket_version} · 测试 v
+                  {instance.test_version} · 引擎锚 {instance.engine_version}
+                </td>
+              </tr>
+            )}
+            <tr>
+              <th>验收怎么跑</th>
+              <td>
+                <code>mvn test -Dgroups={ticket.grader.test_group}</code>
+                {ticket.grader.canonical_test && (
+                  <>
+                    {' '}
+                    · canonical：
+                    <code>{ticket.grader.canonical_test.split('/').pop()}</code>
+                  </>
+                )}
+              </td>
+            </tr>
+            <tr>
+              <th>你要改几个文件</th>
+              <td>
+                {ticket.files_to_change.length} 个（全部列在下面「改动面」里；改别的算越界）
+              </td>
+            </tr>
+            {ticket.hints.length > 0 && (
+              <tr>
+                <th>卡住了怎么办</th>
+                <td>
+                  {ticket.hints.length} 条阶梯提示（H1 → H
+                  {ticket.hints.length}，越往后越接近答案），默认折叠
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
 
       <section className="ticket__section" id="ticket-problem">
         <h3 className="ticket__label">任务说明</h3>

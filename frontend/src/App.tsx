@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 
 import { api, ApiError, STALE_RESOURCE_CODES } from './api'
 import { stateLabel } from './labels'
+import { ActionPanel } from './components/ActionPanel'
 import { DecisionView } from './components/DecisionView'
+import { DocSection } from './components/DocSection'
 import { GradingView } from './components/GradingView'
 import { HistoryView } from './components/HistoryView'
 import { HomeView } from './components/HomeView'
@@ -269,134 +271,152 @@ export default function App() {
           />
         </aside>
 
-        {/* 中栏：做什么 + 结果（读题、git、提交、阅卷、决策都在这一列按流程往下排）。 */}
-        <main className="work">
+        {/* 中栏：**文档阅读区**（题面 → 你的改动 → 阅卷报告 → 评审 → 判定），只读、按流程往下排。 */}
+        <main className="work doc" data-testid="doc">
           {selected ? (
             <>
-              <TicketView stage={selected} trackId={t.id} />
+              <TicketView stage={selected} trackId={t.id} instance={current ?? null} />
 
               {current ? (
                 <>
-                  <WorkspaceView
-                    instance={current}
-                    busy={busy}
-                    onStart={() =>
-                      run(async () => {
-                        await api.start(current.id)
-                        await refreshInstances(t.id)
-                      })
-                    }
-                  />
+                  <DocSection
+                    title="你的改动"
+                    hint="这次阅卷会看哪一版、以及这一关你改了什么"
+                  >
+                    <WorkspaceView
+                      instance={current}
+                      busy={busy}
+                      autoDiff
+                      onStart={() =>
+                        run(async () => {
+                          await api.start(current.id)
+                          await refreshInstances(t.id)
+                        })
+                      }
+                    />
+                  </DocSection>
 
-                  <ReviewView
-                    instance={current}
-                    submission={submission}
-                    review={review}
-                    report={report}
-                    busy={busy}
-                    onSubmit={(scenario: GradingScenario) =>
-                      run(async () => {
-                        // 提交是异步的（202）：先把 submission 与进度画出来，再等轮询。
-                        const accepted = await api.submit(current.id, { scenario })
-                        pollGeneration.current += 1
-                        const generation = pollGeneration.current
-                        setSubmission(accepted.submission)
-                        setProgress(accepted.progress)
-                        setReport(null)
-                        setReview(null)
-                        setDecision(null)
-                        await refreshInstances(t.id)
-                        // 提交前平台与远端对过一次账：学员在**别的机器**上写完 push 之后，这次阅卷
-                        // 到底看的是哪一版，必须当场说清——"跑了但跑的是旧代码"是最难自查的一种结果。
-                        const sync = accepted.sync
-                        if (sync?.remote_only_changes) {
-                          setError(
-                            `阅卷已受理，但它看的可能不是你最新的代码：${sync.note}` +
-                              '（工作树干净时平台会自动快进；这次没有，所以按本地内容走。）',
+                  <DocSection title="阅卷报告" hint="平台重置基础设施后跑出来的客观结果">
+                    <GradingView submission={submission} progress={progress} report={report} />
+                  </DocSection>
+
+                  <DocSection title="AI 评审" hint="评审意见是确定性门的一路输入，不是分数">
+                    <ReviewView
+                      instance={current}
+                      submission={submission}
+                      review={review}
+                      report={report}
+                      busy={busy}
+                      showActions={false}
+                      onSubmit={(scenario: GradingScenario) =>
+                        run(async () => {
+                          // 提交是异步的（202）：先把 submission 与进度画出来，再等轮询。
+                          const accepted = await api.submit(current.id, { scenario })
+                          pollGeneration.current += 1
+                          const generation = pollGeneration.current
+                          setSubmission(accepted.submission)
+                          setProgress(accepted.progress)
+                          setReport(null)
+                          setReview(null)
+                          setDecision(null)
+                          await refreshInstances(t.id)
+                          // 提交前平台与远端对过一次账：学员在**别的机器**上写完 push 之后，这次阅卷
+                          // 到底看的是哪一版，必须当场说清——"跑了但跑的是旧代码"是最难自查的一种结果。
+                          const sync = accepted.sync
+                          if (sync?.remote_only_changes) {
+                            setError(
+                              `阅卷已受理，但它看的可能不是你最新的代码：${sync.note}` +
+                                '（工作树干净时平台会自动快进；这次没有，所以按本地内容走。）',
+                            )
+                          }
+                          setNotice('已受理：阅卷在后台跑，进度见下。')
+                          if (sync?.fast_forwarded) {
+                            setNotice('已受理：这次阅卷看的是远端最新的 dev（提交前已自动同步）。')
+                          }
+                          setHistoryKey((n) => n + 1)
+                          // 不 await：轮询自己会更新进度，界面不该被它挂住。
+                          void pollGrading(accepted.submission.id, generation).catch(
+                            (e: unknown) => {
+                              if (pollGeneration.current === generation) {
+                                setError(e instanceof Error ? e.message : String(e))
+                              }
+                            },
                           )
-                        }
-                        setNotice('已受理：阅卷在后台跑，进度见下。')
-                        if (sync?.fast_forwarded) {
-                          setNotice('已受理：这次阅卷看的是远端最新的 dev（提交前已自动同步）。')
-                        }
-                        setHistoryKey((n) => n + 1)
-                        // 不 await：轮询自己会更新进度，界面不该被它挂住。
-                        void pollGrading(accepted.submission.id, generation).catch(
-                          (e: unknown) => {
-                            if (pollGeneration.current === generation) {
-                              setError(e instanceof Error ? e.message : String(e))
-                            }
-                          },
-                        )
-                      })
-                    }
-                    onReview={(scenario: ReviewScenario) =>
-                      run(async () => {
-                        const reviewOut = await api.review(submission!.id, { scenario })
-                        setReview(reviewOut)
-                        setDecision(null)
-                        await refreshInstances(t.id)
-                        setNotice('评审完成（占位后端）。可以取确定性结论了。')
-                      })
-                    }
-                    onFixAndResubmit={() =>
-                      run(async () => {
-                        // 红的答案：结论必然「未通过」，所以把 评审 → 判定 → 返工 合成一个动作。
-                        // 评审与判定**照旧落库**（历史里查得到），只是不再要人陪着点两次；
-                        // 这正是"每次改完都得先重做这一题"那条抱怨的解法。
-                        const currentSubmission = submission
-                        if (!currentSubmission) return
-                        const reviewed = await api.review(currentSubmission.id, { scenario: 'approve' })
-                        setReview(reviewed)
-                        const out = await api.decide(currentSubmission.id)
-                        setDecision(out)
-                        setInstances(out.instances.filter((i) => i.track === t.id))
-                        await api.retry(current.id)
-                        clearChain()
-                        await refreshInstances(t.id)
-                        setNotice(
-                          '这次没过：评审与判定已按测试结果落库（历史里可查），已回到「开发中」——改完再交一次。',
-                        )
-                      })
-                    }
-                  />
+                        })
+                      }
+                      onReview={(scenario: ReviewScenario) =>
+                        run(async () => {
+                          const reviewOut = await api.review(submission!.id, { scenario })
+                          setReview(reviewOut)
+                          setDecision(null)
+                          await refreshInstances(t.id)
+                          setNotice('评审完成（占位后端）。可以取确定性结论了。')
+                        })
+                      }
+                      onFixAndResubmit={() =>
+                        run(async () => {
+                          // 红的答案：结论必然「未通过」，所以把 评审 → 判定 → 返工 合成一个动作。
+                          // 评审与判定**照旧落库**（历史里查得到），只是不再要人陪着点两次；
+                          // 这正是"每次改完都得先重做这一题"那条抱怨的解法。
+                          const currentSubmission = submission
+                          if (!currentSubmission) return
+                          const reviewed = await api.review(currentSubmission.id, {
+                            scenario: 'approve',
+                          })
+                          setReview(reviewed)
+                          const out = await api.decide(currentSubmission.id)
+                          setDecision(out)
+                          setInstances(out.instances.filter((i) => i.track === t.id))
+                          await api.retry(current.id)
+                          clearChain()
+                          await refreshInstances(t.id)
+                          setNotice(
+                            '这次没过：评审与判定已按测试结果落库（历史里可查），已回到「开发中」——改完再交一次。',
+                          )
+                        })
+                      }
+                    />
+                  </DocSection>
 
-                  <GradingView submission={submission} progress={progress} report={report} />
-
-                  <DecisionView
-                    instance={current}
-                    submission={submission}
-                    review={review}
-                    decision={decision}
-                    report={report}
-                    busy={busy}
-                    nextStage={
-                      nextUnlocked ? { stage: nextUnlocked.stage, title: nextUnlocked.title } : null
-                    }
-                    onGoNext={() => selectStage(nextUnlocked ?? null)}
-                    onDecide={() =>
-                      run(async () => {
-                        const out = await api.decide(submission!.id)
-                        setDecision(out)
-                        // 决策响应带"这个 learner 的全部实例"：按当前 Track 过滤后再刷新看板。
-                        setInstances(out.instances.filter((i) => i.track === t.id))
-                        setHistoryKey((n) => n + 1)
-                        setNotice(
-                          out.decision.verdict === 'pass'
-                            ? '通过：下一阶段已解锁。'
-                            : '未通过：可按评审批注返工后重来。',
-                        )
-                      })
-                    }
-                    onRetry={() =>
-                      run(async () => {
-                        await api.retry(current.id)
-                        clearChain()
-                        await refreshInstances(t.id)
-                        setNotice('已回到「开发中」，可再走一遍提交 → 评审 → 决策。')
-                      })
-                    }
-                  />
+                  <DocSection title="判定结论" hint="确定性门：测试绿 + 评审放行才通过">
+                    <DecisionView
+                      instance={current}
+                      submission={submission}
+                      review={review}
+                      decision={decision}
+                      report={report}
+                      busy={busy}
+                      showActions={false}
+                      nextStage={
+                        nextUnlocked
+                          ? { stage: nextUnlocked.stage, title: nextUnlocked.title }
+                          : null
+                      }
+                      onGoNext={() => selectStage(nextUnlocked ?? null)}
+                      onDecide={() =>
+                        run(async () => {
+                          const out = await api.decide(submission!.id)
+                          setDecision(out)
+                          // 决策响应带"这个 learner 的全部实例"：按当前 Track 过滤后再刷新看板。
+                          setInstances(out.instances.filter((i) => i.track === t.id))
+                          setHistoryKey((n) => n + 1)
+                          setNotice(
+                            out.decision.verdict === 'pass'
+                              ? '通过：下一阶段已解锁。'
+                              : '未通过：可按评审批注返工后重来。',
+                          )
+                        })
+                      }
+                      onRetry={() =>
+                        run(async () => {
+                          await api.retry(current.id)
+                          clearChain()
+                          await refreshInstances(t.id)
+                          setNotice('已回到「开发中」，可再走一遍提交 → 评审 → 决策。')
+                        })
+                      }
+                    />
+                  </DocSection>
                 </>
               ) : (
                 <section className="card">
@@ -424,8 +444,108 @@ export default function App() {
           )}
         </main>
 
-        {/* 右栏：判到哪了 + 记录（窄栏，扫一眼就够；宽内容留在中栏）。 */}
-        <aside className="rail rail--state">
+        {/* 右栏：**操作面板**——所有会改动状态的动作都集中在这里（中栏只读）。 */}
+        <aside className="rail rail--state rail--actions">
+          {selected && (
+            <ActionPanel
+              instance={current ?? null}
+              stage={selected}
+              submission={submission}
+              report={report}
+              review={review}
+              decision={decision}
+              busy={busy}
+              nextStage={nextUnlocked ? { stage: nextUnlocked.stage, title: nextUnlocked.title } : null}
+              onStart={() =>
+                current
+                  ? run(async () => {
+                      await api.start(current.id)
+                      await refreshInstances(t.id)
+                    })
+                  : undefined
+              }
+              onSubmit={(scenario: GradingScenario) =>
+                run(async () => {
+                  if (!current) return
+                  const accepted = await api.submit(current.id, { scenario })
+                  pollGeneration.current += 1
+                  const generation = pollGeneration.current
+                  setSubmission(accepted.submission)
+                  setProgress(accepted.progress)
+                  setReport(null)
+                  setReview(null)
+                  setDecision(null)
+                  await refreshInstances(t.id)
+                  const sync = accepted.sync
+                  if (sync?.remote_only_changes) {
+                    setError(
+                      `阅卷已受理，但它看的可能不是你最新的代码：${sync.note}` +
+                        '（工作树干净时平台会自动快进；这次没有，所以按本地内容走。）',
+                    )
+                  }
+                  setNotice('已受理：阅卷在后台跑，进度见下。')
+                  if (sync?.fast_forwarded) {
+                    setNotice('已受理：这次阅卷看的是远端最新的 dev（提交前已自动同步）。')
+                  }
+                  setHistoryKey((n) => n + 1)
+                  void pollGrading(accepted.submission.id, generation).catch((e: unknown) => {
+                    if (pollGeneration.current === generation) {
+                      setError(e instanceof Error ? e.message : String(e))
+                    }
+                  })
+                })
+              }
+              onReview={(scenario: ReviewScenario) =>
+                run(async () => {
+                  if (!submission) return
+                  setReview(await api.review(submission.id, { scenario }))
+                  setDecision(null)
+                  await refreshInstances(t.id)
+                  setNotice('评审完成（占位后端）。可以取确定性结论了。')
+                })
+              }
+              onFixAndResubmit={() =>
+                run(async () => {
+                  if (!current || !submission) return
+                  setReview(await api.review(submission.id, { scenario: 'approve' }))
+                  const out = await api.decide(submission.id)
+                  setDecision(out)
+                  setInstances(out.instances.filter((i) => i.track === t.id))
+                  await api.retry(current.id)
+                  clearChain()
+                  await refreshInstances(t.id)
+                  setNotice(
+                    '这次没过：评审与判定已按测试结果落库（历史里可查），已回到「开发中」——改完再交一次。',
+                  )
+                })
+              }
+              onDecide={() =>
+                run(async () => {
+                  if (!submission) return
+                  const out = await api.decide(submission.id)
+                  setDecision(out)
+                  setInstances(out.instances.filter((i) => i.track === t.id))
+                  setHistoryKey((n) => n + 1)
+                  setNotice(
+                    out.decision.verdict === 'pass'
+                      ? '通过：下一阶段已解锁。'
+                      : '未通过：可按评审批注返工后重来。',
+                  )
+                })
+              }
+              onRetry={() =>
+                run(async () => {
+                  if (!current) return
+                  await api.retry(current.id)
+                  clearChain()
+                  await refreshInstances(t.id)
+                  setNotice('已回到「开发中」，可再走一遍提交 → 评审 → 决策。')
+                })
+              }
+              onGoNext={() => selectStage(nextUnlocked ?? null)}
+            />
+          )}
+
           {current && (
             <section className="card status-card" data-testid="instance-status">
               <h2 className="card__title">

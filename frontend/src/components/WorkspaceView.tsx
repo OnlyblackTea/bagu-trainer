@@ -14,6 +14,13 @@ interface Props {
   instance: InstanceOut
   busy: boolean
   onStart: () => void
+  /**
+   * 挂载就把 diff 拉出来（默认 ``false``：组件单独用时保留「查看 diff」这个显式动作）。
+   *
+   * 文档区里传 ``true``：那一栏是**阅读区**，"打开这一节还要先点一下"是多余的一步；
+   * 而且 diff 正是学员最该先看到的东西（"这次阅卷会看什么"）。
+   */
+  autoDiff?: boolean
 }
 
 /**
@@ -28,7 +35,7 @@ interface Props {
  * * **`模拟` 徽标逐项跟着端点的真实 `simulated` 走**——真仓库 / 真 diff 上盖"模拟"章会
  *   把真结果说成假的（§15 风险 5），反过来桩产出没有徽标就是骗人。
  */
-export function WorkspaceView({ instance, busy, onStart }: Props) {
+export function WorkspaceView({ instance, busy, onStart, autoDiff = false }: Props) {
   const [workspace, setWorkspace] = useState<WorkspaceOut | null>(null)
   const [registered, setRegistered] = useState<
     (WorkspaceOut & { workspace_path: string | null }) | null
@@ -49,6 +56,25 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
     setSync(null)
     setError(null)
   }, [instance.id])
+
+  // 文档模式：一进来就把 diff 拉出来（失败也只在卡片里说，不打断阅读）。
+  useEffect(() => {
+    if (!autoDiff) return
+    let cancelled = false
+    api
+      .diff(instance.id)
+      .then((body) => {
+        if (cancelled) return
+        setDiff(body)
+        setSync(body.sync)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [autoDiff, instance.id])
 
   async function run(fn: () => Promise<void>) {
     setWorking(true)
@@ -94,26 +120,31 @@ export function WorkspaceView({ instance, busy, onStart }: Props) {
         ——尤其「从远端同步」会 fetch 并可能快进后端那份 checkout，不该和普通操作长一样重。
       */}
       <div className="row">
-        <button
-          className="primary"
-          onClick={onStart}
-          disabled={disabled || instance.state !== 'available'}
-        >
-          开始本阶段
-        </button>
-        <button
-          className="ghost"
-          onClick={() =>
-            run(async () => {
-              const body = await api.diff(instance.id)
-              setDiff(body)
-              setSync(body.sync)
-            })
-          }
-          disabled={disabled}
-        >
-          查看 diff
-        </button>
+        {/* 文档模式（`autoDiff`）下「开始本阶段」由右栏操作面板统一提供，这里不再重复一个。 */}
+        {!autoDiff && (
+          <button
+            className="primary"
+            onClick={onStart}
+            disabled={disabled || instance.state !== 'available'}
+          >
+            开始本阶段
+          </button>
+        )}
+        {!autoDiff && (
+          <button
+            className="ghost"
+            onClick={() =>
+              run(async () => {
+                const body = await api.diff(instance.id)
+                setDiff(body)
+                setSync(body.sync)
+              })
+            }
+            disabled={disabled}
+          >
+            查看 diff
+          </button>
+        )}
 
         <details className="more-actions">
           <summary>更多操作</summary>
