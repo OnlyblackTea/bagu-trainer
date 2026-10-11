@@ -18,7 +18,13 @@ from platform_service.review_diff import preflight_diff_volume
 
 from ..deps import host_visible_path
 from ..schemas import WorkspaceRequest, sync_out, workspace_out
-from ._resolve import apply_sync, bundle_for_instance, must_instance, probe_sync
+from ._resolve import (
+    apply_sync,
+    bundle_for_instance,
+    must_instance,
+    probe_sync,
+    seed_stage_anchor,
+)
 
 router = APIRouter(tags=["workspace"])
 
@@ -36,7 +42,10 @@ def _with_host_path(ws: Any) -> dict[str, Any]:
 @router.post("/instances/{instance_id}/provision")
 def provision(instance_id: str, request: Request) -> dict[str, Any]:
     instance = must_instance(request, instance_id)
-    return _with_host_path(bundle_for_instance(request, instance).forge.provision(instance))
+    ws = bundle_for_instance(request, instance).forge.provision(instance)
+    # 先钉"开始线"（上一关交卷时的 revision），这样紧接着的 diff / 阅卷看到的就是**本关**的活。
+    seed_stage_anchor(request, instance, ws.path)
+    return _with_host_path(ws)
 
 
 @router.post("/instances/{instance_id}/workspace")
@@ -105,6 +114,9 @@ def diff(instance_id: str, request: Request) -> dict[str, Any]:
     instance = must_instance(request, instance_id)
     bundle = bundle_for_instance(request, instance)
     ws = bundle.forge.provision(instance)  # 幂等：确保已 clone
+    # 开始线优先取"上一关交卷时的那份 dev"（平台自己的记录）；provision 时刻的 HEAD 只在第一关
+    # 或没有记录时兜底——否则"先在别处写完才来登记"的人会看到前几关的成果也混在 diff 里。
+    seed_stage_anchor(request, instance, ws.path)
     sync = probe_sync(ws)
     text = learner_diff(ws, instance.id)
     volume = preflight_diff_volume(text)

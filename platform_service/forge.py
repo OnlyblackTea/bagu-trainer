@@ -239,6 +239,23 @@ def _config_get(repo: Path, key: str) -> str | None:
     return value or None
 
 
+def set_stage_start(repo: Path, sha: str, *, instance_id: str | None = None) -> bool:
+    """把"开始这一阶段时他那条 dev"**改写**成 ``sha``（两个键一起写）；解析不了就什么都不做。
+
+    用途见 :func:`~platform_api.routes._resolve.seed_stage_anchor`：provision 时刻的 ``HEAD`` 常常
+    已经包含本阶段的活（学员先在别处写完才来登记），而平台手里有更好的证据——他**上一关交卷时**
+    报告里记的那个 revision。那个 SHA 才是"进入这一关时的 dev"，且与什么时候 provision 无关
+    （重做、换机器、多个 clone 都不影响）。
+    """
+    resolved = git(repo, "rev-parse", f"{sha}^{{commit}}", check=False)
+    if resolved.returncode != 0:
+        return False
+    value = resolved.stdout.strip()
+    git(repo, "config", _scoped(STAGE_START_CONFIG, instance_id), value)
+    git(repo, "config", STAGE_START_CONFIG, value)
+    return True
+
+
 def _scoped(key: str, instance_id: str | None) -> str:
     """按实例分键：同一个工作区被多个实例共用时（指引式 provision），各自的开始线不能串。"""
     return key if not instance_id else f"{key}.{instance_id}"

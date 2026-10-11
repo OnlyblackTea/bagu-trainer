@@ -29,7 +29,13 @@ from ..schemas import (
     instance_out,
     sync_out,
 )
-from ._resolve import apply_sync, bundle_for_instance, bundle_for_track, must_instance
+from ._resolve import (
+    apply_sync,
+    bundle_for_instance,
+    bundle_for_track,
+    must_instance,
+    seed_stage_anchor,
+)
 
 router = APIRouter(tags=["progress"])
 
@@ -107,6 +113,9 @@ def submit(
     bundle = bundle_for_instance(request, instance)
     ticket = bundle.tickets[instance.ticket_id]
     workspace = bundle.forge.provision(instance)
+    # 对账/阅卷之前，先把"开始线"钉在**上一关交卷时的 revision** 上（见 seed_stage_anchor）：
+    # 学员常常先写完才来登记，拿 provision 时刻的 HEAD 会把他前几关的成果也算进"这一关"。
+    seed_stage_anchor(request, instance, workspace.path)
     # 阅卷看的是**这份** checkout，所以先确认它是不是学员最新推上去的那份（见 docstring）。
     sync = apply_sync(workspace)
     submission = bundle.service.submit(instance_id, defense=body.defense)
@@ -268,6 +277,7 @@ async def review(
     instance = state.store.get_instance(submission.instance_id)
     bundle = bundle_for_instance(request, instance)
     workspace = bundle.forge.provision(instance)
+    seed_stage_anchor(request, instance, workspace.path)
     # 评审看的 diff 与界面上的 diff 是**同一个口径**（"这一阶段你改了什么"，见 learner_diff）。
     diff = learner_diff(workspace, instance.id)
     engine = state.review_engine(scenario)

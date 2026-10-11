@@ -10,10 +10,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import HTTPException, Request
 
-from platform_service.forge import Workspace, WorkspaceSync, sync_workspace
-from platform_service.models import TicketInstance
+from platform_service.forge import (
+    Workspace,
+    WorkspaceSync,
+    set_stage_start,
+    sync_workspace,
+)
+from platform_service.models import InstanceState, TicketInstance
 
 from ..deps import TrackBundle
 
@@ -61,3 +68,50 @@ def apply_sync(ws: Workspace) -> WorkspaceSync | None:
     if ws.simulated:
         return None
     return sync_workspace(ws.path, branch=ws.branch, apply=True)
+
+
+def previous_stage_revision(request: Request, instance: TicketInstance) -> str | None:
+    """他**上一关交卷时**那条 dev 的 revision（平台自己的记录里查得到）。
+
+    这就是"进入这一关时的 dev"最可靠的证据：与什么时候 provision 无关，重做、换机器、多个 clone
+    都不影响。取法：本 ticket 的前置阶段 → 他那些**已通过**的实例 → 里面最新一次提交的报告 revision
+    （``provenance.host_env.revision``）。
+    """
+    state = request.app.state
+    bundle = state.tracks.get(instance.track)
+    if bundle is None:
+        return None
+    ticket = bundle.tickets.get(instance.ticket_id)
+    if ticket is None:
+        return None
+    prereqs = set(ticket.progression.prerequisites)
+    if not prereqs:
+        return None  # 第一关：没有"上一关"可用，交给 provision 时刻的 HEAD 兜底
+    best: tuple[str, str] | None = None  # (submitted_at, revision)
+    for other in state.store.list_instances(learner=instance.learner, track=instance.track):
+        if other.ticket_id not in prereqs or other.state is not InstanceState.PASSED:
+            continue
+        for submission in state.store.list_submissions(other.id):
+            report = state.store.get_report(submission.id)
+            if report is None:
+                continue
+            revision = str(report.provenance.host_env.get("revision") or "")
+            if not revision:
+                continue
+            if best is None or submission.created_at > best[0]:
+                best = (submission.created_at, revision)
+    return best[1] if best else None
+
+
+def seed_stage_anchor(request: Request, instance: TicketInstance, workspace: Path) -> bool:
+    """把上一关交卷时的 revision 写成这次尝试的"开始线"，返回是否真的改了。
+
+    为什么需要：provision 记 ``HEAD`` 当开始线，只在"先从平台拿工作区、再动手"的顺序下才准确。
+    学员（尤其是自部署的自己）常态是**先在别处把这一关写完、push，才来点开始**——那一刻的 ``HEAD``
+    已经包含本关的活，于是"这一关你改了什么"退化成"相对阶段基线的全部改动"，把前几关的成果也带
+    进来（真被问过："diff 5000+ 字符正常吗"）。用上一关的 revision 当开始线，diff 就精确到本关。
+    """
+    revision = previous_stage_revision(request, instance)
+    if not revision:
+        return False
+    return set_stage_start(workspace, revision, instance_id=instance.id)

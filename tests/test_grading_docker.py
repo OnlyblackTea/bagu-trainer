@@ -476,6 +476,53 @@ def test_anchor_on_head_still_works_while_there_is_uncommitted_work(
     assert base == baseline
 
 
+def test_seeded_anchor_makes_the_diff_exactly_this_stage(tmp_path: Path) -> None:
+    """把开始线钉在**上一关交卷时**的 revision 上 ⇒ "这一关改了什么"只剩本关的活。
+
+    真被问过："点重做 + 从远端同步之后 diff 5000+ 字符，正常吗？" 前因是他**先在别处把整关写完**
+    才来登记，provision 记下的 HEAD 已经包含本关的活 ⇒ 退化成"相对阶段基线的全部改动"，把 stage-01
+    的实现也带了进来。平台手里其实有更好的证据：他上一关报告里的 revision。
+    """
+    from platform_api import grading_docker as mod
+    from platform_service.forge import diff_base_with_kind, set_stage_start
+
+    repo = tmp_path / "ws"
+    _init_repo(repo, {"stage1.xml": "s", "stage2.xml": "s", "stage3.xml": "s"})
+    baseline = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "stage1.xml").write_text("my stage-1 work\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "stage 1 done")
+    stage1_done = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "stage2.xml").write_text("my stage-2 work\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "stage 2 done")
+    # provision 发生在他把两关都写完**之后**：stageStart = HEAD（退化）
+    _git(repo, "config", "bagu.baseRef", baseline)
+    _git(repo, "config", "bagu.stageStart", _git(repo, "rev-parse", "HEAD").strip())
+    assert diff_base_with_kind(repo, baseline, "ti-9")[1] == "stage_branch", "还没播种时是退化的"
+
+    # 平台按记录播种：开始线 = 上一关交卷时的那份 dev
+    assert set_stage_start(repo, stage1_done, instance_id="ti-9") is True
+
+    base, kind = diff_base_with_kind(repo, baseline, "ti-9")
+    assert kind == "stage_start"
+    assert base == stage1_done
+    # 于是"这一关"只列 stage2 的活，stage-01 的实现不再混进来
+    assert mod._stage_changed_files(repo, "ti-9") == ["stage2.xml"]
+
+
+def test_seed_stage_start_ignores_an_unknown_sha(tmp_path: Path) -> None:
+    """记录里的 revision 在本仓解析不了（换过机器、历史被重写）⇒ 什么都不改，交给兜底。"""
+    from platform_service.forge import set_stage_start, stage_start
+
+    repo = tmp_path / "ws"
+    _init_repo(repo, {"a.txt": "x"})
+    _git(repo, "config", "bagu.stageStart", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+
+    assert set_stage_start(repo, "0" * 40, instance_id="ti-1") is False
+    assert stage_start(repo, "ti-1") == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+
 def test_two_instances_sharing_one_workspace_keep_their_own_stage_start(
     tmp_path: Path, ticket_factory: Any
 ) -> None:
