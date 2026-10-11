@@ -221,6 +221,48 @@ def test_provision_against_a_local_path_needs_no_credentials(tmp_path: Path) -> 
 
 
 @respx.mock
+def test_clone_hint_continues_the_learners_dev_when_it_exists(tmp_path: Path) -> None:
+    """**起手式不能一律"从阶段分支重开一条 dev"**——那会把前几关的成果丢掉。
+
+    链式结构下阶段分支只含"骨架 + 到本阶段为止的验收测试"，不含学员自己前几关的实现。真踩过两次：
+    学员照提示 `git checkout -b dev origin/stage-0N`，于是他的 dev 变成"本阶段基线 + 本阶段实现"，
+    stage-01 的实现凭空消失，平台那份 checkout 还因此与他分叉。所以：远端有 dev 就接着它、把本阶段
+    基线合进来；只有第一次（远端还没有 dev）才从阶段基线开。
+    """
+    learner_repo = _local_repo(tmp_path)
+    git(learner_repo, "checkout", "-q", "-b", "dev")
+    (learner_repo / "my-stage-1-work.txt").write_text("done\n", encoding="utf-8")
+    git(learner_repo, "add", "-A")
+    git(learner_repo, "commit", "-qm", "stage 1 done")
+    git(learner_repo, "checkout", "-q", "main")
+
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
+        return_value=httpx.Response(200, json={"clone_url": str(learner_repo)})
+    )
+    ws = _client(tmp_path).provision(_instance())
+
+    hint = ws.clone_hint or ""
+    assert "git checkout -b dev origin/dev" in hint, "要接着学员自己那条 dev"
+    assert "git merge origin/main" in hint, "并提示把本阶段基线合进来"
+    assert "origin/main   " not in hint.split("git merge")[0], "不能从阶段分支重开一条 dev"
+
+
+@respx.mock
+def test_clone_hint_starts_from_the_stage_branch_only_on_the_first_stage(tmp_path: Path) -> None:
+    """远端还没有 dev（第一次做题）⇒ 从阶段基线开一条，**不要**再给一条多余的 merge。"""
+    learner_repo = _local_repo(tmp_path)  # 只有 main，没有 dev
+    respx.get(f"{_BASE}/api/v1/repos/{_UPSTREAM}").mock(
+        return_value=httpx.Response(200, json={"clone_url": str(learner_repo)})
+    )
+
+    ws = _client(tmp_path).provision(_instance())
+
+    hint = ws.clone_hint or ""
+    assert "git checkout -b dev origin/main" in hint
+    assert "git merge" not in hint, "从基线开出来的 dev 已经含判据，不用再合"
+
+
+@respx.mock
 def test_workspace_disables_the_hosts_commit_signing(tmp_path: Path) -> None:
     """宿主开着提交签名时，平台这份 checkout 必须自己关掉它。
 

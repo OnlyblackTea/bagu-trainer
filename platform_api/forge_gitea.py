@@ -30,6 +30,7 @@ from platform_service.forge import (
     git,
     is_ancestor,
     prepare_workspace,
+    ref_exists,
     stage_branch_for,
     taken_over_workspace,
 )
@@ -117,7 +118,10 @@ class GiteaForgeClient:
             # 动作；拿 dev（只含已提交）去比会显示"没有改动"。
             diff_head_ref=None,
             push_hint=self.push_hint(),
-            clone_hint=self.clone_hint(clone_url, stage),
+            # 远端有 dev ⇒ 起手式是"接着它 + 合本阶段基线"，不是从阶段分支重开（见 clone_hint）。
+            clone_hint=self.clone_hint(
+                clone_url, stage, has_dev=ref_exists(dest, f"refs/remotes/origin/{DEV_BRANCH}")
+            ),
             merge_hint=self.merge_hint(dest, base_ref),
         )
 
@@ -136,20 +140,35 @@ class GiteaForgeClient:
             "# 本阶段的验收测试在这个分支上；相对分岔点只加不删，不会和你写的实现打架"
         )
 
-    def clone_hint(self, clone_url: str, stage: str) -> str:
+    def clone_hint(self, clone_url: str, stage: str, *, has_dev: bool) -> str:
         """让学员**在自己的目录里**拉取的命令（指引式 provision）。
 
         用的是干净 clone URL（**不含 token**）：他自己的凭据他自己给——平台不去碰他机器上的 git
-        凭据配置。分支形状与平台自己那份一致（从阶段分支开出 ``dev``），所以后续 diff 的语义
-        完全相同。
+        凭据配置。
+
+        **远端已经有 ``dev`` 就接着它**，别从阶段分支重开一条：链式结构下阶段分支只含"骨架 + 到本
+        阶段为止的验收测试"，**不含他自己前几关的实现**。一律 `git checkout -b dev origin/<stage>`
+        等于把前几关的成果丢掉——真踩过两次：他的 dev 变成"本阶段基线 + 本阶段实现"，stage-01 的
+        实现凭空消失，平台那份 checkout 还因此与他分叉（`dev` 有两条互不相容的线）。只有第一次
+        做题（远端还没有 dev）才该从阶段基线上开。
         """
-        return "\n".join(
-            [
-                f"git clone {clone_url} ~/my-bagu-{stage}",
-                f"cd ~/my-bagu-{stage}",
-                f"git checkout -b {DEV_BRANCH} origin/{stage}",
+        lines = [
+            f"git clone {clone_url} ~/my-bagu-{stage}",
+            f"cd ~/my-bagu-{stage}",
+        ]
+        if has_dev:
+            lines += [
+                f"git checkout -b {DEV_BRANCH} origin/{DEV_BRANCH}"
+                f"   # 你之前那条 dev：它带着前几关的成果",
+                f"git merge origin/{stage}"
+                f"   # 只加不删：把本阶段的验收测试合进来",
             ]
-        )
+        else:
+            lines.append(
+                f"git checkout -b {DEV_BRANCH} origin/{stage}"
+                f"   # 第一次：从本阶段基线开一条 dev"
+            )
+        return "\n".join(lines)
 
     def ensure_git_identity(self, dest: Path, learner: str) -> bool:
         """工作区解析不到 git 身份时，就地给一个——否则学员的**第一次 commit 必然失败**。
