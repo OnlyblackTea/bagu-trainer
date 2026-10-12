@@ -97,17 +97,15 @@ commit）——桩的报告是 `simulated=true`，两者一眼可分。
 ## 学员怎么 push（第一次一定会遇到）
 
 平台**刻意不碰你自己机器上的 git 凭据**（§C.5），而 Gitea 的 HTTP push 需要认证——所以你在自己
-机器上 clone 出来的那份工作区，第一次 `git push` 会要账号密码。这不是故障，是缺一步配置。两种给法：
+机器上 clone 出来的那份工作区，第一次 `git push` 会要账号密码。这不是故障，是缺一步配置：
 
 ```bash
-# ① 用学员账号（.env 里的 BAGU_LEARNER_PASSWORD，默认 deployer123）
 git config --global credential.helper store     # 可选：让 git 记住
-git push -u origin dev                          # 提示时输 deployer / deployer123
-
-# ② 用令牌（不想给密码时）——令牌是 loader 交给后端的那枚
-docker compose exec platform cat /run/bagu/gitea-token
-git remote set-url origin "http://deployer:$(docker compose exec -T platform cat /run/bagu/gitea-token | tr -d '\r\n')@<BAGU_PUBLIC_URL 的主机>/<TRACK_OWNER>/<TRACK_NAME>.git"
+git push -u origin dev                          # 提示时输 deployer / deployer123（.env 里的 BAGU_LEARNER_PASSWORD）
 ```
+
+不想用密码就换令牌（令牌就是 loader 交给后端的那枚）：
+`git remote set-url origin "http://deployer:$(docker compose exec -T platform cat /run/bagu/gitea-token | tr -d '\r\n')@<BAGU_PUBLIC_URL 的主机>/<TRACK_OWNER>/<TRACK_NAME>.git"`。
 
 > 与"后端本机工作区"那条路的区别：如果工作区在**后端那台机器上**（拓扑 A/C），`provision` 会在
 > **那个工作区里**装好 repo-local 的 `credential.helper`（令牌放在仓库外的 0600 文件里），

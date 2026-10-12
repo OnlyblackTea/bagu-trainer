@@ -34,8 +34,9 @@ A′ 引擎无关切片已把「发卷 → 工作区 → 提交 → 本地阅卷
 **纯 REST 后端 + 学习者 SPA**，全程**不依赖任何 AI / 引擎**。开两个终端：
 
 ```bash
-# 1) 后端（默认用内置 demo Track；进度默认存 ./bagu.sqlite3，重启不失忆）
-.venv/Scripts/python.exe -m platform_api.serve            # http://127.0.0.1:8000
+# 1) 后端（进度默认存 ./bagu.sqlite3，重启不失忆）—— 必须给它一个内容 Track
+.venv/Scripts/python.exe -m platform_api.serve --content-dir ../seckill-lab
+#                                                        http://127.0.0.1:8000
 
 # 2) 前端（Vite 开发服务器把 REST 前缀代理到后端）
 cd frontend && npm install && npm run dev                 # http://127.0.0.1:5173
@@ -43,21 +44,12 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 
 > 注意是 `python -m platform_api.serve`，**不是** `uvicorn platform_api.app:app`——
 > `create_app` 是工厂，需要 `content_dir`，模块级没有 `app`。
+>
+> `--content-dir` 指向一个内容仓（Track）：没有内容的平台没有意义，所以它几乎是必填。
+> 一次部署多个 Track 就重复写几次 `--content-dir`，`GET /tracks` 列出全部，
+> 前端在部署了多个时出现「选方向」切换条。
 
-也可以用真 Track 起后端：
-
-```bash
-.venv/Scripts/python.exe -m platform_api.serve --content-dir ../seckill-lab
-```
-
-**`--content-dir` 可以重复**，一次部署多个 Track：
-
-```bash
-.venv/Scripts/python.exe -m platform_api.serve \
-    --content-dir ../seckill-lab --content-dir ../cache-bagu
-```
-
-`GET /tracks` 列出全部，前端在部署了多个时出现「选方向」切换条。多 Track 的三条硬规矩：
+多 Track 的三条硬规矩：
 
 | 规矩 | 为什么 |
 |---|---|
@@ -65,20 +57,16 @@ cd frontend && npm install && npm run dev                 # http://127.0.0.1:517
 | 取卷用 `GET /tracks/{track_id}/tickets/{ticket_id}` | ticket id 只在 Track 内唯一：两个 Track 都可以有 `db-stage-01`。扁平的 `GET /tickets/{id}` 保留给单 Track 部署与旧客户端，一旦撞名回 409 `ticket_id_ambiguous`，**不猜** |
 | 实例自带 `track` 戳（`TicketInstance.track`），每个 Track 一个 Forge + 一层工作区目录 | 解锁、看板、provision 都必须按 Track 走；否则 A 通过会把 B 的同名后继阶段一起解锁，两个 Track 的 clone 也会互相顶掉 |
 
-> 但 seckill-lab **尚未**按「一阶段一 ref」改造（它现在只有 `main` + `solutions` 两条分支，见设计 §8.1）。
-> 所以对着它点「起工作区」会如实返回短码 `workspace_ref_missing`，并列出仓库里实际可用的 ref——
-> 这是**预期内**行为，不是 bug（对接现状见设计附录 B）。
-
 验证（全绿才算完成）：
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q        # 320 passed, 14 skipped
+.venv/Scripts/python.exe -m pytest -q        # 355 passed, 14 skipped
 .venv/Scripts/python.exe -m ruff check .
 
 cd frontend
 npm run build                                 # tsc --noEmit + vite build
-npm test                                      # vitest + RTL，115 passed
-npx playwright test                           # 真浏览器 + 真后端，3 passed
+npm test                                      # vitest + RTL，141 passed
+npx playwright test                           # 真浏览器 + 真后端
 ```
 
 ### 界面（学习者 SPA）
@@ -128,16 +116,15 @@ npm run ui:clips      # 1:1 局部（题面 / 判据 / 提示 / 历史），判�
 ### 真跑一次阅卷（不是桩）
 
 默认是 `--grading stub`：阅卷返回预置红绿，离线就能跑通全流程。要**真**跑 Track 的 canonical
-测试，换一个后端即可——需要 JDK17 + Maven，以及 Track 声明的基础设施（D3 说的"学员自己的机器"，
+测试，加一个开关即可——需要 JDK17 + Maven，以及 Track 声明的基础设施（D3 说的"学员自己的机器"，
 all-in-one 时就是跑平台这台）：
 
 ```bash
-# 方式一：命令行
-python -m platform_api.serve --content-dir ../seckill-lab --grading docker
-
-# 方式二：环境变量（等价）
-BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
+.venv/Scripts/python.exe -m platform_api.serve \
+    --content-dir ../seckill-lab --grading docker
 ```
+
+（等价的环境变量形式 `BAGU_GRADING=docker`；compose 栈里是用它来开真阅卷的，见 `deploy/README.md`。）
 
 两个后端的差别都是**可观察**的：
 
@@ -234,7 +221,6 @@ BAGU_GRADING=docker python -m platform_api.serve --content-dir ../seckill-lab
 ```bash
 python -m platform_api.serve --content-dir ../seckill-lab \
     --store postgres --database-url 'postgresql://bagu:pw@127.0.0.1:5432/bagu'
-# 等价：BAGU_STORE=postgres BAGU_DATABASE_URL=... python -m platform_api.serve ...
 ```
 
 | | `memory` | `postgres` |
@@ -372,10 +358,6 @@ bagu-trainer/
 ├── docs/                   deployment.md（部署指引）+ paper-platform-design.md + superpowers/
 └── tests/                  pytest（后端全量）
 ```
-
-> **引擎时代的残留已清除**（spec Section B，已执行）：引擎适配层、git 子模块与
-> GPL 边界守卫、以及两个引擎相关的测试文件均已删除；`pyproject.toml` / `Makefile` /
-> `NOTICE` 同步去掉了子模块与边界措辞。上面这张图**就是**当前的文件树。
 
 ---
 
